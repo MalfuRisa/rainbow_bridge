@@ -32,11 +32,28 @@ func (dao *ConfigDAO) UpdateByEnvironmentAndPipeline(ctx context.Context, db *go
 	if entity == nil {
 		return errors.New("config must not be nil")
 	}
+	// Preserve existing non-zero update semantics except description, which is
+	// always the submitted value (including an omitted/empty string).
+	fields := map[string]any{"description": entity.Description}
+	if entity.Name != "" {
+		fields["name"] = entity.Name
+	}
+	if entity.Content != "" {
+		fields["content"] = entity.Content
+	}
+	if entity.Type != "" {
+		fields["type"] = entity.Type
+	}
+	if entity.Remark != "" {
+		fields["remark"] = entity.Remark
+	}
+	if entity.IsPerm {
+		fields["is_perm"] = true
+	}
 	return db.WithContext(ctx).
 		Model(&model.Config{}).
 		Where("environment_key = ? AND pipeline_key = ? AND resource_key = ?", environmentKey, pipelineKey, entity.ResourceKey).
-		Omit("alias"). // Alias is immutable after creation
-		Updates(entity).
+		Updates(fields).
 		Error
 }
 

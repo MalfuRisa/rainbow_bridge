@@ -71,17 +71,7 @@ func Import(ctx context.Context, c *app.RequestContext) {
 			})
 			return
 		}
-		summary := handler.BuildConfigSummary(configs)
-		c.JSON(consts.StatusOK, &transfer.ImportResponse{
-			Code: consts.StatusOK,
-			Msg:  "OK",
-			Data: &transfer.ImportSummary{
-				Total:           int32(summary.Total),
-				EnvironmentKeys: summary.EnvironmentKeys,
-				PipelineKeys:    summary.PipelineKeys,
-				Items:           convertToImportSummaryItems(summary.Items),
-			},
-		})
+		respondImportedConfigs(c, configs)
 		return
 	}
 
@@ -102,7 +92,8 @@ func Import(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	if err := svc.ImportConfigs(handler.EnrichContext(ctx, c), req.GetConfigs(), req.GetOverwrite()); err != nil {
+	written, err := svc.ImportConfigsWithResult(handler.EnrichContext(ctx, c), req.GetConfigs(), req.GetOverwrite())
+	if err != nil {
 		c.JSON(consts.StatusOK, &transfer.ImportResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -110,17 +101,7 @@ func Import(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	summary := handler.BuildConfigSummary(req.Configs)
-	c.JSON(consts.StatusOK, &transfer.ImportResponse{
-		Code: consts.StatusOK,
-		Msg:  "OK",
-		Data: &transfer.ImportSummary{
-			Total:           int32(summary.Total),
-			EnvironmentKeys: summary.EnvironmentKeys,
-			PipelineKeys:    summary.PipelineKeys,
-			Items:           convertToImportSummaryItems(summary.Items),
-		},
-	})
+	respondImportedConfigs(c, written)
 }
 
 func convertToImportSummaryItems(items []handler.SummaryItem) []*transfer.ImportSummaryItem {
@@ -377,15 +358,5 @@ func ImportSelective(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	summary := handler.BuildConfigSummary(configs)
-	c.JSON(consts.StatusOK, &transfer.ImportResponse{
-		Code: consts.StatusOK,
-		Msg:  "OK",
-		Data: &transfer.ImportSummary{
-			Total:           int32(summary.Total),
-			EnvironmentKeys: summary.EnvironmentKeys,
-			PipelineKeys:    summary.PipelineKeys,
-			Items:           convertToImportSummaryItems(summary.Items),
-		},
-	})
+	respondImportedConfigs(c, configs)
 }

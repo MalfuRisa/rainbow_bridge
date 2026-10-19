@@ -38,14 +38,8 @@ func (s *Service) ExportConfigs(ctx context.Context, environmentKey, pipelineKey
 }
 
 func (s *Service) ImportConfigs(ctx context.Context, configs []*common.ResourceConfig, overwrite bool) error {
-	if configs == nil {
-		return errors.New("configs required")
-	}
-	modelConfigs := make([]model.Config, 0, len(configs))
-	for _, cfg := range configs {
-		modelConfigs = append(modelConfigs, *pbConfigToModel(cfg))
-	}
-	return s.logic.ImportConfigs(ctx, modelConfigs, overwrite)
+	_, err := s.ImportConfigsWithResult(ctx, configs, overwrite)
+	return err
 }
 
 func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config) ([]byte, error) {
@@ -149,35 +143,7 @@ func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config
 
 	// 构建完整的数据结构
 	// Convert configs to a format that handles JSON objects properly
-	configsData := make([]map[string]any, len(configs))
-	for i, cfg := range configs {
-		configMap := map[string]any{
-			"resource_key":    cfg.ResourceKey,
-			"alias":           cfg.Alias,
-			"name":            cfg.Name,
-			"environment_key": cfg.EnvironmentKey,
-			"pipeline_key":    cfg.PipelineKey,
-			"type":            cfg.Type,
-			"remark":          cfg.Remark,
-			"is_perm":         cfg.IsPerm,
-		}
-
-		// For object and keyvalue types, parse the content as JSON
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		switch normalizedType {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
-			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
-				configMap["content"] = content
-			} else {
-				configMap["content"] = cfg.Content
-			}
-		default:
-			configMap["content"] = cfg.Content
-		}
-
-		configsData[i] = configMap
-	}
+	configsData := archiveConfigData(configs)
 
 	archiveData := map[string]any{
 		"environments":     envList,
@@ -260,7 +226,8 @@ func (s *Service) ImportConfigsArchive(ctx context.Context, data []byte, targetE
 
 			// 解析 business_configs 字段
 			configBytes, _ := json.Marshal(businessConfigs)
-			if err := json.Unmarshal(configBytes, &configs); err != nil {
+			configs, err = decodeArchiveConfigs(configBytes)
+			if err != nil {
 				return nil, err
 			}
 
@@ -338,7 +305,8 @@ func (s *Service) ImportConfigsArchive(ctx context.Context, data []byte, targetE
 	for _, cfg := range configs {
 		configModels = append(configModels, *pbConfigToModel(cfg))
 	}
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
+	written, err := s.logic.importConfigs(ctx, configModels, overwrite)
+	if err != nil {
 		return nil, err
 	}
 
@@ -419,7 +387,7 @@ func (s *Service) ImportConfigsArchive(ctx context.Context, data []byte, targetE
 		}
 	}
 
-	return s.decorateConfigList(configs), nil
+	return s.decorateConfigList(configSliceToPB(written)), nil
 }
 
 // importEnvironments 导入环境信息
@@ -1052,35 +1020,7 @@ func (s *Service) writeConfigTarGz(ctx context.Context, configs []model.Config) 
 
 	// Build complete data structure
 	// Convert configs to a format that handles JSON objects properly
-	configsData := make([]map[string]any, len(configs))
-	for i, cfg := range configs {
-		configMap := map[string]any{
-			"resource_key":    cfg.ResourceKey,
-			"alias":           cfg.Alias,
-			"name":            cfg.Name,
-			"environment_key": cfg.EnvironmentKey,
-			"pipeline_key":    cfg.PipelineKey,
-			"type":            cfg.Type,
-			"remark":          cfg.Remark,
-			"is_perm":         cfg.IsPerm,
-		}
-
-		// For object and keyvalue types, parse the content as JSON
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		switch normalizedType {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
-			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
-				configMap["content"] = content
-			} else {
-				configMap["content"] = cfg.Content
-			}
-		default:
-			configMap["content"] = cfg.Content
-		}
-
-		configsData[i] = configMap
-	}
+	configsData := archiveConfigData(configs)
 
 	archiveData := map[string]any{
 		"environments":     envList,
@@ -1228,56 +1168,57 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 	// Parse configs
 	if configData, ok := archiveData["business_configs"]; ok {
 		configBytes, _ := json.Marshal(configData)
-		var configs []*common.ResourceConfig
-		if err := json.Unmarshal(configBytes, &configs); err == nil {
-			for _, cfg := range configs {
-				status := s.checkConfigStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetAlias())
-				previewCfg := &transfer.ImportPreviewConfig{
-					ResourceKey: cfg.GetResourceKey(),
-					Name:        cfg.GetName(),
-					Alias:       cfg.GetAlias(),
-					Type:        cfg.GetType(),
-					Status:      status,
-				}
+		configs, err := decodeArchiveConfigs(configBytes)
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range configs {
+			status := s.checkConfigStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetAlias())
+			previewCfg := &transfer.ImportPreviewConfig{
+				ResourceKey: cfg.GetResourceKey(),
+				Name:        cfg.GetName(),
+				Alias:       cfg.GetAlias(),
+				Type:        cfg.GetType(),
+				Status:      status,
+			}
 
-				// Add to pipeline
-				pipeKey := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
-				if pipe, exists := pipeMap[pipeKey]; exists {
-					pipe.Configs = append(pipe.Configs, previewCfg)
+			// Add to pipeline
+			pipeKey := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
+			if pipe, exists := pipeMap[pipeKey]; exists {
+				pipe.Configs = append(pipe.Configs, previewCfg)
+			} else {
+				// Pipeline not in archive, create a placeholder
+				newPipe := &transfer.ImportPreviewPipeline{
+					PipelineKey:  cfg.GetPipelineKey(),
+					PipelineName: cfg.GetPipelineKey(),
+					Status:       s.checkPipelineStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey()),
+					Configs:      []*transfer.ImportPreviewConfig{previewCfg},
+				}
+				pipeMap[pipeKey] = newPipe
+
+				// Add to environment
+				if env, exists := envMap[cfg.GetEnvironmentKey()]; exists {
+					env.Pipelines = append(env.Pipelines, newPipe)
 				} else {
-					// Pipeline not in archive, create a placeholder
-					newPipe := &transfer.ImportPreviewPipeline{
-						PipelineKey:  cfg.GetPipelineKey(),
-						PipelineName: cfg.GetPipelineKey(),
-						Status:       s.checkPipelineStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey()),
-						Configs:      []*transfer.ImportPreviewConfig{previewCfg},
+					newEnv := &transfer.ImportPreviewEnvironment{
+						EnvironmentKey:  cfg.GetEnvironmentKey(),
+						EnvironmentName: cfg.GetEnvironmentKey(),
+						Status:          s.checkEnvironmentStatus(ctx, cfg.GetEnvironmentKey()),
+						Pipelines:       []*transfer.ImportPreviewPipeline{newPipe},
 					}
-					pipeMap[pipeKey] = newPipe
-
-					// Add to environment
-					if env, exists := envMap[cfg.GetEnvironmentKey()]; exists {
-						env.Pipelines = append(env.Pipelines, newPipe)
-					} else {
-						newEnv := &transfer.ImportPreviewEnvironment{
-							EnvironmentKey:  cfg.GetEnvironmentKey(),
-							EnvironmentName: cfg.GetEnvironmentKey(),
-							Status:          s.checkEnvironmentStatus(ctx, cfg.GetEnvironmentKey()),
-							Pipelines:       []*transfer.ImportPreviewPipeline{newPipe},
-						}
-						envMap[cfg.GetEnvironmentKey()] = newEnv
-						preview.Environments = append(preview.Environments, newEnv)
-					}
+					envMap[cfg.GetEnvironmentKey()] = newEnv
+					preview.Environments = append(preview.Environments, newEnv)
 				}
+			}
 
-				preview.Summary.TotalConfigs++
-				switch status {
-				case "new":
-					preview.Summary.NewCount++
-				case "exists":
-					preview.Summary.ExistingCount++
-				case "conflict":
-					preview.Summary.ConflictCount++
-				}
+			preview.Summary.TotalConfigs++
+			switch status {
+			case "new":
+				preview.Summary.NewCount++
+			case "exists":
+				preview.Summary.ExistingCount++
+			case "conflict":
+				preview.Summary.ConflictCount++
 			}
 		}
 	}
@@ -1522,7 +1463,9 @@ func (s *Service) importConfigsFromZip(ctx context.Context, data []byte, shouldI
 	// Parse configs
 	if configData, ok := archiveData["business_configs"]; ok {
 		configBytes, _ := json.Marshal(configData)
-		if err := json.Unmarshal(configBytes, &allConfigs); err != nil {
+		var err error
+		allConfigs, err = decodeArchiveConfigs(configBytes)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1553,7 +1496,8 @@ func (s *Service) importConfigsFromZip(ctx context.Context, data []byte, shouldI
 		configModels = append(configModels, *pbConfigToModel(cfg))
 	}
 
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
+	written, err := s.logic.importConfigs(ctx, configModels, overwrite)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1638,7 +1582,7 @@ func (s *Service) importConfigsFromZip(ctx context.Context, data []byte, shouldI
 		}
 	}
 
-	return s.decorateConfigList(filteredConfigs), nil
+	return s.decorateConfigList(configSliceToPB(written)), nil
 }
 
 // importConfigsFromTarGz imports configs from a tar.gz archive with selection filter.
@@ -1716,7 +1660,9 @@ func (s *Service) importConfigsFromTarGz(ctx context.Context, data []byte, shoul
 	// Parse configs
 	if configData, ok := archiveData["business_configs"]; ok {
 		configBytes, _ := json.Marshal(configData)
-		if err := json.Unmarshal(configBytes, &allConfigs); err != nil {
+		var err error
+		allConfigs, err = decodeArchiveConfigs(configBytes)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1746,7 +1692,8 @@ func (s *Service) importConfigsFromTarGz(ctx context.Context, data []byte, shoul
 		configModels = append(configModels, *pbConfigToModel(cfg))
 	}
 
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
+	written, err := s.logic.importConfigs(ctx, configModels, overwrite)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1821,5 +1768,5 @@ func (s *Service) importConfigsFromTarGz(ctx context.Context, data []byte, shoul
 		}
 	}
 
-	return s.decorateConfigList(filteredConfigs), nil
+	return s.decorateConfigList(configSliceToPB(written)), nil
 }

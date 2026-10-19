@@ -335,7 +335,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
         <AlertTitle>注意事项</AlertTitle>
         <AlertDescription class="space-y-1">
           <p>1. 导入前请确保已备份现有数据</p>
-          <p>2. 冲突数据默认跳过，可选择覆盖</p>
+          <p>2. 冲突数据默认跳过；选择覆盖仅更新输入中的冲突项，其他配置保留</p>
           <p>3. 导入操作不可撤销</p>
         </AlertDescription>
       </Alert>

@@ -2,23 +2,15 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/pkg/common"
 	"github.com/yi-nology/rainbow_bridge/pkg/redis"
-	"github.com/yi-nology/rainbow_bridge/pkg/util"
 
 	"gorm.io/gorm"
-)
-
-var (
-	colorHexRegexp = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 )
 
 // --------------------- Config Operations ---------------------
@@ -47,20 +39,7 @@ func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 		return err
 	}
 
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
-		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
-	}
+	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{*cfg})
 
 	return nil
 }
@@ -84,26 +63,7 @@ func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config) error {
 		return err
 	}
 
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除单个配置缓存
-		configKey := redis.GenerateConfigKey(cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
-		if err := redis.Delete(ctx, l.redisClient, configKey); err != nil {
-			fmt.Printf("Failed to clear config cache: %v\n", err)
-		}
-
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
-		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
-	}
+	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{*cfg})
 
 	return nil
 }
@@ -121,26 +81,7 @@ func (l *Logic) DeleteConfig(ctx context.Context, environmentKey, pipelineKey, r
 		return err
 	}
 
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除单个配置缓存
-		configKey := redis.GenerateConfigKey(environmentKey, pipelineKey, resourceKey)
-		if err := redis.Delete(ctx, l.redisClient, configKey); err != nil {
-			fmt.Printf("Failed to clear config cache: %v\n", err)
-		}
-
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", environmentKey, pipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
-		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(environmentKey, pipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
-	}
+	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{{EnvironmentKey: environmentKey, PipelineKey: pipelineKey, ResourceKey: resourceKey}})
 
 	return nil
 }
@@ -289,234 +230,7 @@ func (l *Logic) ExportConfigs(ctx context.Context, environmentKey, pipelineKey s
 	return data, nil
 }
 
-func (l *Logic) ImportConfigs(ctx context.Context, configs []model.Config, overwrite bool) error {
-	if overwrite {
-		if err := l.configDAO.ClearAll(ctx, l.db); err != nil {
-			return err
-		}
-	}
-
-	// 用于跟踪已导入的 alias，避免重复
-	importedAliases := make(map[string]bool)
-	// 用于跟踪需要清除缓存的环境和渠道
-	envPipelineMap := make(map[string]bool)
-
-	for idx := range configs {
-		cfg := configs[idx]
-		normalizeConfigPayload(&cfg)
-		if err := l.validateConfigContent(ctx, &cfg); err != nil {
-			return err
-		}
-
-		// 检查是否已经导入过相同的 alias
-		aliasKey := fmt.Sprintf("%s/%s/%s", cfg.EnvironmentKey, cfg.PipelineKey, cfg.Alias)
-		if cfg.Alias != "" && importedAliases[aliasKey] {
-			// 跳过重复的 alias
-			continue
-		}
-
-		existing, err := l.configDAO.GetByResourceKey(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
-		if err != nil && err != gorm.ErrRecordNotFound {
-			return err
-		}
-		if existing == nil && cfg.ResourceKey == "" && cfg.Alias != "" {
-			existing, err = l.configDAO.GetByAlias(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.Alias)
-			if err != nil && err != gorm.ErrRecordNotFound {
-				return err
-			}
-		}
-		if existing == nil {
-			if err := l.configDAO.Create(ctx, l.db, &cfg); err != nil {
-				return err
-			}
-			// 记录已导入的 alias
-			if cfg.Alias != "" {
-				importedAliases[aliasKey] = true
-			}
-		} else {
-			cfg.ResourceKey = existing.ResourceKey
-			if err := l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, &cfg); err != nil {
-				return err
-			}
-			// 记录已导入的 alias
-			if cfg.Alias != "" {
-				importedAliases[aliasKey] = true
-			}
-		}
-
-		// 记录需要清除缓存的环境和渠道
-		envPipelineKey := fmt.Sprintf("%s:%s", cfg.EnvironmentKey, cfg.PipelineKey)
-		envPipelineMap[envPipelineKey] = true
-	}
-
-	// 清除相关缓存
-	if l.redisClient != nil {
-		for envPipelineKey := range envPipelineMap {
-			parts := strings.Split(envPipelineKey, ":")
-			if len(parts) == 2 {
-				environmentKey := parts[0]
-				pipelineKey := parts[1]
-
-				// 清除列表缓存
-				listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", environmentKey, pipelineKey)
-				if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-					fmt.Printf("Failed to clear config list cache: %v\n", err)
-				}
-
-				// 清除映射缓存
-				mapKey := redis.GenerateConfigMapKey(environmentKey, pipelineKey)
-				if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-					fmt.Printf("Failed to clear config map cache: %v\n", err)
-				}
-			}
-		}
-
-		// 如果是覆盖模式，清除所有缓存
-		if overwrite {
-			if err := redis.DeleteByPattern(ctx, l.redisClient, "rainbow_bridge:config:*"); err != nil {
-				fmt.Printf("Failed to clear all config caches: %v\n", err)
-			}
-		}
-	}
-
-	return nil
-}
-
 func (l *Logic) ListBusinessKeys(ctx context.Context) ([]string, error) {
 	// Deprecated: business_key is replaced by environment_key + pipeline_key
 	return []string{}, errors.New("business_key is deprecated")
-}
-
-// --------------------- Config Validation & Normalization ---------------------
-
-func normalizeConfigPayload(cfg *model.Config) {
-	if cfg == nil {
-		return
-	}
-	cfg.EnvironmentKey = strings.TrimSpace(cfg.EnvironmentKey)
-	cfg.PipelineKey = strings.TrimSpace(cfg.PipelineKey)
-	cfg.Alias = strings.TrimSpace(cfg.Alias)
-	cfg.Name = strings.TrimSpace(cfg.Name)
-	cfg.Type = normalizeConfigType(cfg.Type)
-	cfg.Content = strings.TrimSpace(cfg.Content)
-	cfg.Remark = strings.TrimSpace(cfg.Remark)
-	cfg.Description = strings.TrimSpace(cfg.Description)
-}
-
-func normalizeConfigType(t string) string {
-	return util.NormalizeConfigType(t)
-}
-
-func (l *Logic) validateConfigContent(ctx context.Context, cfg *model.Config) error {
-	if cfg == nil {
-		return errors.New("config payload required")
-	}
-
-	// 前端传什么类型就存什么类型，不做自动类型转换
-
-	switch cfg.Type {
-	case "image":
-		if cfg.Content == "" {
-			return errors.New("图片类型内容不能为空")
-		}
-		// 支持多种路径格式
-		contentLower := strings.ToLower(cfg.Content)
-		if strings.HasPrefix(cfg.Content, "asset://") ||
-			strings.HasPrefix(cfg.Content, "/api/v1/asset/file/") ||
-			strings.Contains(cfg.Content, "/api/v1/asset/file/") || // 支持带路由前缀的路径
-			strings.HasPrefix(contentLower, "http://") ||
-			strings.HasPrefix(contentLower, "https://") {
-			if strings.HasPrefix(cfg.Content, "asset://") {
-				fileID := strings.TrimPrefix(cfg.Content, "asset://")
-				asset, err := l.assetDAO.GetByFileID(ctx, l.db, fileID)
-				if err == nil && asset != nil {
-					cfg.Content = fmt.Sprintf("/api/v1/asset/file/%s/%s", asset.FileID, asset.FileName)
-				} else {
-					// Fallback if asset not found in DB
-					cfg.Content = "/api/v1/asset/file/" + fileID
-				}
-			}
-			return nil
-		}
-		return errors.New("图片类型内容必须为有效的引用地址")
-	case "file":
-		if cfg.Content == "" {
-			return errors.New("文件类型内容不能为空")
-		}
-		// 支持多种路径格式（与 image 类型相同的处理逻辑）
-		contentLower := strings.ToLower(cfg.Content)
-		if strings.HasPrefix(cfg.Content, "asset://") ||
-			strings.HasPrefix(cfg.Content, "/api/v1/asset/file/") ||
-			strings.Contains(cfg.Content, "/api/v1/asset/file/") || // 支持带路由前缀的路径
-			strings.HasPrefix(contentLower, "http://") ||
-			strings.HasPrefix(contentLower, "https://") {
-			if strings.HasPrefix(cfg.Content, "asset://") {
-				fileID := strings.TrimPrefix(cfg.Content, "asset://")
-				asset, err := l.assetDAO.GetByFileID(ctx, l.db, fileID)
-				if err == nil && asset != nil {
-					cfg.Content = fmt.Sprintf("/api/v1/asset/file/%s/%s", asset.FileID, asset.FileName)
-				} else {
-					// Fallback if asset not found in DB
-					cfg.Content = "/api/v1/asset/file/" + fileID
-				}
-			}
-			return nil
-		}
-		return errors.New("文件类型内容必须为有效的引用地址")
-	case "text":
-		if cfg.Content == "" {
-			return errors.New("文案内容不能为空")
-		}
-		return nil
-	case "textarea":
-		if cfg.Content == "" {
-			return errors.New("文本内容不能为空")
-		}
-		return nil
-	case "richtext":
-		if cfg.Content == "" {
-			return errors.New("富文本内容不能为空")
-		}
-		return nil
-	case "color":
-		colorValue, err := normalizeColorContent(cfg.Content)
-		if err != nil {
-			return err
-		}
-		cfg.Content = colorValue
-		return nil
-	default:
-		if cfg.Content == "" {
-			return errors.New("配置内容不能为空")
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(cfg.Content), &payload); err != nil {
-			return fmt.Errorf("配置内容需为 JSON 对象: %w", err)
-		}
-		if payload == nil {
-			return errors.New("配置内容不能为空对象")
-		}
-		canonical, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-		cfg.Content = string(canonical)
-		return nil
-	}
-}
-
-func normalizeColorContent(value string) (string, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", errors.New("色彩标签内容不能为空")
-	}
-	matches := colorHexRegexp.FindStringSubmatch(trimmed)
-	if matches == nil {
-		return "", errors.New("色彩标签内容需为 #RGB 或 #RRGGBB 格式")
-	}
-	hex := matches[1]
-	if len(hex) == 3 {
-		hex = fmt.Sprintf("%c%c%c%c%c%c", hex[0], hex[0], hex[1], hex[1], hex[2], hex[2])
-	}
-	return "#" + strings.ToUpper(hex), nil
 }

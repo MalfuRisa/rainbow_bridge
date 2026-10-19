@@ -191,6 +191,7 @@ func (s *Service) writeRuntimeConfigArchive(ctx context.Context, runtimeData *ru
 		Type           string      `json:"type"`
 		Remark         string      `json:"remark"`
 		IsPerm         bool        `json:"is_perm"`
+		Description    string      `json:"description"`
 	}
 
 	type CustomRuntimeConfigData struct {
@@ -216,6 +217,7 @@ func (s *Service) writeRuntimeConfigArchive(ctx context.Context, runtimeData *ru
 			Type:           cfg.Type,
 			Remark:         cfg.Remark,
 			IsPerm:         cfg.IsPerm,
+			Description:    cfg.Description,
 		}
 
 		// 对于 object 和 keyvalue 类型，解析为 JSON 对象
