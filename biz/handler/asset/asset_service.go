@@ -168,6 +168,10 @@ func Upload(ctx context.Context, c *app.RequestContext) {
 
 	assetItem, reference, err := svc.UploadAsset(handler.EnrichContext(ctx, c), input)
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &asset.UploadAssetResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &asset.UploadAssetResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",

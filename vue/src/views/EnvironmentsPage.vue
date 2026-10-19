@@ -7,11 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, GitBranch, ChevronRight, Loader2 } from 'lucide-vue-next'
+import { Plus, Trash2, GitBranch, ChevronRight, Loader2, Lock } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
+import { useFreezeStore } from '@/stores/freeze'
 import type { Environment } from '@/lib/types'
 
 const environmentStore = useEnvironmentStore()
+const freezeStore = useFreezeStore()
 
 const selectedEnv = ref<Environment | null>(null)
 const isEnvDialogOpen = ref(false)
@@ -20,6 +22,22 @@ const envFormData = ref({ key: '', name: '' })
 const pipelineFormData = ref({ key: '', name: '' })
 
 const displayPipelines = computed(() => selectedEnv.value?.pipelines || [])
+
+// 选中环境后加载其全部渠道的冻结状态
+watch(selectedEnv, (env) => {
+  if (env) {
+    freezeStore.loadMany(env.pipelines.map((pipeline) => ({ environmentKey: env.key, pipelineKey: pipeline.key })))
+  }
+}, { immediate: true })
+
+const pipelineLocked = (environmentKey: string, pipelineKey: string) =>
+  freezeStore.isLocked(environmentKey, pipelineKey)
+
+const pipelineFreezeReason = (environmentKey: string, pipelineKey: string) =>
+  freezeStore.statusFor(environmentKey, pipelineKey)?.last_reason || ''
+
+const envHasLockedPipeline = (env: Environment) =>
+  env.pipelines.some((pipeline) => pipelineLocked(env.key, pipeline.key))
 
 onMounted(() => {
   environmentStore.fetchOverview()
@@ -44,8 +62,15 @@ const handleAddEnv = async () => {
 }
 
 const handleDeleteEnv = async (key: string) => {
-  await environmentStore.deleteEnvironment(key)
-  if (selectedEnv.value?.key === key) selectedEnv.value = null
+  try {
+    await environmentStore.deleteEnvironment(key)
+    if (selectedEnv.value?.key === key) selectedEnv.value = null
+  } catch {
+    // 含冻结渠道的环境会被服务端拒绝;刷新状态让禁用原因可见(错误提示由请求层展示)
+    if (selectedEnv.value) {
+      await freezeStore.loadMany(selectedEnv.value.pipelines.map((pipeline) => ({ environmentKey: selectedEnv.value!.key, pipelineKey: pipeline.key })))
+    }
+  }
 }
 
 const handleAddPipeline = async () => {
@@ -57,7 +82,11 @@ const handleAddPipeline = async () => {
 
 const handleDeletePipeline = async (pipelineKey: string) => {
   if (!selectedEnv.value) return
-  await environmentStore.deletePipeline(selectedEnv.value.key, pipelineKey)
+  try {
+    await environmentStore.deletePipeline(selectedEnv.value.key, pipelineKey)
+  } catch {
+    await freezeStore.loadStatus(selectedEnv.value.key, pipelineKey)
+  }
 }
 </script>
 
@@ -151,11 +180,16 @@ const handleDeletePipeline = async (pipelineKey: string) => {
                 <Badge variant="secondary" class="text-xs">
                   {{ env.pipelines.length }} 渠道
                 </Badge>
+                <Badge v-if="envHasLockedPipeline(env)" variant="destructive" class="text-xs px-2 py-0.5">
+                  <Lock class="w-3 h-3 mr-1" />
+                  含冻结渠道
+                </Badge>
                 <Button
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8"
-                  :disabled="environmentStore.loading"
+                  :disabled="environmentStore.loading || envHasLockedPipeline(env)"
+                  :title="envHasLockedPipeline(env) ? '包含已冻结渠道的环境不可删除' : undefined"
                   @click.stop="handleDeleteEnv(env.key)"
                 >
                   <Loader2 v-if="environmentStore.loading" class="w-4 h-4 animate-spin" />
@@ -238,16 +272,23 @@ const handleDeletePipeline = async (pipelineKey: string) => {
                   {{ pipeline.key }}
                 </p>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-8 w-8"
-                :disabled="environmentStore.loading"
-                @click="handleDeletePipeline(pipeline.key)"
-              >
-                <Loader2 v-if="environmentStore.loading" class="w-4 h-4 animate-spin" />
-                <Trash2 v-else class="w-4 h-4 text-destructive" />
-              </Button>
+              <div class="flex items-center gap-2">
+                <Badge v-if="pipelineLocked(selectedEnv.key, pipeline.key)" variant="destructive" class="text-xs px-2 py-0.5" :title="pipelineFreezeReason(selectedEnv.key, pipeline.key)">
+                  <Lock class="w-3 h-3 mr-1" />
+                  已冻结
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8"
+                  :disabled="environmentStore.loading || pipelineLocked(selectedEnv.key, pipeline.key)"
+                  :title="pipelineLocked(selectedEnv.key, pipeline.key) ? `已冻结:${pipelineFreezeReason(selectedEnv.key, pipeline.key) || '该渠道不可删除'}` : undefined"
+                  @click="handleDeletePipeline(pipeline.key)"
+                >
+                  <Loader2 v-if="environmentStore.loading" class="w-4 h-4 animate-spin" />
+                  <Trash2 v-else class="w-4 h-4 text-destructive" />
+                </Button>
+              </div>
             </div>
             <p v-if="displayPipelines.length === 0" class="text-center py-8 text-muted-foreground">
               暂无渠道，请添加

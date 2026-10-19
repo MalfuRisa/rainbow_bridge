@@ -163,8 +163,8 @@ func (s *Service) ImportConfigsArchive(ctx context.Context, data []byte, targetE
 	return outcome.Configs, nil
 }
 
-// importEnvironments 导入环境信息
-func (s *Service) importEnvironments(ctx context.Context, data any) error {
+// importEnvironments 导入环境信息(写协调事务内执行;既有环境的元数据更新需通过冻结检查)。
+func (s *Service) importEnvironments(ctx context.Context, l *Logic, data any) error {
 	// 将 data 转换为 JSON 再解析
 	envBytes, err := json.Marshal(data)
 	if err != nil {
@@ -178,21 +178,23 @@ func (s *Service) importEnvironments(ctx context.Context, data any) error {
 
 	for _, env := range environments {
 		// 检查环境是否已存在
-		existing, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, env.EnvironmentKey)
+		existing, err := l.environmentDAO.GetByKey(ctx, l.db, env.EnvironmentKey)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 
 		if existing != nil {
-			// 更新已存在的环境
+			// 环境内存在 locked 渠道时拒绝写入其元数据
+			if err := l.ensureEnvironmentMetadataUnlocked(ctx, env.EnvironmentKey); err != nil {
+				return err
+			}
 			env.ID = existing.ID
 			env.CreatedAt = existing.CreatedAt
-			if err := s.logic.environmentDAO.Update(ctx, s.logic.db, &env); err != nil {
+			if err := l.environmentDAO.Update(ctx, l.db, &env); err != nil {
 				return err
 			}
 		} else {
-			// 创建新环境
-			if err := s.logic.environmentDAO.Create(ctx, s.logic.db, &env); err != nil {
+			if err := l.environmentDAO.Create(ctx, l.db, &env); err != nil {
 				return err
 			}
 		}
@@ -201,8 +203,8 @@ func (s *Service) importEnvironments(ctx context.Context, data any) error {
 	return nil
 }
 
-// importPipelines 导入渠道信息
-func (s *Service) importPipelines(ctx context.Context, data any) error {
+// importPipelines 导入渠道信息(写协调事务内执行;既有渠道更新需通过冻结检查)。
+func (s *Service) importPipelines(ctx context.Context, l *Logic, data any) error {
 	// 将 data 转换为 JSON 再解析
 	pipeBytes, err := json.Marshal(data)
 	if err != nil {
@@ -216,21 +218,25 @@ func (s *Service) importPipelines(ctx context.Context, data any) error {
 
 	for _, pipe := range pipelines {
 		// 检查渠道是否已存在
-		existing, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, pipe.EnvironmentKey, pipe.PipelineKey)
+		existing, err := l.pipelineDAO.GetByKey(ctx, l.db, pipe.EnvironmentKey, pipe.PipelineKey)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 
 		if existing != nil {
-			// 更新已存在的渠道
+			if err := l.ensurePipelineUnlocked(ctx, pipe.EnvironmentKey, pipe.PipelineKey); err != nil {
+				return err
+			}
 			pipe.ID = existing.ID
 			pipe.CreatedAt = existing.CreatedAt
-			if err := s.logic.pipelineDAO.Update(ctx, s.logic.db, &pipe); err != nil {
+			if err := l.pipelineDAO.Update(ctx, l.db, &pipe); err != nil {
 				return err
 			}
 		} else {
-			// 创建新渠道
-			if err := s.logic.pipelineDAO.Create(ctx, s.logic.db, &pipe); err != nil {
+			if err := l.pipelineDAO.Create(ctx, l.db, &pipe); err != nil {
+				return err
+			}
+			if err := l.ensurePipelineStateExists(ctx, pipe.EnvironmentKey, pipe.PipelineKey); err != nil {
 				return err
 			}
 		}
@@ -266,9 +272,9 @@ func extractAssetIDs(configs []model.Config) []string {
 	return ids
 }
 
-// ensureEnvironmentExists 确保环境存在，如果不存在则返回错误
-func (s *Service) ensureEnvironmentExists(ctx context.Context, envKey string) error {
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, envKey)
+// ensureEnvironmentExists 确保环境存在(只读检查,可在协调事务内复用)。
+func (s *Service) ensureEnvironmentExists(ctx context.Context, l *Logic, envKey string) error {
+	_, err := l.environmentDAO.GetByKey(ctx, l.db, envKey)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("environment %s does not exist", envKey)
@@ -278,9 +284,9 @@ func (s *Service) ensureEnvironmentExists(ctx context.Context, envKey string) er
 	return nil
 }
 
-// ensurePipelineExists 确保渠道存在，如果不存在则返回错误
-func (s *Service) ensurePipelineExists(ctx context.Context, envKey, pipelineKey string) error {
-	_, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, envKey, pipelineKey)
+// ensurePipelineExists 确保渠道存在(只读检查,可在协调事务内复用)。
+func (s *Service) ensurePipelineExists(ctx context.Context, l *Logic, envKey, pipelineKey string) error {
+	_, err := l.pipelineDAO.GetByKey(ctx, l.db, envKey, pipelineKey)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("pipeline %s/%s does not exist", envKey, pipelineKey)
@@ -338,114 +344,142 @@ func normalizeImageReference(ref string) string {
 
 // MigrateConfigs migrates configurations between environments/pipelines.
 func (s *Service) MigrateConfigs(ctx context.Context, req *transfer.MigrateRequest) (*transfer.MigrateSummary, error) {
-	// 1. 验证源和目标环境/渠道存在
-	if err := s.ensureEnvironmentExists(ctx, req.SourceEnvironmentKey); err != nil {
+	// 1. 只读预检:源和目标环境/渠道存在(错误语义与既有实现一致)
+	if err := s.ensureEnvironmentExists(ctx, s.logic, req.SourceEnvironmentKey); err != nil {
 		return nil, fmt.Errorf("source environment not found: %w", err)
 	}
-	if err := s.ensurePipelineExists(ctx, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
+	if err := s.ensurePipelineExists(ctx, s.logic, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
 		return nil, fmt.Errorf("source pipeline not found: %w", err)
 	}
-	if err := s.ensureEnvironmentExists(ctx, req.TargetEnvironmentKey); err != nil {
+	if err := s.ensureEnvironmentExists(ctx, s.logic, req.TargetEnvironmentKey); err != nil {
 		return nil, fmt.Errorf("target environment not found: %w", err)
 	}
-	if err := s.ensurePipelineExists(ctx, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+	if err := s.ensurePipelineExists(ctx, s.logic, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
 		return nil, fmt.Errorf("target pipeline not found: %w", err)
 	}
 
-	// 2. 获取源配置（使用 ListConfigs 而不是 ExportConfigs，因为需要保留 ResourceKey）
-	sourceConfigs, err := s.logic.ListConfigs(ctx, req.SourceEnvironmentKey, req.SourcePipelineKey, "", "", "", false)
+	var (
+		summary      *transfer.MigrateSummary
+		written      []model.Config
+		createdFiles []createdResourceFile
+	)
+	// 迁移在写协调事务内执行:目标 locked 时在复制任何资源前整体拒绝;源 locked 只读复制,不受限。
+	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if err := txLogic.ensurePipelineUnlocked(gateCtx, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+			return err
+		}
+		// 协调内复查存在性(TOCTOU)
+		if err := s.ensureEnvironmentExists(gateCtx, txLogic, req.SourceEnvironmentKey); err != nil {
+			return fmt.Errorf("source environment not found: %w", err)
+		}
+		if err := s.ensurePipelineExists(gateCtx, txLogic, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
+			return fmt.Errorf("source pipeline not found: %w", err)
+		}
+		if err := s.ensureEnvironmentExists(gateCtx, txLogic, req.TargetEnvironmentKey); err != nil {
+			return fmt.Errorf("target environment not found: %w", err)
+		}
+		if err := s.ensurePipelineExists(gateCtx, txLogic, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+			return fmt.Errorf("target pipeline not found: %w", err)
+		}
+		// 2. 获取源配置(保留 ResourceKey;不经缓存,作为写入依据)
+		sourceConfigs, err := txLogic.configDAO.ListByEnvironmentAndPipelineWithFilter(gateCtx, txLogic.db,
+			req.SourceEnvironmentKey, req.SourcePipelineKey, "", "", "", 0, 0)
+		if err != nil {
+			return err
+		}
+		// 3. 过滤指定的配置(如果提供了 resource_keys)
+		if len(req.ResourceKeys) > 0 {
+			resourceKeySet := make(map[string]bool)
+			for _, key := range req.ResourceKeys {
+				resourceKeySet[key] = true
+			}
+			filtered := make([]model.Config, 0)
+			for _, cfg := range sourceConfigs {
+				if resourceKeySet[cfg.ResourceKey] {
+					filtered = append(filtered, cfg)
+				}
+			}
+			sourceConfigs = filtered
+		}
+		// 4. 执行迁移
+		summary = &transfer.MigrateSummary{
+			Total: int32(len(sourceConfigs)), // #nosec G115 -- count will not exceed int32
+			Items: make([]*transfer.MigrateResultItem, 0),
+		}
+		for _, srcCfg := range sourceConfigs {
+			item := &transfer.MigrateResultItem{
+				ResourceKey: srcCfg.ResourceKey,
+				Name:        srcCfg.Name,
+				Alias:       srcCfg.Alias,
+			}
+			// 检查目标是否存在同别名配置
+			existing, _ := txLogic.configDAO.GetByAlias(gateCtx, txLogic.db,
+				req.TargetEnvironmentKey, req.TargetPipelineKey, srcCfg.Alias)
+
+			if existing != nil && !req.Overwrite {
+				item.Status = "skipped"
+				item.Message = "配置已存在且 overwrite=false"
+				summary.Skipped++
+				summary.Items = append(summary.Items, item)
+				continue
+			}
+			// 复制配置
+			newCfg := srcCfg
+			newCfg.ID = 0
+			newCfg.EnvironmentKey = req.TargetEnvironmentKey
+			newCfg.PipelineKey = req.TargetPipelineKey
+			newCfg.ResourceKey = uuid.NewString() // 生成新的 resource_key
+
+			// 复制关联的资源文件(协调存续期内;新建文件登记供回滚清理)
+			if err := s.copyConfigAssets(gateCtx, txLogic, &newCfg, req.TargetEnvironmentKey, req.TargetPipelineKey, &createdFiles); err != nil {
+				item.Status = "failed"
+				item.Message = err.Error()
+				summary.Failed++
+				summary.Items = append(summary.Items, item)
+				continue
+			}
+
+			// 保存配置
+			if existing != nil {
+				// 更新现有配置
+				newCfg.ResourceKey = existing.ResourceKey
+				if err := txLogic.UpdateConfig(gateCtx, &newCfg); err != nil {
+					item.Status = "failed"
+					item.Message = err.Error()
+					summary.Failed++
+				} else {
+					item.Status = "succeeded"
+					summary.Succeeded++
+					written = append(written, newCfg)
+				}
+			} else {
+				// 创建新配置
+				if err := txLogic.AddConfig(gateCtx, &newCfg); err != nil {
+					item.Status = "failed"
+					item.Message = err.Error()
+					summary.Failed++
+				} else {
+					item.Status = "succeeded"
+					summary.Succeeded++
+					written = append(written, newCfg)
+				}
+			}
+
+			summary.Items = append(summary.Items, item)
+		}
+		return nil
+	})
 	if err != nil {
+		s.cleanupCreatedResourceFiles(ctx, createdFiles)
 		return nil, err
 	}
-
-	// 3. 过滤指定的配置（如果提供了 resource_keys）
-	if len(req.ResourceKeys) > 0 {
-		resourceKeySet := make(map[string]bool)
-		for _, key := range req.ResourceKeys {
-			resourceKeySet[key] = true
-		}
-		filtered := make([]model.Config, 0)
-		for _, cfg := range sourceConfigs {
-			if resourceKeySet[cfg.ResourceKey] {
-				filtered = append(filtered, cfg)
-			}
-		}
-		sourceConfigs = filtered
-	}
-
-	// 4. 执行迁移
-	summary := &transfer.MigrateSummary{
-		Total: int32(len(sourceConfigs)), // #nosec G115 -- count will not exceed int32
-		Items: make([]*transfer.MigrateResultItem, 0),
-	}
-
-	for _, srcCfg := range sourceConfigs {
-		item := &transfer.MigrateResultItem{
-			ResourceKey: srcCfg.ResourceKey,
-			Name:        srcCfg.Name,
-			Alias:       srcCfg.Alias,
-		}
-
-		// 检查目标是否存在同别名配置
-		existing, _ := s.logic.configDAO.GetByAlias(ctx, s.logic.db,
-			req.TargetEnvironmentKey, req.TargetPipelineKey, srcCfg.Alias)
-
-		if existing != nil && !req.Overwrite {
-			item.Status = "skipped"
-			item.Message = "配置已存在且 overwrite=false"
-			summary.Skipped++
-			summary.Items = append(summary.Items, item)
-			continue
-		}
-
-		// 复制配置
-		newCfg := srcCfg
-		newCfg.ID = 0
-		newCfg.EnvironmentKey = req.TargetEnvironmentKey
-		newCfg.PipelineKey = req.TargetPipelineKey
-		newCfg.ResourceKey = uuid.NewString() // 生成新的 resource_key
-
-		// 复制关联的资源文件
-		if err := s.copyConfigAssets(ctx, &newCfg, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
-			item.Status = "failed"
-			item.Message = err.Error()
-			summary.Failed++
-			summary.Items = append(summary.Items, item)
-			continue
-		}
-
-		// 保存配置
-		if existing != nil {
-			// 更新现有配置
-			newCfg.ResourceKey = existing.ResourceKey
-			if err := s.logic.UpdateConfig(ctx, &newCfg); err != nil {
-				item.Status = "failed"
-				item.Message = err.Error()
-				summary.Failed++
-			} else {
-				item.Status = "succeeded"
-				summary.Succeeded++
-			}
-		} else {
-			// 创建新配置
-			if err := s.logic.AddConfig(ctx, &newCfg); err != nil {
-				item.Status = "failed"
-				item.Message = err.Error()
-				summary.Failed++
-			} else {
-				item.Status = "succeeded"
-				summary.Succeeded++
-			}
-		}
-
-		summary.Items = append(summary.Items, item)
-	}
-
+	s.logic.invalidateConfigCaches(context.WithoutCancel(ctx), written)
 	return summary, nil
 }
 
 // copyConfigAssets copies assets referenced in the config content.
-func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targetEnv, targetPipeline string) error {
+// 在写协调事务内执行:资源元数据用事务连接,新建文件登记进 created 供提交失败清理。
+func (s *Service) copyConfigAssets(ctx context.Context, l *Logic, cfg *model.Config, targetEnv, targetPipeline string, created *[]createdResourceFile) error {
 	// 提取资源引用
 	assetIDs := extractAssetIDsFromContent(cfg.Content)
 	if len(assetIDs) == 0 {
@@ -454,17 +488,18 @@ func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targe
 
 	// 记录旧 ID 到新 ID 的映射
 	idMapping := make(map[string]string)
+	var createdFiles []createdResourceFile
+	cleanupNewFiles := func() { s.cleanupCreatedResourceFiles(ctx, createdFiles) }
 
 	for _, oldID := range assetIDs {
 		// 获取原资源
-		oldAsset, err := s.logic.GetAsset(ctx, oldID)
+		oldAsset, err := l.GetAsset(ctx, oldID)
 		if err != nil {
-			continue // 跳过不存在的资源
+			continue // 跳过不存在的资源(既有语义)
 		}
 
-		// 读取原文件
-		oldPath := filepath.Join(dataDirectory, oldAsset.Path)
-		data, err := os.ReadFile(oldPath)
+		// 读取原文件(本地与对象存储统一走受管读取)
+		data, err := s.readManagedAssetFileBytes(ctx, oldAsset)
 		if err != nil {
 			continue
 		}
@@ -472,16 +507,19 @@ func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targe
 		// 生成新 ID 并写入文件
 		newID := uuid.NewString()
 		if err := ensureUploadDir(newID); err != nil {
+			cleanupNewFiles()
 			return err
 		}
 
 		newRelPath := filepath.Join(uploadDirectory, newID, oldAsset.FileName)
 		newFullPath := filepath.Join(dataDirectory, newRelPath)
 		if err := os.WriteFile(newFullPath, data, 0o644); err != nil {
+			cleanupNewFiles()
 			return err
 		}
+		createdFiles = append(createdFiles, createdResourceFile{kind: "local", path: newFullPath})
 
-		// 创建新资源记录
+		// 创建新资源记录(同一协调事务连接)
 		newAsset := &model.Asset{
 			FileID:         newID,
 			EnvironmentKey: targetEnv,
@@ -491,7 +529,8 @@ func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targe
 			ContentType:    oldAsset.ContentType,
 			Path:           newRelPath,
 		}
-		if err := s.logic.CreateAsset(ctx, newAsset); err != nil {
+		if err := l.CreateAsset(ctx, newAsset); err != nil {
+			cleanupNewFiles()
 			return err
 		}
 
@@ -502,7 +541,7 @@ func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targe
 	for oldID, newID := range idMapping {
 		cfg.Content = strings.ReplaceAll(cfg.Content, "asset://"+oldID, "asset://"+newID)
 	}
-
+	*created = append(*created, createdFiles...)
 	return nil
 }
 

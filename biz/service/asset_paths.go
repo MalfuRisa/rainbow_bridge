@@ -61,7 +61,18 @@ func (s *Service) MigrateToFullAssetPaths(ctx context.Context) error {
 	if err := s.logic.db.WithContext(ctx).Where("type = ?", "image").Find(&configs).Error; err != nil {
 		return err
 	}
+	// 启动内容迁移必须尊重持久冻结状态:locked 范围的配置跳过并记录,不能借初始化改写内容。
+	lockedScopes, err := s.lockedScopeSet(ctx)
+	if err != nil {
+		return err
+	}
+	skippedLocked := 0
 	for _, cfg := range configs {
+		if lockedScopes[FreezeScopeRef{EnvironmentKey: cfg.EnvironmentKey, PipelineKey: cfg.PipelineKey}] {
+			skippedLocked++
+			fmt.Printf("asset migration: scope %s/%s locked; skipped resource_key=%s\n", cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
+			continue
+		}
 		normalized := storageAssetPath(cfg.Content, s.basePath)
 		if !strings.HasPrefix(normalized, fileURLPrefix) {
 			if strings.Contains(normalized, fileURLPrefix) && !strings.HasPrefix(normalized, "http://") && !strings.HasPrefix(normalized, "https://") {
@@ -92,6 +103,9 @@ func (s *Service) MigrateToFullAssetPaths(ctx context.Context) error {
 			return err
 		}
 		s.logic.invalidateConfigCaches(ctx, []model.Config{cfg})
+	}
+	if skippedLocked > 0 {
+		fmt.Printf("asset migration: %d locked configs skipped\n", skippedLocked)
 	}
 	return nil
 }

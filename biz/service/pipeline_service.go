@@ -24,14 +24,6 @@ func (s *Service) AddPipeline(ctx context.Context, environmentKey string, pl *pl
 		return errors.New("environment_key is required")
 	}
 
-	exists, err := s.logic.pipelineDAO.ExistsByKey(ctx, s.logic.db, environmentKey, pl.GetPipelineKey())
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrPipelineKeyExists
-	}
-
 	entity := &model.Pipeline{
 		EnvironmentKey: environmentKey,
 		PipelineKey:    pl.GetPipelineKey(),
@@ -40,7 +32,20 @@ func (s *Service) AddPipeline(ctx context.Context, environmentKey string, pl *pl
 		SortOrder:      int(pl.GetSortOrder()),
 		IsActive:       pl.GetIsActive(),
 	}
-	return s.logic.pipelineDAO.Create(ctx, s.logic.db, entity)
+	// 在同环境新建其他渠道允许(不修改已冻结渠道);新渠道补建 unlocked 状态行。
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		exists, err := txLogic.pipelineDAO.ExistsByKey(gateCtx, txLogic.db, environmentKey, entity.PipelineKey)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrPipelineKeyExists
+		}
+		if err := txLogic.pipelineDAO.Create(gateCtx, txLogic.db, entity); err != nil {
+			return err
+		}
+		return txLogic.ensurePipelineStateExists(gateCtx, environmentKey, entity.PipelineKey)
+	})
 }
 
 // UpdatePipeline updates an existing pipeline.
@@ -52,14 +57,6 @@ func (s *Service) UpdatePipeline(ctx context.Context, environmentKey string, pl 
 		return errors.New("environment_key is required")
 	}
 
-	_, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, environmentKey, pl.GetPipelineKey())
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrPipelineNotFound
-		}
-		return err
-	}
-
 	entity := &model.Pipeline{
 		EnvironmentKey: environmentKey,
 		PipelineKey:    pl.GetPipelineKey(),
@@ -68,10 +65,23 @@ func (s *Service) UpdatePipeline(ctx context.Context, environmentKey string, pl 
 		SortOrder:      int(pl.GetSortOrder()),
 		IsActive:       pl.GetIsActive(),
 	}
-	return s.logic.pipelineDAO.Update(ctx, s.logic.db, entity)
+	// 冻结范围的渠道属性不允许被修改。
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if _, err := txLogic.pipelineDAO.GetByKey(gateCtx, txLogic.db, environmentKey, entity.PipelineKey); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPipelineNotFound
+			}
+			return err
+		}
+		if err := txLogic.ensurePipelineUnlocked(gateCtx, environmentKey, entity.PipelineKey); err != nil {
+			return err
+		}
+		return txLogic.pipelineDAO.Update(gateCtx, txLogic.db, entity)
+	})
 }
 
 // DeletePipeline deletes a pipeline by key.
+// 冻结状态与审计记录保留(删除重建时不复用已发生过的 revision)。
 func (s *Service) DeletePipeline(ctx context.Context, environmentKey, pipelineKey string) error {
 	if pipelineKey == "" {
 		return ErrPipelineKeyRequired
@@ -80,15 +90,18 @@ func (s *Service) DeletePipeline(ctx context.Context, environmentKey, pipelineKe
 		return errors.New("environment_key is required")
 	}
 
-	_, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, environmentKey, pipelineKey)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrPipelineNotFound
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if _, err := txLogic.pipelineDAO.GetByKey(gateCtx, txLogic.db, environmentKey, pipelineKey); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPipelineNotFound
+			}
+			return err
 		}
-		return err
-	}
-
-	return s.logic.pipelineDAO.Delete(ctx, s.logic.db, environmentKey, pipelineKey)
+		if err := txLogic.ensurePipelineUnlocked(gateCtx, environmentKey, pipelineKey); err != nil {
+			return err
+		}
+		return txLogic.pipelineDAO.Delete(gateCtx, txLogic.db, environmentKey, pipelineKey)
+	})
 }
 
 // GetPipeline returns a pipeline by key.

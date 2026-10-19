@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { Layout } from '@/components/ui/layout'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Lock } from 'lucide-vue-next'
 import SourceTargetSelector from '@/components/Migration/SourceTargetSelector.vue'
 import ChangePreview from '@/components/Migration/ChangePreview.vue'
 import MigrationOperation from '@/components/Migration/MigrationOperation.vue'
 import { useEnvironmentStore } from '@/stores/environment'
+import { useFreezeStore } from '@/stores/freeze'
 import { transferApi } from '@/lib/api/transfer'
 import { configApi } from '@/lib/api/config'
 import { fromApiConfig } from '@/lib/api/transformers'
+import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
 import { toast } from 'vue-sonner'
 import type { ConfigItem, ConfigType } from '@/lib/types'
 
@@ -25,6 +29,7 @@ export interface MigrationConfig {
 }
 
 const environmentStore = useEnvironmentStore()
+const freezeStore = useFreezeStore()
 
 const sourceEnvKey = ref('')
 const sourcePipelineKey = ref('')
@@ -39,6 +44,23 @@ const sourceConfigs = ref<ConfigItem[]>([])
 onMounted(() => {
   environmentStore.fetchOverview()
 })
+
+// 目标范围锁定状态:locked 时阻止启动迁移;源范围 locked 允许只读复制
+watch([targetEnvKey, targetPipelineKey], ([envKey, pipelineKey]) => {
+  if (envKey && pipelineKey) {
+    freezeStore.loadStatus(envKey, pipelineKey)
+  }
+})
+
+watch([sourceEnvKey, sourcePipelineKey], ([envKey, pipelineKey]) => {
+  if (envKey && pipelineKey) {
+    freezeStore.loadStatus(envKey, pipelineKey)
+  }
+})
+
+const targetLocked = computed(() => freezeStore.isLocked(targetEnvKey.value, targetPipelineKey.value))
+const targetFrozenReason = computed(() => freezeStore.statusFor(targetEnvKey.value, targetPipelineKey.value)?.last_reason || '')
+const sourceLocked = computed(() => freezeStore.isLocked(sourceEnvKey.value, sourcePipelineKey.value))
 
 const validatePreviewInputs = (): boolean => {
   return !!sourceEnvKey.value && !!sourcePipelineKey.value && !!targetEnvKey.value && !!targetPipelineKey.value
@@ -82,6 +104,10 @@ const generatePreviewData = (sourceList: ConfigItem[], targetMap: Map<string, Co
 
 const handlePreview = async () => {
   if (!validatePreviewInputs()) return
+  if (targetLocked.value) {
+    toast.error(`目标范围已冻结,无法迁移到该范围${targetFrozenReason.value ? `(原因:${targetFrozenReason.value})` : ''}`)
+    return
+  }
 
   status.value = 'previewing'
 
@@ -155,6 +181,10 @@ const handleMigrationResult = (result: MigrationResult | null) => {
 
 const handleMigrate = async () => {
   if (!validateMigrationInputs()) return
+  if (targetLocked.value) {
+    toast.error('目标范围已冻结,迁移被阻止;请先解除冻结')
+    return
+  }
 
   status.value = 'migrating'
 
@@ -164,7 +194,12 @@ const handleMigrate = async () => {
     handleMigrationResult(result)
   } catch (error) {
     status.value = 'error'
-    toast.error('迁移失败，请重试')
+    if (isFreezeBlockedError(error)) {
+      await freezeStore.loadStatus(targetEnvKey.value, targetPipelineKey.value)
+      toast.error(freezeErrorMessage(error))
+    } else {
+      toast.error('迁移失败，请重试')
+    }
   }
 }
 
@@ -194,12 +229,31 @@ const handleReset = () => {
     />
 
     <template v-else>
+      <Alert v-if="targetLocked" variant="destructive" class="mb-4">
+        <Lock class="h-4 w-4" />
+        <AlertTitle>目标范围已冻结,迁移被阻止</AlertTitle>
+        <AlertDescription>
+          {{ targetEnvKey }}/{{ targetPipelineKey }}
+          <span v-if="targetFrozenReason">(原因:{{ targetFrozenReason }})</span>
+          。请先解除目标冻结后再迁移。
+        </AlertDescription>
+      </Alert>
+      <Alert v-else-if="sourceLocked" class="mb-4">
+        <Lock class="h-4 w-4" />
+        <AlertTitle>源范围已冻结</AlertTitle>
+        <AlertDescription>
+          从冻结源复制到未冻结目标是允许的;源范围本身不会被修改。
+        </AlertDescription>
+      </Alert>
+
       <SourceTargetSelector 
         v-model:source-env-key="sourceEnvKey"
         v-model:source-pipeline-key="sourcePipelineKey"
         v-model:target-env-key="targetEnvKey"
         v-model:target-pipeline-key="targetPipelineKey"
         :status="status"
+        :target-locked="targetLocked"
+        :target-frozen-reason="targetFrozenReason"
         @preview="handlePreview"
       />
 

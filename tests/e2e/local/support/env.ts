@@ -46,6 +46,9 @@ export function dbtoolPath(): string {
 }
 
 /** 冻结测试管理令牌:只用于专项套件(脚本注入,绝不落盘)。 */
+export function freezeToken(): string {
+  return required('RB_QA_FREEZE_TOKEN')
+}
 
 export function expectedStatePath(): string {
   return required('RB_QA_EXPECTED_STATE')

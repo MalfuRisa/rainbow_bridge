@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Upload, Loader2, Search } from 'lucide-vue-next'
@@ -12,17 +13,28 @@ const props = defineProps<{
   selectedPipelineKey: string
   searchTerm: string
   onSearchChange: (value: string) => void
+  /** 当前范围已冻结:上传入口禁用 */
+  frozen?: boolean
+  frozenReason?: string
 }>()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const handleUploadClick = () => {
+  if (props.frozen) {
+    toast.error(`该范围已冻结,无法上传资源${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`)
+    return
+  }
   fileInputRef.value?.click()
 }
 
 const handleFileChange = async (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file || !props.selectedEnvKey || !props.selectedPipelineKey) return
+  if (props.frozen) {
+    toast.error('该范围已冻结,无法上传资源')
+    return
+  }
 
   await assetStore.uploadAsset(file, props.selectedEnvKey, props.selectedPipelineKey)
 
@@ -53,7 +65,8 @@ const handleFileChange = async (e: Event) => {
     />
     <Button
       @click="handleUploadClick"
-      :disabled="!selectedEnvKey || !selectedPipelineKey || assetStore.loading"
+      :disabled="!selectedEnvKey || !selectedPipelineKey || assetStore.loading || frozen"
+      :title="frozen ? `已冻结:${frozenReason || '该范围不可上传资源'}` : undefined"
     >
       <Loader2 v-if="assetStore.loading" class="w-4 h-4 mr-2 animate-spin" />
       <Upload v-else class="w-4 h-4 mr-2" />

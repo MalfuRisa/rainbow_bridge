@@ -61,7 +61,10 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	}
 
 	// Auto migrate database tables
-	if err := db.AutoMigrate(&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{},
+		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+	); err != nil {
 		return nil, err
 	}
 
@@ -103,6 +106,11 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 
 	// Create service instance
 	svc := service.NewService(db, redisClient, basePath, cfg)
+
+	// 冻结基础结构必须在 HTTP 开放前就绪:协调行 + 存量渠道补初始 unlocked 状态(幂等,不重置既有状态)。
+	if err := svc.EnsureFreezeBootstrap(context.Background()); err != nil {
+		return nil, err
+	}
 
 	// Set version information
 	versionhandler.AppVersion = buildConfig.Version

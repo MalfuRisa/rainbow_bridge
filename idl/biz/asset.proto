@@ -38,6 +38,7 @@ message UploadAssetResponse {
   string msg = 2;
   string error = 3;
   AssetData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // GetFileRequest is used to get a file by ID.

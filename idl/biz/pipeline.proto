@@ -62,6 +62,7 @@ message PipelineResponse {
   string msg = 2;
   string error = 3;
   PipelineData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // PipelineListResponse is a unified response for pipeline list.
@@ -88,6 +89,7 @@ message DeletePipelineResponse {
   int32 code = 1;
   string msg = 2;
   string error = 3;
+  string error_type = 4; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // PipelineService handles pipeline CRUD operations.

@@ -13,6 +13,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
+	"gorm.io/gorm"
 )
 
 // --------------------- MinIO helper functions ---------------------
@@ -48,6 +49,21 @@ func (s *Service) getMinioClient() (*minio.Client, error) {
 	return client, nil
 }
 
+// minioObjectExists 检查受管对象是否存在;其余错误原样返回(不吞掉存储故障)。
+func (s *Service) minioObjectExists(ctx context.Context, objectName string) (bool, error) {
+	client, err := s.getMinioClient()
+	if err != nil {
+		return false, err
+	}
+	if _, err := client.StatObject(ctx, s.config.Storage.Minio.Bucket, objectName, minio.StatObjectOptions{}); err != nil {
+		if isMissingObject(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // --------------------- Asset operations ---------------------
 
 func (s *Service) ListAssets(ctx context.Context, environmentKey, pipelineKey string) ([]*common.FileAsset, error) {
@@ -80,65 +96,99 @@ func (s *Service) UploadAsset(ctx context.Context, input *FileUploadInput) (*com
 		fileName = fileID
 	}
 
-	contentType := detectContentType(input.ContentType, input.Data)
-	fileSize := int64(len(input.Data))
-	var relativePath string
-
-	// 根据配置选择存储方式
-	if s.config != nil && s.config.Storage.Type == "minio" {
-		// 使用 MinIO 存储
-		client, err := s.getMinioClient()
+	var (
+		asset      *model.Asset
+		reference  string
+		createdRel string
+	)
+	// 冻结检查必须在创建任何目录/文件之前;文件与元数据写入都在同一次协调存续期内。
+	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if err := txLogic.ensurePipelineUnlocked(gateCtx, input.EnvironmentKey, input.PipelineKey); err != nil {
+			return err
+		}
+		write, err := s.writeAssetPayload(gateCtx, fileID, fileName, input)
 		if err != nil {
-			return nil, "", err
+			return err
 		}
-
-		objectName := filepath.Join(input.EnvironmentKey, input.PipelineKey, fileID, fileName)
-		_, err = client.PutObject(ctx, s.config.Storage.Minio.Bucket, objectName, strings.NewReader(string(input.Data)), fileSize, minio.PutObjectOptions{
-			ContentType: contentType,
-		})
-		if err != nil {
-			return nil, "", err
+		createdRel = write.relativePath
+		record := &model.Asset{
+			FileID:         fileID,
+			EnvironmentKey: input.EnvironmentKey,
+			PipelineKey:    input.PipelineKey,
+			FileName:       fileName,
+			ContentType:    write.contentType,
+			FileSize:       write.fileSize,
+			Path:           write.relativePath,
+			Remark:         input.Remark,
 		}
-
-		relativePath = objectName
-	} else {
-		// 使用本地存储
-		if err := ensureUploadDir(fileID); err != nil {
-			return nil, "", err
+		if err := txLogic.CreateAsset(gateCtx, record); err != nil {
+			// 元数据失败:清理刚写入的文件,不留孤儿
+			_ = s.removeAssetPayload(gateCtx, write)
+			createdRel = ""
+			return err
 		}
-
-		relativePath = filepath.Join(uploadDirectory, fileID, fileName)
-		fullPath := filepath.Join(dataDirectory, relativePath)
-		if err := os.WriteFile(fullPath, input.Data, 0o644); err != nil {
-			return nil, "", err
-		}
-	}
-
-	asset := &model.Asset{
-		FileID:         fileID,
-		EnvironmentKey: input.EnvironmentKey,
-		PipelineKey:    input.PipelineKey,
-		FileName:       fileName,
-		ContentType:    contentType,
-		FileSize:       fileSize,
-		Path:           relativePath,
-		Remark:         input.Remark,
-	}
-	if err := s.logic.CreateAsset(ctx, asset); err != nil {
-		// 清理已上传的文件
-		if s.config != nil && s.config.Storage.Type == "minio" {
-			client, _ := s.getMinioClient()
-			if client != nil {
-				_ = client.RemoveObject(ctx, s.config.Storage.Minio.Bucket, relativePath, minio.RemoveObjectOptions{})
-			}
-		} else {
-			_ = os.Remove(filepath.Join(dataDirectory, relativePath))
+		asset = record
+		reference = fmt.Sprintf("%s%s", assetScheme, fileID)
+		return nil
+	})
+	if err != nil {
+		if createdRel != "" {
+			// 事务回滚:清理本次新建、未被引用的文件(不触碰既有共享资源)
+			_ = s.removeAssetPayload(ctx, assetPayload{relativePath: createdRel})
 		}
 		return nil, "", err
 	}
-
-	reference := fmt.Sprintf("%s%s", assetScheme, fileID)
 	return s.decorateAsset(assetModelToPB(asset)), reference, nil
+}
+
+// assetPayload 描述一次资源文件写入的落点,用于失败清理。
+type assetPayload struct {
+	relativePath string
+	contentType  string
+	fileSize     int64
+}
+
+// writeAssetPayload 依据存储配置写入资源字节;本地与对象存储都保持有界单次写入。
+func (s *Service) writeAssetPayload(ctx context.Context, fileID, fileName string, input *FileUploadInput) (assetPayload, error) {
+	contentType := detectContentType(input.ContentType, input.Data)
+	fileSize := int64(len(input.Data))
+	if s.config != nil && s.config.Storage.Type == "minio" {
+		client, err := s.getMinioClient()
+		if err != nil {
+			return assetPayload{}, err
+		}
+		objectName := filepath.Join(input.EnvironmentKey, input.PipelineKey, fileID, fileName)
+		if _, err := client.PutObject(ctx, s.config.Storage.Minio.Bucket, objectName, strings.NewReader(string(input.Data)), fileSize, minio.PutObjectOptions{
+			ContentType: contentType,
+		}); err != nil {
+			return assetPayload{}, err
+		}
+		return assetPayload{relativePath: objectName, contentType: contentType, fileSize: fileSize}, nil
+	}
+	if err := ensureUploadDir(fileID); err != nil {
+		return assetPayload{}, err
+	}
+	relativePath := filepath.Join(uploadDirectory, fileID, fileName)
+	fullPath := filepath.Join(dataDirectory, relativePath)
+	if err := os.WriteFile(fullPath, input.Data, 0o644); err != nil {
+		return assetPayload{}, err
+	}
+	return assetPayload{relativePath: relativePath, contentType: contentType, fileSize: fileSize}, nil
+}
+
+// removeAssetPayload 清理本次写入产生的文件(仅用于失败回滚;fileID 为新建唯一 ID)。
+func (s *Service) removeAssetPayload(ctx context.Context, payload assetPayload) error {
+	if payload.relativePath == "" {
+		return nil
+	}
+	if s.config != nil && s.config.Storage.Type == "minio" {
+		client, err := s.getMinioClient()
+		if err != nil {
+			return err
+		}
+		return client.RemoveObject(ctx, s.config.Storage.Minio.Bucket, payload.relativePath, minio.RemoveObjectOptions{})
+	}
+	return os.Remove(filepath.Join(dataDirectory, payload.relativePath))
 }
 
 func (s *Service) GetAssetFile(ctx context.Context, fileID string) (*model.Asset, string, error) {
@@ -170,7 +220,9 @@ func (s *Service) GetAssetFile(ctx context.Context, fileID string) (*model.Asset
 		err = client.FGetObject(ctx, s.config.Storage.Minio.Bucket, asset.Path, tempPath, minio.GetObjectOptions{})
 		if err != nil {
 			_ = os.Remove(tempPath)
-			if isMissingObject(err) { return nil, "", ErrAssetNotFound }
+			if isMissingObject(err) {
+				return nil, "", ErrAssetNotFound
+			}
 			return nil, "", err
 		}
 

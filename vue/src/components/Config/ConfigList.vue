@@ -19,6 +19,9 @@ const props = defineProps<{
   selectedPipelineKey: string
   selectedEnvironmentName: string | undefined
   selectedPipelineName: string | undefined
+  /** 当前范围已冻结:禁止配置新增/编辑/删除,并说明原因 */
+  frozen?: boolean
+  frozenReason?: string
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +32,7 @@ const emit = defineEmits<{
     type: string
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string) => void): void
   (e: 'update', config: {
     id: string
     name: string
@@ -37,7 +40,7 @@ const emit = defineEmits<{
     type: string
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string) => void): void
   (e: 'delete', id: string): void
   (e: 'imagePreview', url: string, name: string): void
 }>()
@@ -78,8 +81,8 @@ const handleCreate = (config: {
   type: string
   content: string
   description: string
-}) => {
-  emit('create', config)
+}, done: (ok: boolean, message?: string) => void) => {
+  emit('create', config, done)
 }
 
 const handleUpdate = (config: {
@@ -89,8 +92,8 @@ const handleUpdate = (config: {
   type: string
   content: string
   description: string
-}) => {
-  emit('update', config)
+}, done: (ok: boolean, message?: string) => void) => {
+  emit('update', config, done)
 }
 
 const handleReset = () => {
@@ -102,7 +105,12 @@ const handleReset = () => {
   <Card class="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-300">
     <CardHeader class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <CardTitle class="text-xl font-semibold text-gray-900 dark:text-white">配置列表</CardTitle>
+        <CardTitle class="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+          配置列表
+          <Badge v-if="frozen" variant="destructive" class="px-2 py-0.5 text-xs" :title="frozenReason || undefined">
+            已冻结
+          </Badge>
+        </CardTitle>
         <div class="flex items-center gap-4">
           <div class="relative">
             <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -121,6 +129,8 @@ const handleReset = () => {
             :selected-pipeline-key="selectedPipelineKey"
             :selected-environment-name="selectedEnvironmentName"
             :selected-pipeline-name="selectedPipelineName"
+            :frozen="frozen"
+            :frozen-reason="frozenReason"
             @update:open="isAddDialogOpen = $event"
             @update:editing-config="editingConfig = $event"
             @create="handleCreate"
@@ -180,7 +190,7 @@ const handleReset = () => {
                 <div class="flex items-center justify-end gap-2">
                   <Dialog :open="editingConfig?.id === config.id" @update:open="(open) => { if (!open) editingConfig = null; else handleEdit(config) }">
                     <DialogTrigger as-child>
-                      <Button variant="ghost" size="icon" @click="handleEdit(config)" class="h-9 w-9 hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <Button variant="ghost" size="icon" @click="handleEdit(config)" :disabled="frozen" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑配置'}` : undefined" class="h-9 w-9 hover:bg-gray-100 dark:hover:bg-gray-700">
                         <Pencil class="w-4 h-4 text-gray-600 dark:text-gray-300" />
                       </Button>
                     </DialogTrigger>
@@ -196,6 +206,8 @@ const handleReset = () => {
                         :selected-pipeline-key="selectedPipelineKey"
                         :selected-environment-name="selectedEnvironmentName"
                         :selected-pipeline-name="selectedPipelineName"
+                        :frozen="frozen"
+                        :frozen-reason="frozenReason"
                         @update:open="(value) => { if (!value) editingConfig = null }"
                         @update:editing-config="editingConfig = $event"
                         @update="handleUpdate"
@@ -206,7 +218,8 @@ const handleReset = () => {
                   <Button
                     variant="ghost"
                     size="icon"
-                    :disabled="loading"
+                    :disabled="loading || frozen"
+                    :title="frozen ? `已冻结:${frozenReason || '该范围不可删除配置'}` : undefined"
                     @click="handleDelete(config.id)"
                     class="h-9 w-9 hover:bg-gray-100 dark:hover:bg-gray-700"
                   >

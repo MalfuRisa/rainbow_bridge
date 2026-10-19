@@ -21,14 +21,6 @@ func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) er
 		return ErrEnvironmentKeyRequired
 	}
 
-	exists, err := s.logic.environmentDAO.ExistsByKey(ctx, s.logic.db, env.GetEnvironmentKey())
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrEnvironmentKeyExists
-	}
-
 	entity := &model.Environment{
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
@@ -37,25 +29,30 @@ func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) er
 		IsActive:        env.GetIsActive(),
 	}
 
-	// Use transaction to ensure atomicity
-	return s.logic.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Create environment
-		if err := s.logic.environmentDAO.Create(ctx, tx, entity); err != nil {
+	// 在写协调事务内完成:存在性检查 → 创建环境 → 创建默认渠道 → 补建渠道冻结状态行
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		exists, err := txLogic.environmentDAO.ExistsByKey(gateCtx, txLogic.db, entity.EnvironmentKey)
+		if err != nil {
 			return err
 		}
-		// 2. Create default pipeline
+		if exists {
+			return ErrEnvironmentKeyExists
+		}
+		if err := txLogic.environmentDAO.Create(gateCtx, txLogic.db, entity); err != nil {
+			return err
+		}
 		defaultPipeline := &model.Pipeline{
-			EnvironmentKey: env.GetEnvironmentKey(),
+			EnvironmentKey: entity.EnvironmentKey,
 			PipelineKey:    "default",
 			PipelineName:   "默认渠道",
 			Description:    "系统默认渠道",
 			SortOrder:      0,
 			IsActive:       true,
 		}
-		if err := s.logic.pipelineDAO.Create(ctx, tx, defaultPipeline); err != nil {
+		if err := txLogic.pipelineDAO.Create(gateCtx, txLogic.db, defaultPipeline); err != nil {
 			return err
 		}
-		return nil
+		return txLogic.ensurePipelineStateExists(gateCtx, entity.EnvironmentKey, defaultPipeline.PipelineKey)
 	})
 }
 
@@ -65,14 +62,6 @@ func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment)
 		return ErrEnvironmentKeyRequired
 	}
 
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, env.GetEnvironmentKey())
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrEnvironmentNotFound
-		}
-		return err
-	}
-
 	entity := &model.Environment{
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
@@ -80,7 +69,19 @@ func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment)
 		SortOrder:       int(env.GetSortOrder()),
 		IsActive:        env.GetIsActive(),
 	}
-	return s.logic.environmentDAO.Update(ctx, s.logic.db, entity)
+	// 环境内存在 locked 渠道时整体拒绝(名称/激活状态变化不作用于冻结范围)
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if _, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, entity.EnvironmentKey); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrEnvironmentNotFound
+			}
+			return err
+		}
+		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, entity.EnvironmentKey); err != nil {
+			return err
+		}
+		return txLogic.environmentDAO.Update(gateCtx, txLogic.db, entity)
+	})
 }
 
 // DeleteEnvironment deletes an environment by key.
@@ -89,15 +90,19 @@ func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) 
 		return ErrEnvironmentKeyRequired
 	}
 
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, environmentKey)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrEnvironmentNotFound
+	// 冻结状态与审计记录在父级删除后保留(不随删除清除)。
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if _, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, environmentKey); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrEnvironmentNotFound
+			}
+			return err
 		}
-		return err
-	}
-
-	return s.logic.environmentDAO.Delete(ctx, s.logic.db, environmentKey)
+		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, environmentKey); err != nil {
+			return err
+		}
+		return txLogic.environmentDAO.Delete(gateCtx, txLogic.db, environmentKey)
+	})
 }
 
 // GetEnvironment returns an environment by key.

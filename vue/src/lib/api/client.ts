@@ -28,47 +28,54 @@ interface RawApiResponse<T = unknown> extends ApiResponse<T> {
 }
 
 async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
+  const contentType = response.headers.get('content-type')
+  const isJson = contentType?.includes('application/json')
+  // 非 2xx 也要读取响应体:冻结拦截等错误用真实 HTTP 状态 + error_type 表达
+  const body: (RawApiResponse<T> & { error_type?: string }) | null = isJson
+    ? await response.json().catch(() => null)
+    : null
+
   if (!response.ok) {
-    throw new ApiError(
-      response.status, 
-      `HTTP error: ${response.status}`,
+    const apiError = new ApiError(
+      typeof body?.code === 'number' ? body.code : response.status,
+      body?.error || body?.msg || `HTTP error: ${response.status}`,
       '',
       ErrorType.HTTP
     )
+    apiError.errorType = body?.error_type || ''
+    apiError.payload = (body as unknown as Record<string, unknown>) || undefined
+    throw apiError
   }
 
-  const contentType = response.headers.get('content-type')
-  if (contentType?.includes('application/json')) {
-    const data: RawApiResponse<T> = await response.json()
-
+  if (body) {
     if (
-      data.operate_response &&
-      data.operate_response.code !== 0 &&
-      data.operate_response.code !== 200
+      body.operate_response &&
+      body.operate_response.code !== 0 &&
+      body.operate_response.code !== 200
     ) {
       throw new ApiError(
-        data.operate_response.code,
-        data.operate_response.msg || '操作失败',
-        data.operate_response.error || '',
+        body.operate_response.code,
+        body.operate_response.msg || '操作失败',
+        body.operate_response.error || '',
         ErrorType.API
       )
     }
 
-    if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
+    if (body.code !== undefined && body.code !== 0 && body.code !== 200) {
       throw new ApiError(
-        data.code, 
-        data.msg || '请求失败', 
-        data.error || '',
+        body.code,
+        body.msg || '请求失败',
+        body.error || '',
         ErrorType.API
       )
     }
 
     // 标准化响应格式
     return {
-      code: data.code || 0,
-      msg: data.msg || 'success',
-      error: data.error || '',
-      data: data.data
+      code: body.code || 0,
+      msg: body.msg || 'success',
+      error: body.error || '',
+      data: body.data
     }
   }
 

@@ -35,6 +35,10 @@ func Create(ctx context.Context, c *app.RequestContext) {
 	}
 	cfg, err := svc.AddConfig(handler.EnrichContext(ctx, c), req.GetConfig())
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.ConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrConfigAliasExists) {
 			status = consts.StatusBadRequest
@@ -75,6 +79,10 @@ func Update(ctx context.Context, c *app.RequestContext) {
 	}
 	cfg, err := svc.UpdateConfig(handler.EnrichContext(ctx, c), req.GetConfig())
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.ConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound
@@ -114,6 +122,10 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	if err := svc.DeleteConfig(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetResourceKey()); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.DeleteConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound

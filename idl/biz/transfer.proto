@@ -52,6 +52,7 @@ message ImportResponse {
   string msg = 2;
   string error = 3;
   ImportSummary data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // ExportRequest is used to export configurations.
@@ -111,6 +112,7 @@ message MigrateResponse {
   string msg = 2;
   string error = 3;
   MigrateSummary data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // ==================== Export Tree ====================

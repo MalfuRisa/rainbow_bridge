@@ -32,10 +32,18 @@ func testService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { keeper.Close(); sqlDB.Close() })
-	if err := conn.AutoMigrate(&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{}); err != nil {
+	if err := conn.AutoMigrate(
+		&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{},
+		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+	); err != nil {
 		t.Fatal(err)
 	}
-	return NewService(conn, nil, "/rainbow-bridge", nil)
+	svc := NewService(conn, nil, "/rainbow-bridge", nil)
+	// 冻结基础结构随夹具就绪:写协调行 + 存量渠道状态行
+	if err := svc.EnsureFreezeBootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 func allConfigRows(t *testing.T, s *Service) []model.Config {

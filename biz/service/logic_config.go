@@ -14,6 +14,7 @@ import (
 )
 
 // --------------------- Config Operations ---------------------
+// 注意:本层只管数据库写入;缓存失效由调用方在写协调事务成功提交后进行。
 
 func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 	if cfg == nil {
@@ -35,13 +36,7 @@ func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 		}
 	}
 
-	if err := l.configDAO.Create(ctx, l.db, cfg); err != nil {
-		return err
-	}
-
-	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{*cfg})
-
-	return nil
+	return l.configDAO.Create(ctx, l.db, cfg)
 }
 
 func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config) error {
@@ -59,13 +54,7 @@ func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config) error {
 		return err
 	}
 
-	if err := l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg); err != nil {
-		return err
-	}
-
-	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{*cfg})
-
-	return nil
+	return l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg)
 }
 
 func (l *Logic) DeleteConfig(ctx context.Context, environmentKey, pipelineKey, resourceKey string) error {
@@ -77,13 +66,7 @@ func (l *Logic) DeleteConfig(ctx context.Context, environmentKey, pipelineKey, r
 		return err
 	}
 
-	if err := l.configDAO.DeleteByEnvironmentPipelineAndResourceKey(ctx, l.db, environmentKey, pipelineKey, resourceKey); err != nil {
-		return err
-	}
-
-	l.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{{EnvironmentKey: environmentKey, PipelineKey: pipelineKey, ResourceKey: resourceKey}})
-
-	return nil
+	return l.configDAO.DeleteByEnvironmentPipelineAndResourceKey(ctx, l.db, environmentKey, pipelineKey, resourceKey)
 }
 
 func (l *Logic) GetConfig(ctx context.Context, environmentKey, pipelineKey, resourceKey string) (*model.Config, error) {

@@ -33,7 +33,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		if err := ensureDir(filepath.Dir(cfg.SQLite.Path)); err != nil {
 			return nil, err
 		}
-		dialector = sqlite.Open(cfg.SQLite.Path)
+		// busy_timeout 让跨进程/多连接的写冲突有界等待,而不是立即 SQLITE_BUSY 报错;
+		// 写协调(config_write_gate)依赖这一等待语义实现"先写完再锁版"。
+		dialector = sqlite.Open(withSQLiteBusyTimeout(cfg.SQLite.Path))
 	case "mysql":
 		if cfg.MySQL.DSN == "" {
 			return nil, fmt.Errorf("mysql dsn must be configured")
@@ -88,4 +90,16 @@ func ensureDir(dir string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+// withSQLiteBusyTimeout 在 DSN 上附加 busy_timeout pragma;已显式配置时不重复添加。
+func withSQLiteBusyTimeout(dsn string) string {
+	const pragma = "_pragma=busy_timeout(10000)"
+	if strings.Contains(dsn, "busy_timeout") {
+		return dsn
+	}
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + pragma
+	}
+	return dsn + "?" + pragma
 }

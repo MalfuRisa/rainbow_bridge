@@ -50,6 +50,10 @@ func Create(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.AddPipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrPipelineKeyExists) {
 			status = consts.StatusBadRequest
@@ -100,6 +104,10 @@ func Update(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.UpdatePipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrPipelineNotFound) {
 			status = consts.StatusNotFound
@@ -150,6 +158,10 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.DeletePipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.PipelineKey); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &pipeline.DeletePipelineResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrPipelineNotFound) {
 			status = consts.StatusNotFound

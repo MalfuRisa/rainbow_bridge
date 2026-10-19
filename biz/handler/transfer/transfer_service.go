@@ -64,6 +64,10 @@ func Import(ctx context.Context, c *app.RequestContext) {
 
 		outcome, err := svc.ImportArchiveWithResult(handler.EnrichContext(ctx, c), data, "zip", targetEnv, targetPipeline, nil, overwrite)
 		if err != nil {
+			if freezeErr, ok := service.AsFreezeError(err); ok {
+				c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+				return
+			}
 			c.JSON(consts.StatusOK, &transfer.ImportResponse{
 				Code:  consts.StatusInternalServerError,
 				Msg:   "error",
@@ -94,6 +98,10 @@ func Import(ctx context.Context, c *app.RequestContext) {
 	}
 	written, err := svc.ImportConfigsWithResult(handler.EnrichContext(ctx, c), req.GetConfigs(), req.GetOverwrite())
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &transfer.ImportResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -162,6 +170,10 @@ func Migrate(ctx context.Context, c *app.RequestContext) {
 	// 调用 Service 层
 	data, err := svc.MigrateConfigs(handler.EnrichContext(ctx, c), req)
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &transfer.MigrateResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &transfer.MigrateResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -346,6 +358,10 @@ func ImportSelective(ctx context.Context, c *app.RequestContext) {
 
 	outcome, err := svc.ImportConfigsSelectiveWithResult(handler.EnrichContext(ctx, c), data, fileHeader.Filename, selections, overwrite)
 	if err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &transfer.ImportResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",

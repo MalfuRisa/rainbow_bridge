@@ -42,6 +42,10 @@ func Create(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.AddEnvironment(handler.EnrichContext(ctx, c), req.Environment); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &environment.EnvironmentResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrEnvironmentKeyExists) {
 			status = consts.StatusBadRequest
@@ -84,6 +88,10 @@ func Update(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.UpdateEnvironment(handler.EnrichContext(ctx, c), req.Environment); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &environment.EnvironmentResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrEnvironmentNotFound) {
 			status = consts.StatusNotFound
@@ -126,6 +134,10 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.DeleteEnvironment(handler.EnrichContext(ctx, c), req.EnvironmentKey); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &environment.DeleteEnvironmentResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrEnvironmentNotFound) {
 			status = consts.StatusNotFound

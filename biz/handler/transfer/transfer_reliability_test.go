@@ -30,10 +30,16 @@ func TestHTTPConfigCreateAndImportSummary(t *testing.T) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	defer sqlDB.Close()
-	if err := conn.AutoMigrate(&model.Config{}); err != nil {
+	if err := conn.AutoMigrate(
+		&model.Config{}, &model.Environment{}, &model.Pipeline{},
+		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	s := service.NewService(conn, nil, "", nil)
+	if err := s.EnsureFreezeBootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	previous := svc
 	SetService(s)
 	confighandler.SetService(s)

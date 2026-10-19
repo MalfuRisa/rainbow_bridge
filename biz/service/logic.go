@@ -22,6 +22,10 @@ type Logic struct {
 	assetDAO       *db.AssetDAO
 	environmentDAO *db.EnvironmentDAO
 	pipelineDAO    *db.PipelineDAO
+	freezeDAO      *db.FreezeDAO
+	writeGateDAO   *db.WriteGateDAO
+	// inTx 表示该 Logic 绑定在写协调事务上,禁止再开 l.db 独立事务。
+	inTx bool
 }
 
 func NewLogic(dbConn *gorm.DB, redisClient *redis.Client) *Logic {
@@ -32,5 +36,7 @@ func NewLogic(dbConn *gorm.DB, redisClient *redis.Client) *Logic {
 		assetDAO:       db.NewAssetDAO(),
 		environmentDAO: db.NewEnvironmentDAO(),
 		pipelineDAO:    db.NewPipelineDAO(),
+		freezeDAO:      db.NewFreezeDAO(),
+		writeGateDAO:   db.NewWriteGateDAO(),
 	}
 }

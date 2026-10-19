@@ -57,6 +57,7 @@ message ConfigResponse {
   string msg = 2;
   string error = 3;
   ConfigData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // ConfigListResponse is a unified response for config list.
@@ -83,6 +84,7 @@ message DeleteConfigResponse {
   int32 code = 1;
   string msg = 2;
   string error = 3;
+  string error_type = 4; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // ConfigService handles configuration CRUD operations.

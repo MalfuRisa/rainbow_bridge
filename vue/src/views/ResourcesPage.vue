@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { Layout } from '@/components/ui/layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, Layers } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useAssetStore } from '@/stores/asset'
+import { useFreezeStore } from '@/stores/freeze'
 import { resolveAssetUrl } from '@/lib/utils'
 
 // 导入拆分的组件
@@ -15,6 +16,7 @@ import Uploader from '@/components/resources/Uploader.vue'
 
 const environmentStore = useEnvironmentStore()
 const assetStore = useAssetStore()
+const freezeStore = useFreezeStore()
 
 const searchTerm = ref('')
 const selectedEnvKey = ref('')
@@ -44,8 +46,12 @@ onMounted(() => {
 watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
   if (envKey && pipelineKey) {
     assetStore.fetchAssets(envKey, pipelineKey)
+    freezeStore.loadStatus(envKey, pipelineKey)
   }
 })
+
+const frozen = computed(() => freezeStore.isLocked(selectedEnvKey.value, selectedPipelineKey.value))
+const frozenReason = computed(() => freezeStore.statusFor(selectedEnvKey.value, selectedPipelineKey.value)?.last_reason || '')
 
 // 处理复制链接
 const handleCopy = async (url: string, id: string) => {
@@ -101,6 +107,8 @@ const handleSearchChange = (value: string) => {
             :selectedPipelineKey="selectedPipelineKey"
             :searchTerm="searchTerm"
             :onSearchChange="handleSearchChange"
+            :frozen="frozen"
+            :frozenReason="frozenReason"
           />
         </div>
       </CardHeader>

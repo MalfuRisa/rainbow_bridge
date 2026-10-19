@@ -13,6 +13,9 @@ interface Props {
   targetEnvKey: string
   targetPipelineKey: string
   status: string
+  /** 目标范围已冻结:阻止启动迁移(服务端同样会拒绝) */
+  targetLocked?: boolean
+  targetFrozenReason?: string
 }
 
 interface Emits {
@@ -149,7 +152,8 @@ const handlePreview = () => {
       <div class="mt-6 flex justify-end">
         <Button
           @click="handlePreview"
-          :disabled="!sourceEnvKey || !sourcePipelineKey || !targetEnvKey || !targetPipelineKey || status === 'previewing'"
+          :disabled="!sourceEnvKey || !sourcePipelineKey || !targetEnvKey || !targetPipelineKey || status === 'previewing' || targetLocked"
+          :title="targetLocked ? `目标已冻结:${targetFrozenReason || '不可迁移到该范围'}` : undefined"
         >
           <Loader2 v-if="status === 'previewing'" class="w-4 h-4 mr-2 animate-spin" />
           {{ status === 'previewing' ? '预览中...' : '预览变更' }}

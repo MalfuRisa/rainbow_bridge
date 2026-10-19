@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { ImportSummary } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Upload, Loader2, Check, AlertCircle, X, FileArchive, FileWarning } from 'lucide-vue-next'
+import { Upload, Loader2, Check, AlertCircle, X, FileArchive, FileWarning, Lock } from 'lucide-vue-next'
 import ImportPreviewTree from './ImportPreviewTree.vue'
 import { transferApi, type ExportSelection, type ImportPreviewData } from '@/lib/api/transfer'
+import { useFreezeStore } from '@/stores/freeze'
+import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
 
 const emit = defineEmits<{
   (e: 'load-tree'): void
 }>()
+
+const freezeStore = useFreezeStore()
 
 const importFile = ref<File | null>(null)
 const importPreview = ref<ImportPreviewData | null>(null)
@@ -29,10 +33,39 @@ const resourceMessage = computed(() => {
   return '配置导入完成（无资源恢复任务）'
 })
 const importError = ref<string | null>(null)
+const importErrorIsFreeze = ref(false)
 const overwriteConflicts = ref(false)
 const showConfirmDialog = ref(false)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 预览后加载所有目标范围的冻结状态(仅展示;服务端仍会在提交时复查)
+watch(importPreview, async (preview) => {
+  if (!preview) return
+  const scopes: { environmentKey: string; pipelineKey: string }[] = []
+  for (const env of preview.environments) {
+    for (const pipeline of env.pipelines) {
+      scopes.push({ environmentKey: env.environment_key, pipelineKey: pipeline.pipeline_key })
+    }
+  }
+  await freezeStore.loadMany(scopes)
+})
+
+const lockedTargets = computed(() => {
+  if (!importPreview.value) return [] as { label: string; reason: string }[]
+  const targets: { label: string; reason: string }[] = []
+  for (const env of importPreview.value.environments) {
+    for (const pipeline of env.pipelines) {
+      if (freezeStore.isLocked(env.environment_key, pipeline.pipeline_key)) {
+        targets.push({
+          label: `${env.environment_key}/${pipeline.pipeline_key}`,
+          reason: freezeStore.statusFor(env.environment_key, pipeline.pipeline_key)?.last_reason || '',
+        })
+      }
+    }
+  }
+  return targets
+})
 
 const validateFile = (file: File): string | null => {
   const fileName = file.name.toLowerCase()
@@ -123,12 +156,28 @@ const handleImport = async () => {
   isImporting.value = true
   importSuccess.value = false
   importError.value = null
+  importErrorIsFreeze.value = false
 
   try {
     await executeImport()
     handleImportSuccess()
   } catch (err) {
-    importError.value = err instanceof Error ? err.message : '导入失败'
+    if (isFreezeBlockedError(err)) {
+      // 后端 409 展示实际受阻目标与原因,并刷新冻结状态;选择保持不丢
+      importErrorIsFreeze.value = true
+      importError.value = freezeErrorMessage(err)
+      if (importPreview.value) {
+        const scopes: { environmentKey: string; pipelineKey: string }[] = []
+        for (const env of importPreview.value.environments) {
+          for (const pipeline of env.pipelines) {
+            scopes.push({ environmentKey: env.environment_key, pipelineKey: pipeline.pipeline_key })
+          }
+        }
+        await freezeStore.loadMany(scopes)
+      }
+    } else {
+      importError.value = err instanceof Error ? err.message : '导入失败'
+    }
   } finally {
     isImporting.value = false
     showConfirmDialog.value = false
@@ -142,6 +191,7 @@ const clearImport = () => {
   importPreview.value = null
   importSelections.value = []
   importError.value = null
+  importErrorIsFreeze.value = false
   overwriteConflicts.value = false
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
@@ -224,6 +274,20 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
+          <Alert v-if="lockedTargets.length" variant="destructive">
+            <Lock class="h-4 w-4" />
+            <AlertTitle>以下目标已冻结，导入将在写入前被整体拒绝</AlertTitle>
+            <AlertDescription>
+              <ul class="mt-1 space-y-0.5">
+                <li v-for="target in lockedTargets" :key="target.label">
+                  <span class="font-mono">{{ target.label }}</span>
+                  <span v-if="target.reason">(原因:{{ target.reason }})</span>
+                </li>
+              </ul>
+              请先解除冻结,或取消选择这些目标。
+            </AlertDescription>
+          </Alert>
+
           <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
             <div class="p-4 bg-muted rounded-lg text-center">
               <div class="text-2xl font-bold text-blue-600">
@@ -321,6 +385,13 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
                 {{ isImporting ? '导入中...' : '开始导入' }}
               </Button>
             </div>
+
+            <Alert v-if="importError" variant="destructive">
+              <Lock v-if="importErrorIsFreeze" class="h-4 w-4" />
+              <AlertCircle v-else class="h-4 w-4" />
+              <AlertTitle>{{ importErrorIsFreeze ? '导入被拒绝(目标已冻结)' : '导入失败' }}</AlertTitle>
+              <AlertDescription>{{ importError }}</AlertDescription>
+            </Alert>
 
             <Alert v-if="importSuccess" class="border-emerald-500 bg-emerald-50 dark:bg-emerald-950">
               <Check class="h-4 w-4 text-emerald-600" />

@@ -21,6 +21,9 @@ const props = defineProps<{
   selectedPipelineKey: string
   selectedEnvironmentName: string | undefined
   selectedPipelineName: string | undefined
+  /** 当前范围已冻结:写入口禁用,并说明原因 */
+  frozen?: boolean
+  frozenReason?: string
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +35,7 @@ const emit = defineEmits<{
     type: ConfigType
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string) => void): void
   (e: 'update', config: {
     id: string
     name: string
@@ -40,7 +43,7 @@ const emit = defineEmits<{
     type: ConfigType
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string) => void): void
   (e: 'reset'): void
 }>()
 
@@ -61,6 +64,8 @@ const colorValue = ref('#3B82F6')
 const errors = ref<{ field: string; message: string }[]>([])
 
 const isEditing = computed(() => !!props.editingConfig)
+const saving = ref(false)
+const saveError = ref('')
 
 const getFieldError = (field: string) => {
   return errors.value.find(e => e.field === field)?.message
@@ -73,6 +78,8 @@ const resetForm = () => {
   booleanValue.value = false
   colorValue.value = '#3B82F6'
   errors.value = []
+  saveError.value = ''
+  saving.value = false
   emit('update:editingConfig', null)
   emit('reset')
 }
@@ -187,22 +194,38 @@ const validateForm = (): boolean => {
 
 const handleAdd = () => {
   if (!validateForm()) return
-  
+  if (props.frozen) {
+    saveError.value = `该范围已冻结,无法新增配置${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`
+    return
+  }
+  saveError.value = ''
+  saving.value = true
   emit('create', {
     name: formData.value.name,
     alias: formData.value.alias,
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
+  }, (ok, message) => {
+    saving.value = false
+    if (ok) {
+      emit('update:open', false)
+      resetForm()
+      return
+    }
+    // 失败时保留用户输入,不显示成功;服务端错误(含冻结范围)在此展示
+    saveError.value = message || '保存失败'
   })
-
-  emit('update:open', false)
-  resetForm()
 }
 
 const handleUpdate = () => {
   if (!validateForm() || !props.editingConfig) return
-  
+  if (props.frozen) {
+    saveError.value = `该范围已冻结,无法修改配置${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`
+    return
+  }
+  saveError.value = ''
+  saving.value = true
   emit('update', {
     id: props.editingConfig.id,
     name: formData.value.name,
@@ -210,12 +233,21 @@ const handleUpdate = () => {
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
+  }, (ok, message) => {
+    saving.value = false
+    if (ok) {
+      resetForm()
+      return
+    }
+    saveError.value = message || '保存失败'
   })
-
-  resetForm()
 }
 
 const handleFileUpload = async (type: 'file' | 'image') => {
+  if (props.frozen) {
+    saveError.value = `该范围已冻结,无法上传资源${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`
+    return
+  }
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = type === 'image' ? 'image/*' : '*/*'
@@ -239,6 +271,7 @@ const handleFileUpload = async (type: 'file' | 'image') => {
         }
       } catch (e) {
         console.error('上传失败:', e)
+        saveError.value = e instanceof Error ? e.message : '资源上传失败'
       }
     }
 
@@ -295,7 +328,7 @@ if (isEditing.value && props.editingConfig) {
 <template>
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
     <DialogTrigger as-child>
-      <Button v-if="!isEditing" class="h-10 px-4">
+      <Button v-if="!isEditing" class="h-10 px-4" :disabled="frozen" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑'}` : undefined">
         <Plus class="w-4 h-4 mr-2" />
         新增配置
       </Button>
@@ -308,6 +341,12 @@ if (isEditing.value && props.editingConfig) {
         </DialogDescription>
       </DialogHeader>
       <div class="space-y-5 py-4">
+        <div v-if="saveError" class="p-4 rounded-md bg-destructive/10 border border-destructive/20">
+          <div class="flex items-center gap-2 text-destructive font-medium text-sm">
+            <AlertCircle class="w-4 h-4" />
+            {{ saveError }}
+          </div>
+        </div>
         <div v-if="errors.length > 0" class="p-4 rounded-md bg-destructive/10 border border-destructive/20">
           <div class="flex items-center gap-2 text-destructive font-medium text-sm mb-2">
             <AlertCircle class="w-4 h-4" />
@@ -448,7 +487,8 @@ if (isEditing.value && props.editingConfig) {
           <div
             v-else-if="formData.type === 'file' || formData.type === 'image'"
             class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors bg-muted/50 dark:bg-muted"
-            :class="getFieldError('content') ? 'border-destructive' : ''"
+            :class="[getFieldError('content') ? 'border-destructive' : '', frozen ? 'opacity-60 pointer-events-none' : '']"
+            :title="frozen ? `已冻结:${frozenReason || '该范围不可上传资源'}` : undefined"
             @click="handleFileUpload(formData.type)"
           >
             <Upload v-if="!formData.content" class="w-10 h-10 mx-auto text-muted-foreground" />
@@ -484,8 +524,8 @@ if (isEditing.value && props.editingConfig) {
           <Button variant="outline" @click="emit('update:open', false); resetForm()" class="h-10">
             取消
           </Button>
-          <Button @click="isEditing ? handleUpdate() : handleAdd()" class="h-10">
-            保存
+          <Button @click="isEditing ? handleUpdate() : handleAdd()" class="h-10" :disabled="saving || frozen">
+            {{ saving ? '保存中...' : '保存' }}
           </Button>
         </DialogFooter>
       </div>

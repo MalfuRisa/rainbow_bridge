@@ -56,6 +56,7 @@ message EnvironmentResponse {
   string msg = 2;
   string error = 3;
   EnvironmentData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // EnvironmentListResponse is a unified response for environment list.
@@ -82,6 +83,7 @@ message DeleteEnvironmentResponse {
   int32 code = 1;
   string msg = 2;
   string error = 3;
+  string error_type = 4; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // EnvironmentService handles environment CRUD operations.

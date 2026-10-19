@@ -6,7 +6,7 @@
 # Full : T01–T26 全量，并执行重启、备份恢复与根路径前缀重跑。
 [CmdletBinding()]
 param(
-    [ValidateSet('Smoke', 'Full')]
+    [ValidateSet('Smoke', 'Full', 'Freeze')]
     [string]$Suite = 'Smoke',
     [string]$RunId = '',
     [switch]$SkipBuild,
@@ -22,6 +22,8 @@ $script:RunContext = $null
 $script:Instances = @()
 $script:PhaseResults = [ordered]@{}
 $script:GoExe = ''
+# 本轮冻结测试管理令牌:每次运行随机生成,只注入实例进程与被测用例进程环境,不写入证据文件
+$script:FreezeToken = 'qa-freeze-' + ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
 
 # ---------------------------------------------------------------- utilities
 
@@ -256,7 +258,7 @@ function Start-QaInstance {
     }
     $outLog = Join-Path $ctx.artifacts "instance-$Name.out.log"
     $errLog = Join-Path $ctx.artifacts "instance-$Name.err.log"
-    $process = Invoke-WithEnv -Set @{ FRONTEND_DIR = $FrontendDir } -Clear @('BASE_PATH') -Action {
+    $process = Invoke-WithEnv -Set @{ FRONTEND_DIR = $FrontendDir; RAINBOW_FREEZE_ADMIN_TOKEN = $script:FreezeToken } -Clear @('BASE_PATH') -Action {
         Start-Process -FilePath $exe -ArgumentList '--config', $configPath `
             -WorkingDirectory $InstanceDir -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $outLog -RedirectStandardError $errLog
@@ -426,6 +428,7 @@ function Invoke-PlaywrightPhase {
         RB_QA_TEST_RESULTS_DIR = Join-Path $ctx.artifacts "test-results-$Phase"
         RB_QA_EXPECTED_STATE   = Join-Path $ctx.artifacts 'expected-state.json'
         RB_QA_CHANNEL          = $BrowserChannel
+        RB_QA_FREEZE_TOKEN     = $script:FreezeToken
         RB_QA_A_ORIGIN         = $(if ($a) { $a.origin } else { '' })
         RB_QA_A_PREFIX         = $(if ($a) { $a.basePath } else { '' })
         RB_QA_A_PID            = $(if ($a) { "$($a.pid)" } else { '' })
@@ -542,8 +545,8 @@ function Invoke-QaRun {
     Get-InstanceDataSnapshot $instanceBRecord 'pre-suite'
 
     # ---- 前缀阶段:主套件
-    $grep = $(if ($Suite -eq 'Smoke') { '@smoke' } else { '' })
-    $invert = $(if ($Suite -eq 'Smoke') { '' } else { '@postrestart|@recovery|@root' })
+    $grep = $(if ($Suite -eq 'Smoke') { '@smoke' } elseif ($Suite -eq 'Freeze') { '@freeze' } else { '' })
+    $invert = $(if ($Suite -eq 'Smoke') { '' } elseif ($Suite -eq 'Freeze') { '' } else { '@postrestart|@recovery|@root|@freeze' })
     $mainExit = Invoke-PlaywrightPhase -Phase 'prefix-main' -Grep $grep -GrepInvert $invert
 
     Get-InstanceDataSnapshot $second 'post-suite'

@@ -12,14 +12,22 @@ import (
 )
 
 // ImportConfigs preserves the existing error-only entry point.
+// 仅用于测试与兼容调用;生产写入口经 Service.ImportConfigsWithResult 的写协调与冻结检查。
 func (l *Logic) ImportConfigs(ctx context.Context, configs []model.Config, overwrite bool) error {
-	_, err := l.importConfigs(ctx, configs, overwrite)
-	return err
+	written, err := l.importConfigs(ctx, configs, overwrite)
+	if err != nil {
+		return err
+	}
+	l.invalidateConfigCaches(context.WithoutCancel(ctx), written)
+	return nil
 }
 
 // ImportConfigsWithResult returns only committed writes, in input order.
+// 整个导入在写协调事务内执行:先对全部目标范围做冻结检查,任一 locked 则整请求在写前拒绝
+// (包括 overwrite=false),不把冻结项静默当冲突跳过。
 func (s *Service) ImportConfigsWithResult(ctx context.Context, configs []*common.ResourceConfig, overwrite bool) ([]*common.ResourceConfig, error) {
 	models := make([]model.Config, 0, len(configs))
+	scopes := make([]FreezeScopeRef, 0, len(configs))
 	for i, cfg := range configs {
 		if cfg == nil {
 			return nil, fmt.Errorf("config %d: payload required", i+1)
@@ -27,11 +35,27 @@ func (s *Service) ImportConfigsWithResult(ctx context.Context, configs []*common
 		normalized := pbConfigToModel(cfg)
 		s.normalizeStoredConfig(normalized)
 		models = append(models, *normalized)
+		scopes = append(scopes, FreezeScopeRef{
+			EnvironmentKey: normalized.EnvironmentKey,
+			PipelineKey:    normalized.PipelineKey,
+		})
 	}
-	written, err := s.logic.importConfigs(ctx, models, overwrite)
+	var written []model.Config
+	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if err := txLogic.ensureScopesUnlocked(gateCtx, scopes); err != nil {
+			return err
+		}
+		result, err := txLogic.importConfigs(gateCtx, models, overwrite)
+		if err != nil {
+			return err
+		}
+		written = result
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
+	s.logic.invalidateConfigCaches(context.WithoutCancel(ctx), written)
 	return s.decorateConfigList(configSliceToPB(written)), nil
 }
 
@@ -119,7 +143,6 @@ func (l *Logic) importConfigs(ctx context.Context, configs []model.Config, overw
 	if err != nil {
 		return nil, err
 	}
-	l.invalidateConfigCaches(context.WithoutCancel(ctx), written)
 	return written, nil
 }
 
