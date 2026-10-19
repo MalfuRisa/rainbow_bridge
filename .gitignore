@@ -82,6 +82,10 @@ coverage.out
 /vue/.output/
 /vue/.DS_Store
 /vue/*.log
+*.tsbuildinfo
+/vue/vite.config.js
+/vue/vite.config.d.ts
+/tests/e2e/local-artifacts/
 
 # Trae IDE files
 .trae/

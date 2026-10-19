@@ -118,7 +118,7 @@ func (l *Logic) validateConfigContent(ctx context.Context, cfg *model.Config) er
 			return errors.New("配置内容不能为空")
 		}
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(cfg.Content), &payload); err != nil {
+		if err := DecodeConfigJSON([]byte(cfg.Content), &payload); err != nil {
 			return fmt.Errorf("配置内容需为 JSON 对象: %w", err)
 		}
 		if payload == nil {

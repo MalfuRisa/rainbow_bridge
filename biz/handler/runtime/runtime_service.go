@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -68,18 +67,19 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 		Type           string      `json:"type"`
 		Remark         string      `json:"remark"`
 		IsPerm         bool        `json:"is_perm"`
+		Description string `json:"description"`
 	}
 
 	type CustomRuntimeConfigData struct {
-		Configs      []CustomResourceConfig `json:"configs"`
-		Environment  *runtime.EnvironmentInfo `json:"environment"`
+		Configs     []CustomResourceConfig   `json:"configs"`
+		Environment *runtime.EnvironmentInfo `json:"environment"`
 	}
 
 	type CustomRuntimeConfigResponse struct {
-		Code    int32                    `json:"code"`
-		Msg     string                   `json:"msg"`
-		Error   string                   `json:"error"`
-		Data    CustomRuntimeConfigData  `json:"data"`
+		Code  int32                   `json:"code"`
+		Msg   string                  `json:"msg"`
+		Error string                  `json:"error"`
+		Data  CustomRuntimeConfigData `json:"data"`
 	}
 
 	// 转换配置数据
@@ -94,6 +94,7 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 			Type:           cfg.Type,
 			Remark:         cfg.Remark,
 			IsPerm:         cfg.IsPerm,
+			Description: cfg.Description,
 		}
 
 		// 对于 object 和 keyvalue 类型，解析为 JSON 对象
@@ -101,7 +102,7 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 		switch normalizedType {
 		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
 			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
+			if err := service.DecodeConfigJSON([]byte(cfg.Content), &content); err == nil {
 				customConfig.Content = content
 			} else {
 				customConfig.Content = cfg.Content
@@ -115,9 +116,9 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 
 	// 构建自定义响应
 	customResponse := CustomRuntimeConfigResponse{
-		Code:   resp.Code,
-		Msg:    resp.Msg,
-		Error:  resp.Error,
+		Code:  resp.Code,
+		Msg:   resp.Msg,
+		Error: resp.Error,
 		Data: CustomRuntimeConfigData{
 			Configs:     customConfigs,
 			Environment: resp.Data.Environment,
@@ -155,11 +156,7 @@ func ExportStatic(ctx context.Context, c *app.RequestContext) {
 	// 调用 service 层
 	data, filename, err := svc.ExportStaticPackage(handler.EnrichContext(ctx, c), environmentKey, pipelineKey)
 	if err != nil {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusInternalServerError,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+		handler.WriteExportError(c, err)
 		return
 	}
 

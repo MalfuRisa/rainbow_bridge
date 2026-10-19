@@ -24,7 +24,9 @@ func (s *Service) ImportConfigsWithResult(ctx context.Context, configs []*common
 		if cfg == nil {
 			return nil, fmt.Errorf("config %d: payload required", i+1)
 		}
-		models = append(models, *pbConfigToModel(cfg))
+		normalized := pbConfigToModel(cfg)
+		s.normalizeStoredConfig(normalized)
+		models = append(models, *normalized)
 	}
 	written, err := s.logic.importConfigs(ctx, models, overwrite)
 	if err != nil {

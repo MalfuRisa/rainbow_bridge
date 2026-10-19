@@ -11,7 +11,7 @@ import (
 var (
 	ErrResourceNotFound  = errors.New("resource not found")
 	ErrAssetNotFound     = errors.New("asset not found")
-	ErrConfigAliasExists = errors.New("该环境和渠道下已存在相同别名的配置")
+	ErrConfigAliasExists = db.ErrConfigAliasExists
 )
 
 // Logic contains business rules on top of data persistence.

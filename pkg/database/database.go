@@ -70,8 +70,13 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	sqlDB.SetMaxIdleConns(20)
-	sqlDB.SetMaxOpenConns(100)
+	if driver == "sqlite" || driver == "sqlite3" {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+	} else {
+		sqlDB.SetMaxIdleConns(20)
+		sqlDB.SetMaxOpenConns(100)
+	}
 	sqlDB.SetConnMaxLifetime(1 * time.Hour)
 	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
 

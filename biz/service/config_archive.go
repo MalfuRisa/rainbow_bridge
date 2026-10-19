@@ -17,7 +17,7 @@ func archiveConfigData(configs []model.Config) []map[string]any {
 		switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
 		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
 			var parsed any
-			if json.Unmarshal([]byte(cfg.Content), &parsed) == nil {
+			if DecodeConfigJSON([]byte(cfg.Content), &parsed) == nil {
 				content = parsed
 			}
 		}
@@ -34,7 +34,7 @@ func archiveConfigData(configs []model.Config) []map[string]any {
 // Archived objects are converted back to the string content API protocol.
 func decodeArchiveConfigs(data []byte) ([]*common.ResourceConfig, error) {
 	var rows []json.RawMessage
-	if err := json.Unmarshal(data, &rows); err != nil {
+	if err := DecodeConfigJSON(data, &rows); err != nil {
 		return nil, err
 	}
 	result := make([]*common.ResourceConfig, 0, len(rows))
@@ -43,16 +43,16 @@ func decodeArchiveConfigs(data []byte) ([]*common.ResourceConfig, error) {
 			return nil, fmt.Errorf("config %d: payload required", i+1)
 		}
 		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(row, &fields); err != nil {
+		if err := DecodeConfigJSON(row, &fields); err != nil {
 			return nil, err
 		}
 		if raw, ok := fields["content"]; ok {
 			var content string
-			if err := json.Unmarshal(raw, &content); err != nil {
+			if err := DecodeConfigJSON(raw, &content); err != nil {
 				var metadata struct {
 					Type string `json:"type"`
 				}
-				if err := json.Unmarshal(row, &metadata); err != nil {
+				if err := DecodeConfigJSON(row, &metadata); err != nil {
 					return nil, err
 				}
 				switch normalizeConfigTypeString(metadata.Type) {
@@ -68,7 +68,7 @@ func decodeArchiveConfigs(data []byte) ([]*common.ResourceConfig, error) {
 			return nil, err
 		}
 		var cfg common.ResourceConfig
-		if err := json.Unmarshal(normalized, &cfg); err != nil {
+		if err := DecodeConfigJSON(normalized, &cfg); err != nil {
 			return nil, err
 		}
 		result = append(result, &cfg)

@@ -62,7 +62,7 @@ func Import(ctx context.Context, c *app.RequestContext) {
 		targetPipeline := strings.TrimSpace(string(c.FormValue("pipeline_key")))
 		overwrite := strings.ToLower(string(c.FormValue("overwrite"))) == "true"
 
-		configs, err := svc.ImportConfigsArchive(handler.EnrichContext(ctx, c), data, targetEnv, targetPipeline, overwrite)
+		outcome, err := svc.ImportArchiveWithResult(handler.EnrichContext(ctx, c), data, "zip", targetEnv, targetPipeline, nil, overwrite)
 		if err != nil {
 			c.JSON(consts.StatusOK, &transfer.ImportResponse{
 				Code:  consts.StatusInternalServerError,
@@ -71,7 +71,7 @@ func Import(ctx context.Context, c *app.RequestContext) {
 			})
 			return
 		}
-		respondImportedConfigs(c, configs)
+		respondImportedConfigs(c, outcome.Configs, outcome.Resources)
 		return
 	}
 
@@ -226,11 +226,7 @@ func ExportSelective(ctx context.Context, c *app.RequestContext) {
 
 	data, filename, err := svc.ExportConfigsSelective(handler.EnrichContext(ctx, c), req.Selections, format)
 	if err != nil {
-		c.JSON(consts.StatusOK, &transfer.ExportResponse{
-			Code:  consts.StatusInternalServerError,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+		handler.WriteExportError(c, err)
 		return
 	}
 
@@ -348,7 +344,7 @@ func ImportSelective(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 
-	configs, err := svc.ImportConfigsSelective(handler.EnrichContext(ctx, c), data, fileHeader.Filename, selections, overwrite)
+	outcome, err := svc.ImportConfigsSelectiveWithResult(handler.EnrichContext(ctx, c), data, fileHeader.Filename, selections, overwrite)
 	if err != nil {
 		c.JSON(consts.StatusOK, &transfer.ImportResponse{
 			Code:  consts.StatusInternalServerError,
@@ -358,5 +354,5 @@ func ImportSelective(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	respondImportedConfigs(c, configs)
+	respondImportedConfigs(c, outcome.Configs, outcome.Resources)
 }

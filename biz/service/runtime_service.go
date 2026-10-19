@@ -7,15 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/minio/minio-go/v7"
+	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/runtime"
 	"gorm.io/gorm"
@@ -224,7 +220,7 @@ func (s *Service) writeRuntimeConfigArchive(ctx context.Context, runtimeData *ru
 		normalizedType := normalizeConfigTypeString(cfg.Type)
 		if normalizedType == "object" || normalizedType == "keyvalue" {
 			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
+			if err := DecodeConfigJSON([]byte(cfg.Content), &content); err == nil {
 				customConfig.Content = content
 			} else {
 				customConfig.Content = cfg.Content
@@ -260,75 +256,24 @@ func (s *Service) writeRuntimeConfigArchive(ctx context.Context, runtimeData *ru
 		return nil, err
 	}
 
-	// 提取配置中引用的资源文件 ID
-	assetIDs := extractAssetIDsFromCommonConfigs(runtimeData.Configs)
-	visited := make(map[string]struct{}, len(assetIDs))
-
-	// 构建 files 目录前缀：<base_path>/api/v1/asset/file/
+	models := make([]model.Config, 0, len(runtimeData.Configs))
+	for _, cfg := range runtimeData.Configs {
+		models = append(models, *pbConfigToModel(cfg))
+	}
+	prepared, err := s.prepareExportAssets(ctx, models, false)
+	if err != nil {
+		return nil, err
+	}
 	filesPrefix := buildFilesPrefix(s.basePath)
-
-	// 将资源文件打包到 zip 中
-	for _, assetID := range assetIDs {
-		if _, ok := visited[assetID]; ok {
-			continue
-		}
-		visited[assetID] = struct{}{}
-
-		asset, err := s.logic.GetAsset(ctx, assetID)
+	for _, item := range prepared {
+		name := path.Join(filesPrefix, item.metadata.FileID, item.metadata.FileName)
+		writer, err := zipWriter.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate})
 		if err != nil {
-			// 如果资源不存在，跳过
-			hlog.Errorf("get asset %s error: %v", assetID, err)
-			continue
+			return nil, err
 		}
-		if s.config != nil && s.config.Storage.Type == "minio" {
-			// 使用 MinIO 存储
-			client, err := s.getMinioClient()
-			if err != nil {
-				hlog.Errorf("get minio client error: %v", err)
-				continue
-			}
-
-			// 从 MinIO 获取对象
-			object, err := client.GetObject(ctx, s.config.Storage.Minio.Bucket, asset.Path, minio.GetObjectOptions{})
-			if err != nil {
-				hlog.Errorf("get object from minio error: %v", assetID, err)
-				continue
-			}
-			defer closeQuietly(object)
-
-			// 使用新的路径结构：<base_path>/api/v1/asset/file/<file_id>/<filename>
-			zipPath := path.Join(filesPrefix, asset.FileID, asset.FileName)
-			writer, err := zipWriter.CreateHeader(&zip.FileHeader{Name: zipPath, Method: zip.Deflate})
-			if err != nil {
-				hlog.Errorf("create zip header failed: %v", err)
-				return nil, err
-			}
-			if _, err := io.Copy(writer, object); err != nil {
-				hlog.Errorf("copy object to zip failed: %v", err)
-				return nil, err
-			}
-		} else {
-			fullPath := filepath.Join(dataDirectory, asset.Path)
-			file, err := os.Open(fullPath)
-			defer closeQuietly(file)
-			if err != nil {
-				hlog.Errorf("open asset %s error: %v", assetID, err)
-				// 如果文件不存在，跳过
-				continue
-			}
-			// 使用新的路径结构：<base_path>/api/v1/asset/file/<file_id>/<filename>
-			zipPath := path.Join(filesPrefix, asset.FileID, asset.FileName)
-			writer, err := zipWriter.CreateHeader(&zip.FileHeader{Name: zipPath, Method: zip.Deflate})
-			if err != nil {
-				hlog.Errorf("create zip header failed: %v", err)
-				return nil, err
-			}
-			if _, err := io.Copy(writer, file); err != nil {
-				hlog.Errorf("copy file to zip failed: %v", err)
-				return nil, err
-			}
+		if _, err := writer.Write(item.data); err != nil {
+			return nil, err
 		}
-
 	}
 
 	if err := zipWriter.Close(); err != nil {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { objectValueTokens, tokenDisplay } from '@/lib/config-json'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,6 +55,7 @@ const formData = ref({
 })
 
 const keyValuePairs = ref<{ key: string; value: string }[]>([{ key: '', value: '' }])
+let originalValueTokens = new Map<string, string>()
 const booleanValue = ref(false)
 const colorValue = ref('#3B82F6')
 const errors = ref<{ field: string; message: string }[]>([])
@@ -65,6 +67,7 @@ const getFieldError = (field: string) => {
 }
 
 const resetForm = () => {
+  originalValueTokens = new Map()
   formData.value = { name: '', alias: '', type: 'text', content: '', description: '' }
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
@@ -75,6 +78,7 @@ const resetForm = () => {
 }
 
 const handleTypeChange = (type: string) => {
+  originalValueTokens = new Map()
   formData.value = { ...formData.value, type: type as ConfigType, content: '' }
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
@@ -86,7 +90,11 @@ const getFinalContent = (): string => {
   switch (formData.value.type) {
     case 'keyvalue':
       const pairs = keyValuePairs.value.filter(p => p.key.trim())
-      return JSON.stringify(Object.fromEntries(pairs.map(p => [p.key, p.value])))
+      return '{' + pairs.map(p => {
+        const original = originalValueTokens.get(p.key)
+        const token = original !== undefined && tokenDisplay(original) === p.value ? original : JSON.stringify(p.value)
+        return JSON.stringify(p.key) + ':' + token
+      }).join(',') + '}'
     case 'boolean':
       return String(booleanValue.value)
     case 'color':
@@ -137,7 +145,7 @@ const validateForm = (): boolean => {
       } else {
         try {
           const parsed = JSON.parse(formData.value.content)
-          if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
             errors.value.push({ field: 'content', message: '请输入有效的JSON对象（非数组）' })
           }
         } catch {
@@ -254,8 +262,8 @@ if (isEditing.value && props.editingConfig) {
   let formattedContent = props.editingConfig.content
   if (props.editingConfig.type === 'object' && props.editingConfig.content.trim()) {
     try {
-      const parsed = JSON.parse(props.editingConfig.content)
-      formattedContent = JSON.stringify(parsed, null, 2)
+      JSON.parse(props.editingConfig.content)
+      formattedContent = props.editingConfig.content
     } catch {
       formattedContent = props.editingConfig.content
     }
@@ -271,8 +279,8 @@ if (isEditing.value && props.editingConfig) {
 
   if (props.editingConfig.type === 'keyvalue') {
     try {
-      const obj = JSON.parse(props.editingConfig.content)
-      keyValuePairs.value = Object.entries(obj).map(([key, value]) => ({ key, value: String(value) }))
+      originalValueTokens = objectValueTokens(props.editingConfig.content)
+      keyValuePairs.value = Array.from(originalValueTokens, ([key, value]) => ({ key, value: tokenDisplay(value) }))
     } catch {
       keyValuePairs.value = [{ key: '', value: '' }]
     }

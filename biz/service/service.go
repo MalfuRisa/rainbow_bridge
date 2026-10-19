@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/pkg/config"
+	"google.golang.org/protobuf/proto"
 
 	"gorm.io/gorm"
 )
@@ -142,50 +142,6 @@ func assetSliceToPB(assets []model.Asset) []*common.FileAsset {
 // --------------------- Service helpers ---------------------
 
 // MigrateToFullAssetPaths ensures all asset URLs and config contents use the full path with filename.
-func (s *Service) MigrateToFullAssetPaths(ctx context.Context) error {
-	// 1. Get all assets
-	var assets []model.Asset
-	if err := s.logic.db.Find(&assets).Error; err != nil {
-		return err
-	}
-
-	// 2. Update all image type configs to use full path
-	var configs []model.Config
-	if err := s.logic.db.Where("type = ?", "image").Find(&configs).Error; err != nil {
-		return err
-	}
-
-	assetMap := make(map[string]*model.Asset)
-	for i := range assets {
-		assetMap[assets[i].FileID] = &assets[i]
-	}
-
-	for i := range configs {
-		content := configs[i].Content
-		// Matches /api/v1/asset/file/{uuid} or /api/v1/asset/file/{uuid}/oldname
-		re := regexp.MustCompile(`/api/v1/asset/file/([a-zA-Z0-9\-]+)(/[^"'\s]*)?`)
-		newContent := re.ReplaceAllStringFunc(content, func(match string) string {
-			sub := re.FindStringSubmatch(match)
-			if len(sub) < 2 {
-				return match
-			}
-			fileID := sub[1]
-			if asset, ok := assetMap[fileID]; ok {
-				return s.generateFileURL(asset)
-			}
-			return match
-		})
-
-		if configs[i].Content != newContent {
-			if err := s.logic.db.Model(&configs[i]).Update("content", newContent).Error; err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
 func sanitizeServiceBasePath(input string) string {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" || trimmed == "/" {
@@ -217,7 +173,7 @@ func (s *Service) expandConfigContent(content string, typ string) string {
 		return s.applyFileURLPrefix(content)
 	}
 	var payload any
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+	if err := DecodeConfigJSON([]byte(content), &payload); err != nil {
 		return s.applyFileURLPrefix(content)
 	}
 	expanded := s.expandNestedValue(payload)
@@ -251,6 +207,7 @@ func (s *Service) decorateConfig(cfg *common.ResourceConfig) *common.ResourceCon
 	if cfg == nil || s == nil || s.basePath == "" {
 		return cfg
 	}
+	cfg = proto.Clone(cfg).(*common.ResourceConfig)
 	cfg.Type = normalizeConfigTypeString(cfg.GetType())
 	cfg.Content = s.expandConfigContent(cfg.GetContent(), cfg.Type)
 	return cfg
@@ -260,8 +217,8 @@ func (s *Service) decorateConfigList(list []*common.ResourceConfig) []*common.Re
 	if s == nil || s.basePath == "" {
 		return list
 	}
-	for _, cfg := range list {
-		s.decorateConfig(cfg)
+	for i, cfg := range list {
+		list[i] = s.decorateConfig(cfg)
 	}
 	return list
 }

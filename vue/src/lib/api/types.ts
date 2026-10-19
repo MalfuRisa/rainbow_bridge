@@ -141,7 +141,17 @@ export interface ImportSummaryItem {
   type: string
 }
 
+export interface ResourceImportResult {
+  status: string
+  expected: number
+  restored: number
+  reused: number
+  failed: number
+  issues: { file_id: string; path: string; reason: string }[]
+}
+
 export interface ImportSummary {
+  resource_import?: ResourceImportResult
   total: number
   environment_keys: string[]
   pipeline_keys: string[]

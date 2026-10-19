@@ -99,7 +99,7 @@ func setupStaticFileServer(h *server.Hertz, basePath string) {
 
 		// 如果路径以 /api/ 开头，跳过静态文件处理，让请求继续被 API 路由处理
 		if strings.HasPrefix(path, "/api/") {
-			ctx.Next(c)
+			writeUnknownAPI(ctx)
 			return
 		}
 
@@ -143,8 +143,7 @@ func setupStaticFileServer(h *server.Hertz, basePath string) {
 
 		// 如果路径以 /api/ 开头，返回404
 		if strings.HasPrefix(path, "/api/") {
-			ctx.Status(404)
-			ctx.JSON(404, map[string]string{"error": "not found"})
+			writeUnknownAPI(ctx)
 			return
 		}
 
@@ -186,4 +185,12 @@ func getContentType(path string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func writeUnknownAPI(ctx *app.RequestContext) {
+	if string(ctx.Method()) == "HEAD" {
+		ctx.Status(404)
+		return
+	}
+	ctx.JSON(404, map[string]any{"code": 404, "msg": "not found", "error": "not found"})
 }

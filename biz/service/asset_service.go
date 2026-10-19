@@ -170,6 +170,7 @@ func (s *Service) GetAssetFile(ctx context.Context, fileID string) (*model.Asset
 		err = client.FGetObject(ctx, s.config.Storage.Minio.Bucket, asset.Path, tempPath, minio.GetObjectOptions{})
 		if err != nil {
 			_ = os.Remove(tempPath)
+			if isMissingObject(err) { return nil, "", ErrAssetNotFound }
 			return nil, "", err
 		}
 

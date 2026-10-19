@@ -144,7 +144,7 @@ export const transferApi = {
 
   importFile: async (file: File): Promise<ImportSummary | null> => {
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('archive', file)
 
     const resp = await apiClient.upload<ImportSummary>('/api/v1/transfer/import', formData)
     return resp.data || null

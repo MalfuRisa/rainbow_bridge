@@ -1,82 +1,70 @@
 import { test, expect } from '@playwright/test'
 
+/**
+ * 环境管理用例(基于真实 UI:列表为 div 行、按钮文案为中文、删除无二次确认)。
+ * 注意:此文件属于旧的默认 e2e 配置(webServer 启动旧二进制)，
+ * 本机隔离套件在 tests/e2e/local 下运行，不依赖本文件。
+ */
 test.describe('Environment Management', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Navigate to environments page
-    await page.click('text=环境管理')
+    await page.getByText('环境管理', { exact: true }).first().click()
     await page.waitForURL('**/environments')
   })
 
   test('should display environments list', async ({ page }) => {
-    // Check page title
     await expect(page.locator('h1')).toContainText('环境管理')
-    
-    // Should have table or list
-    const listExists = await page.locator('table, [role="list"]').count() > 0
-    expect(listExists).toBeTruthy()
+    await expect(page.getByRole('button', { name: '新增环境' })).toBeVisible()
+    // 列表卡标题
+    await expect(page.getByText('环境列表')).toBeVisible()
   })
 
   test('should create new environment', async ({ page }) => {
-    // Click create button
-    await page.click('button:has-text("创建环境")')
-    
-    // Fill form
     const timestamp = Date.now()
-    await page.fill('input[name="environment_key"]', `test-env-${timestamp}`)
-    await page.fill('input[name="environment_name"]', `Test Environment ${timestamp}`)
-    await page.fill('textarea[name="description"]', 'E2E Test Environment')
-    
-    // Submit
-    await page.click('button:has-text("确定"), button:has-text("提交")')
-    
-    // Should see success message
-    await expect(page.locator('text=成功')).toBeVisible({ timeout: 5000 })
-    
-    // Should see new environment in list
-    await expect(page.locator(`text=test-env-${timestamp}`)).toBeVisible()
+    const envKey = `test-env-${timestamp}`
+    const envName = `Test Environment ${timestamp}`
+
+    await page.getByRole('button', { name: '新增环境' }).click()
+    await page.locator('#env-key').fill(envKey)
+    await page.locator('#env-name').fill(envName)
+    await page.getByRole('button', { name: '保存' }).click()
+
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '环境创建成功' }).first()).toBeVisible({
+      timeout: 10_000,
+    })
+    await expect(page.getByText(envName, { exact: true })).toBeVisible()
   })
 
-  test('should edit environment', async ({ page }) => {
-    // Find first edit button
-    const editButton = page.locator('button:has-text("编辑")').first()
-    if (await editButton.count() > 0) {
-      await editButton.click()
-      
-      // Update name
-      const nameInput = page.locator('input[name="environment_name"]')
-      await nameInput.fill(`Updated ${Date.now()}`)
-      
-      // Submit
-      await page.click('button:has-text("确定"), button:has-text("提交")')
-      
-      // Should see success message
-      await expect(page.locator('text=成功')).toBeVisible({ timeout: 5000 })
-    }
+  test('edit affordance is absent by design', async ({ page }) => {
+    // 环境行没有任何编辑入口(只有删除)。这里显式断言“不存在”，
+    // 替代过去“找不到按钮就静默跳过”的零断言写法。
+    const envKey = `no-edit-${Date.now()}`
+    await page.getByRole('button', { name: '新增环境' }).click()
+    await page.locator('#env-key').fill(envKey)
+    await page.locator('#env-name').fill(`No Edit ${envKey}`)
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect(page.getByText(`No Edit ${envKey}`, { exact: true })).toBeVisible({ timeout: 10_000 })
+
+    const row = page.getByText(`No Edit ${envKey}`, { exact: true }).locator('xpath=ancestor::div[.//button][1]')
+    await expect(row.locator('button')).toHaveCount(1)
+    await expect(row.locator('button .lucide-trash-2')).toHaveCount(1)
+    await expect(row.locator('button .lucide-pencil')).toHaveCount(0)
   })
 
   test('should delete environment', async ({ page }) => {
-    // Create a test environment first
-    await page.click('button:has-text("创建环境")')
     const timestamp = Date.now()
     const envKey = `delete-test-${timestamp}`
-    
-    await page.fill('input[name="environment_key"]', envKey)
-    await page.fill('input[name="environment_name"]', `To Delete ${timestamp}`)
-    await page.click('button:has-text("确定"), button:has-text("提交")')
-    await page.waitForTimeout(1000)
-    
-    // Find and delete it
-    const row = page.locator(`tr:has-text("${envKey}")`)
-    await row.locator('button:has-text("删除")').click()
-    
-    // Confirm deletion
-    await page.click('button:has-text("确认")')
-    
-    // Should see success message
-    await expect(page.locator('text=成功')).toBeVisible({ timeout: 5000 })
-    
-    // Should not see the environment anymore
-    await expect(page.locator(`text=${envKey}`)).not.toBeVisible()
+    const envName = `To Delete ${timestamp}`
+
+    await page.getByRole('button', { name: '新增环境' }).click()
+    await page.locator('#env-key').fill(envKey)
+    await page.locator('#env-name').fill(envName)
+    await page.getByRole('button', { name: '保存' }).click()
+    await expect(page.getByText(envName, { exact: true })).toBeVisible({ timeout: 10_000 })
+
+    const row = page.getByText(envName, { exact: true }).locator('xpath=ancestor::div[.//button][1]')
+    await row.locator('button .lucide-trash-2').first().click()
+
+    await expect(page.getByText(envName, { exact: true })).not.toBeVisible({ timeout: 10_000 })
   })
 })

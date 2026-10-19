@@ -27,6 +27,22 @@ message ImportSummary {
   repeated string environment_keys = 2;
   repeated string pipeline_keys = 3;
   repeated ImportSummaryItem items = 4;
+  ResourceImportResult resource_import = 5;
+}
+
+message ResourceImportResult {
+  string status = 1;
+  int32 expected = 2;
+  int32 restored = 3;
+  int32 reused = 4;
+  int32 failed = 5;
+  repeated ResourceImportIssue issues = 6;
+}
+
+message ResourceImportIssue {
+  string file_id = 1;
+  string path = 2;
+  string reason = 3;
 }
 
 // ImportResponse is a unified response for import operations.

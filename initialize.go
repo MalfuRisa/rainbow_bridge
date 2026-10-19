@@ -75,6 +75,10 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 		return nil, err
 	}
 
+	if err := database.PrepareConfigAliasConstraint(context.Background(), db); err != nil {
+		return nil, err
+	}
+
 	// Initialize Redis client (optional)
 	var redisClient *redis.Client
 	if cfg.Redis.Enabled {

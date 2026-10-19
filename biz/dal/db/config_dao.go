@@ -23,7 +23,7 @@ func (dao *ConfigDAO) Create(ctx context.Context, db *gorm.DB, entity *model.Con
 	if entity.ResourceKey == "" {
 		entity.ResourceKey = uuid.NewString()
 	}
-	return db.WithContext(ctx).Create(entity).Error
+	return configWriteError(db.WithContext(ctx).Create(entity).Error)
 }
 
 // UpdateByEnvironmentAndPipeline updates an existing configuration identified by environment_key + pipeline_key + resource_key.

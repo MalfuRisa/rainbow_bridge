@@ -14,6 +14,7 @@ func (s *Service) AddConfig(ctx context.Context, req *common.ResourceConfig) (*c
 		return nil, errors.New("config payload required")
 	}
 	model := pbConfigToModel(req)
+	s.normalizeStoredConfig(model)
 	if err := s.logic.AddConfig(ctx, model); err != nil {
 		return nil, err
 	}
@@ -25,6 +26,7 @@ func (s *Service) UpdateConfig(ctx context.Context, req *common.ResourceConfig) 
 		return nil, errors.New("config payload required")
 	}
 	model := pbConfigToModel(req)
+	s.normalizeStoredConfig(model)
 	if err := s.logic.UpdateConfig(ctx, model); err != nil {
 		return nil, err
 	}

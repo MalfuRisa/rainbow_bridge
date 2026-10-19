@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import type { ImportSummary } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +20,14 @@ const importSelections = ref<ExportSelection[]>([])
 const isParsing = ref(false)
 const isImporting = ref(false)
 const importSuccess = ref(false)
+const importResult = ref<ImportSummary | null>(null)
+const resourceMessage = computed(() => {
+  const result = importResult.value?.resource_import
+  if (!result) return '配置导入完成，资源状态未提供'
+  if (result.status === 'partial') return '配置已提交，部分资源未恢复'
+  if (result.status === 'complete') return '导入完成，资源恢复完整'
+  return '配置导入完成（无资源恢复任务）'
+})
 const importError = ref<string | null>(null)
 const overwriteConflicts = ref(false)
 const showConfirmDialog = ref(false)
@@ -64,6 +73,8 @@ const handleFileSelect = async (e: Event) => {
   }
 
   importFile.value = file
+  importSuccess.value = false
+  importResult.value = null
   importError.value = null
   importPreview.value = null
   isParsing.value = true
@@ -94,16 +105,12 @@ const checkImportConflicts = (): boolean => {
 const executeImport = async (): Promise<void> => {
   if (!importFile.value || !importPreview.value) return
   
-  await transferApi.importSelective(importFile.value, importSelections.value, overwriteConflicts.value)
+  importResult.value = await transferApi.importSelective(importFile.value, importSelections.value, overwriteConflicts.value)
 }
 
 const handleImportSuccess = () => {
   importSuccess.value = true
-  setTimeout(() => {
-    importSuccess.value = false
-    clearImport()
-    emit('load-tree')
-  }, 3000)
+  emit('load-tree')
 }
 
 const handleImport = async () => {
@@ -129,6 +136,8 @@ const handleImport = async () => {
 }
 
 const clearImport = () => {
+  importSuccess.value = false
+  importResult.value = null
   importFile.value = null
   importPreview.value = null
   importSelections.value = []
@@ -315,9 +324,18 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
 
             <Alert v-if="importSuccess" class="border-emerald-500 bg-emerald-50 dark:bg-emerald-950">
               <Check class="h-4 w-4 text-emerald-600" />
-              <AlertTitle class="text-emerald-600">导入成功</AlertTitle>
+              <AlertTitle>{{ resourceMessage }}</AlertTitle>
               <AlertDescription class="text-emerald-600">
-                数据已成功导入系统
+                本次写入 {{ importResult?.total ?? 0 }} 项配置。
+                <template v-if="importResult?.resource_import">
+                  资源：预期 {{ importResult.resource_import.expected }}，恢复 {{ importResult.resource_import.restored }}，
+                  复用 {{ importResult.resource_import.reused }}，失败 {{ importResult.resource_import.failed }}。
+                  <ul v-if="importResult.resource_import.issues?.length" class="mt-2 space-y-1">
+                    <li v-for="issue in importResult.resource_import.issues" :key="issue.file_id + issue.path">
+                      {{ issue.path || issue.file_id }}：{{ issue.reason }}
+                    </li>
+                  </ul>
+                </template>
               </AlertDescription>
             </Alert>
           </template>
