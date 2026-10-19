@@ -134,6 +134,10 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := svc.DeleteEnvironment(handler.EnrichContext(ctx, c), req.EnvironmentKey); err != nil {
+		if releaseErr, ok := service.AsReleaseError(err); ok {
+			c.JSON(releaseErr.HTTPStatus, &environment.DeleteEnvironmentResponse{Code: int32(releaseErr.Code), Msg: "error", Error: releaseErr.Message, ErrorType: releaseErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &environment.DeleteEnvironmentResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return

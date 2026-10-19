@@ -64,6 +64,7 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	if err := db.AutoMigrate(
 		&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
 	); err != nil {
 		return nil, err
 	}

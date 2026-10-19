@@ -40,6 +40,7 @@ func newFreezeService(t *testing.T) *Service {
 	if err := conn.AutoMigrate(
 		&model.Environment{}, &model.Pipeline{}, &model.Config{}, &model.Asset{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
 	); err != nil {
 		t.Fatal(err)
 	}

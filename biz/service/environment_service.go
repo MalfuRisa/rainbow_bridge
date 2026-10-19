@@ -101,6 +101,14 @@ func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) 
 		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, environmentKey); err != nil {
 			return err
 		}
+		// 环境内存在已提交版本时拒绝删除
+		versionCount, err := txLogic.releaseDAO.CountVersionsByEnvironment(gateCtx, txLogic.db, environmentKey)
+		if err != nil {
+			return err
+		}
+		if versionCount > 0 {
+			return releaseScopeHasVersionsError(environmentKey, "*")
+		}
 		return txLogic.environmentDAO.Delete(gateCtx, txLogic.db, environmentKey)
 	})
 }

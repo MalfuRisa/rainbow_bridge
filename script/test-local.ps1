@@ -6,7 +6,7 @@
 # Full : T01–T26 全量，并执行重启、备份恢复与根路径前缀重跑。
 [CmdletBinding()]
 param(
-    [ValidateSet('Smoke', 'Full', 'Freeze')]
+    [ValidateSet('Smoke', 'Full', 'Freeze', 'Release')]
     [string]$Suite = 'Smoke',
     [string]$RunId = '',
     [switch]$SkipBuild,
@@ -545,8 +545,8 @@ function Invoke-QaRun {
     Get-InstanceDataSnapshot $instanceBRecord 'pre-suite'
 
     # ---- 前缀阶段:主套件
-    $grep = $(if ($Suite -eq 'Smoke') { '@smoke' } elseif ($Suite -eq 'Freeze') { '@freeze' } else { '' })
-    $invert = $(if ($Suite -eq 'Smoke') { '' } elseif ($Suite -eq 'Freeze') { '' } else { '@postrestart|@recovery|@root|@freeze' })
+    $grep = $(if ($Suite -eq 'Smoke') { '@smoke' } elseif ($Suite -eq 'Freeze') { '@freeze' } elseif ($Suite -eq 'Release') { '@release' } else { '' })
+    $invert = $(if ($Suite -eq 'Smoke') { '' } elseif ($Suite -eq 'Freeze' -or $Suite -eq 'Release') { '' } else { '@postrestart|@recovery|@root|@freeze|@release' })
     $mainExit = Invoke-PlaywrightPhase -Phase 'prefix-main' -Grep $grep -GrepInvert $invert
 
     Get-InstanceDataSnapshot $second 'post-suite'

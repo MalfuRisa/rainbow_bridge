@@ -1,0 +1,370 @@
+syntax = "proto3";
+
+package release;
+
+import "api.proto";
+
+option go_package = "github.com/yi-nology/rainbow_bridge/biz/model/release";
+
+// ==================== Shared types ====================
+
+// ReleaseVersionMeta is immutable snapshot metadata (payload excluded).
+message ReleaseVersionMeta {
+  string snapshot_id = 1;
+  string environment_key = 2;
+  string pipeline_key = 3;
+  string version = 4;
+  string environment_name = 5;
+  string pipeline_name = 6;
+  string source_freeze_revision = 7; // decimal string
+  string creation_request_id = 8;
+  int32 config_count = 9;
+  int32 asset_count = 10;
+  int64 asset_bytes = 11;
+  string payload_sha256 = 12;
+  string manifest_sha256 = 13;
+  repeated string external_references = 14;
+  string reason = 15;
+  string actor = 16;
+  string created_at = 17; // RFC3339 UTC
+}
+
+// ReleaseActiveInfo is the active pointer state; revision is a decimal string.
+message ReleaseActiveInfo {
+  string snapshot_id = 1;
+  string version = 2;
+  string revision = 3; // decimal string; "0" when unset
+  string changed_at = 4;
+  string changed_by = 5;
+  string changed_reason = 6;
+}
+
+// ReleaseBlockedIssue reports one precheck problem during creation.
+message ReleaseResourceIssue {
+  string resource_key = 1;
+  string alias = 2;
+  string file_id = 3;
+  string reason = 4;
+}
+
+// ReleaseLimitInfo describes an exceeded limit (413).
+message ReleaseLimitInfo {
+  string item = 1;
+  int64 limit = 2;
+  int64 actual = 3;
+}
+
+// ==================== Create ====================
+
+// ReleaseCreateRequest creates one immutable snapshot from a frozen scope.
+message ReleaseCreateRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string version = 3;
+  string expected_freeze_revision = 4; // decimal string
+  string request_id = 5;               // UUID
+  string reason = 6;                   // trimmed 1-500 characters
+}
+
+// ReleaseCreateData is the create result; creation never switches the active version.
+message ReleaseCreateData {
+  ReleaseVersionMeta meta = 1;
+  bool replayed = 2;
+}
+
+// ReleaseCreateResponse is the unified response for release creation.
+message ReleaseCreateResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseCreateData data = 5;
+  repeated ReleaseResourceIssue resource_issues = 6;
+  ReleaseLimitInfo limits = 7;
+}
+
+// ==================== List ====================
+
+// ReleaseListItem is one row of the version list.
+message ReleaseListItem {
+  ReleaseVersionMeta meta = 1;
+  bool is_active = 2;
+}
+
+// ReleaseListRequest pages versions by creation id desc.
+message ReleaseListRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  int32 limit = 3;       // default 20, max 100
+  string before_id = 4;  // optional decimal cursor
+}
+
+// ReleaseListData carries items plus the independent active state.
+message ReleaseListData {
+  repeated ReleaseListItem items = 1;
+  bool has_more = 2;
+  string next_before_id = 3;
+  ReleaseActiveInfo active = 4;
+}
+
+// ReleaseListResponse is the unified response for the version list.
+message ReleaseListResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseListData data = 5;
+}
+
+// ==================== Detail ====================
+
+// ReleaseDetailConfig is one snapshot config; content keeps managed references as this version's URLs.
+message ReleaseDetailConfig {
+  string resource_key = 1;
+  string alias = 2;
+  string name = 3;
+  string type = 4;
+  string content = 5; // string to protect number precision
+  string remark = 6;
+  bool is_perm = 7;
+  string description = 8;
+}
+
+// ReleaseDetailAsset is one snapshot asset manifest row (no server paths).
+message ReleaseDetailAsset {
+  string asset_id = 1;
+  string file_name = 2;
+  string content_type = 3;
+  int64 size = 4;
+  string sha256 = 5;
+  string url = 6;
+}
+
+// ReleaseDetailRequest reads one snapshot by scope and version.
+message ReleaseDetailRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string version = 3;
+}
+
+// ReleaseDetailData is the snapshot body.
+message ReleaseDetailData {
+  ReleaseVersionMeta meta = 1;
+  repeated ReleaseDetailConfig configs = 2;
+  repeated ReleaseDetailAsset assets = 3;
+  ReleaseActiveInfo active = 4;
+}
+
+// ReleaseDetailResponse is the unified response for version detail.
+message ReleaseDetailResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseDetailData data = 5;
+}
+
+// ==================== Active ====================
+
+// ReleaseActiveRequest reads the scope active pointer.
+message ReleaseActiveRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+}
+
+// ReleaseActiveData is the active pointer; null when unset.
+message ReleaseActiveData {
+  ReleaseActiveInfo active = 1;
+}
+
+// ReleaseActiveResponse is the unified response for active reads.
+message ReleaseActiveResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseActiveData data = 5;
+}
+
+// ==================== Activate ====================
+
+// ReleaseActivateRequest switches the active version (also used to switch back).
+message ReleaseActivateRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string version = 3;
+  string expected_active_revision = 4; // decimal string
+  string request_id = 5;               // UUID
+  string reason = 6;
+}
+
+// ReleaseOperation is the idempotent operation record.
+message ReleaseOperation {
+  string request_id = 1;
+  bool replayed = 2;
+  string applied_revision = 3; // decimal string
+}
+
+// ReleaseActivateData separates the operation from the current active state.
+message ReleaseActivateData {
+  ReleaseOperation operation = 1;
+  ReleaseActiveInfo active = 2;
+  string version = 3;
+}
+
+// ReleaseActivateResponse is the unified response for activation.
+message ReleaseActivateResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseActivateData data = 5;
+  ReleaseActiveInfo latest_active = 6; // conflicts: current pointer
+}
+
+// ==================== History ====================
+
+// ReleaseHistoryRequest pages create/activate events by id desc.
+message ReleaseHistoryRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  int32 limit = 3;
+  string before_event_id = 4;
+}
+
+// ReleaseEventItem is one audit event.
+message ReleaseEventItem {
+  string event_id = 1;    // decimal string
+  string event_type = 2;  // create | activate
+  string request_id = 3;
+  string snapshot_id = 4;
+  string version = 5;
+  string from_active_snapshot_id = 6;
+  string to_active_snapshot_id = 7;
+  string from_head_revision = 8; // decimal string
+  string to_head_revision = 9;   // decimal string
+  string reason = 10;
+  string actor = 11;
+  string created_at = 12;
+}
+
+// ReleaseHistoryData is the history page.
+message ReleaseHistoryData {
+  repeated ReleaseEventItem items = 1;
+  bool has_more = 2;
+  string next_before_event_id = 3;
+}
+
+// ReleaseHistoryResponse is the unified response for history reads.
+message ReleaseHistoryResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseHistoryData data = 5;
+}
+
+// ==================== Runtime ====================
+
+// RuntimeReleaseRequest reads a snapshot through headers; optional fixed version query.
+message RuntimeReleaseRequest {
+  string version = 1; // optional query parameter; empty means follow active
+}
+
+// RuntimeReleaseEnvironment mirrors runtime environment info.
+message RuntimeReleaseEnvironment {
+  string environment_key = 1;
+  string environment_name = 2;
+  string pipeline_key = 3;
+  string pipeline_name = 4;
+}
+
+// RuntimeReleaseConfig mirrors runtime config shape; object/keyvalue content is rendered as JSON.
+message RuntimeReleaseConfig {
+  string resource_key = 1;
+  string alias = 2;
+  string name = 3;
+  string type = 4;
+  string content = 5;
+  string remark = 6;
+  bool is_perm = 7;
+  string description = 8;
+}
+
+// RuntimeReleaseData carries the snapshot body and selection mode.
+message RuntimeReleaseData {
+  string snapshot_id = 1;
+  string version = 2;
+  string source_freeze_revision = 3; // decimal string
+  string payload_sha256 = 4;
+  string selection_mode = 5;         // active | fixed
+  string active_revision = 6;        // present in active mode only
+  RuntimeReleaseEnvironment environment = 7;
+  repeated RuntimeReleaseConfig configs = 8;
+}
+
+// RuntimeReleaseResponse is the unified response for version runtime reads.
+message RuntimeReleaseResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  RuntimeReleaseData data = 5;
+}
+
+// ReleaseAssetRequest locates one file inside a committed snapshot.
+message ReleaseAssetRequest {
+  string snapshot_id = 1;
+  string asset_id = 2;
+}
+
+// ReleaseAssetResponse is only used for error envelopes; success returns raw bytes.
+message ReleaseAssetResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+}
+
+// ReleaseService provides immutable snapshots and release switching.
+service ReleaseService {
+  // Create stores one immutable snapshot from a frozen scope (does not activate).
+  rpc Create(ReleaseCreateRequest) returns (ReleaseCreateResponse) {
+    option (api.post) = "/api/v1/release/create";
+  }
+
+  // List pages versions of one scope (creation id desc) with independent active state.
+  rpc List(ReleaseListRequest) returns (ReleaseListResponse) {
+    option (api.get) = "/api/v1/release/list";
+  }
+
+  // Detail reads one snapshot body with this version's asset URLs.
+  rpc Detail(ReleaseDetailRequest) returns (ReleaseDetailResponse) {
+    option (api.get) = "/api/v1/release/detail";
+  }
+
+  // Active reads the scope active pointer (200 with null when unset).
+  rpc Active(ReleaseActiveRequest) returns (ReleaseActiveResponse) {
+    option (api.get) = "/api/v1/release/active";
+  }
+
+  // Activate switches the active version (also used to switch back).
+  rpc Activate(ReleaseActivateRequest) returns (ReleaseActivateResponse) {
+    option (api.post) = "/api/v1/release/activate";
+  }
+
+  // History pages create/activate audit events.
+  rpc History(ReleaseHistoryRequest) returns (ReleaseHistoryResponse) {
+    option (api.get) = "/api/v1/release/history";
+  }
+
+  // RuntimeRelease reads a snapshot for business clients (active by default).
+  rpc RuntimeRelease(RuntimeReleaseRequest) returns (RuntimeReleaseResponse) {
+    option (api.get) = "/api/v1/runtime/release";
+  }
+
+  // Asset downloads one file from a committed snapshot after full SHA-256 verification.
+  rpc Asset(ReleaseAssetRequest) returns (ReleaseAssetResponse) {
+    option (api.get) = "/api/v1/release/asset/*filepath";
+  }
+}

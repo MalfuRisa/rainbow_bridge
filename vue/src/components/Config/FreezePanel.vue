@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Lock, LockOpen, History, ShieldCheck } from 'lucide-vue-next'
+import { Lock, LockOpen, History, ShieldCheck, PackageCheck } from 'lucide-vue-next'
+import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useFreezeStore } from '@/stores/freeze'
@@ -93,6 +94,15 @@ const lastChangeText = computed(() => {
         <History class="w-4 h-4 mr-1" />
         操作记录
       </Button>
+      <RouterLink
+        v-if="hasScope"
+        :to="{ path: '/releases', query: { env: environmentKey, pipeline: pipelineKey } }"
+      >
+        <Button size="sm" variant="ghost">
+          <PackageCheck class="w-4 h-4 mr-1" />
+          版本发布
+        </Button>
+      </RouterLink>
     </div>
 
     <FreezeTransitionDialog

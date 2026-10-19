@@ -100,6 +100,14 @@ func (s *Service) DeletePipeline(ctx context.Context, environmentKey, pipelineKe
 		if err := txLogic.ensurePipelineUnlocked(gateCtx, environmentKey, pipelineKey); err != nil {
 			return err
 		}
+		// 已提交版本的范围拒绝删除(与冻结检查同次协调)
+		versionCount, err := txLogic.releaseDAO.CountVersionsByScope(gateCtx, txLogic.db, environmentKey, pipelineKey)
+		if err != nil {
+			return err
+		}
+		if versionCount > 0 {
+			return releaseScopeHasVersionsError(environmentKey, pipelineKey)
+		}
 		return txLogic.pipelineDAO.Delete(gateCtx, txLogic.db, environmentKey, pipelineKey)
 	})
 }
