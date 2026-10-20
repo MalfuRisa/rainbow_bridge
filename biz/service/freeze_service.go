@@ -33,7 +33,7 @@ func (s *Service) FreezeStatus(ctx context.Context, environmentKey, pipelineKey 
 	if err != nil {
 		return nil, freezeInternalError(err)
 	}
-	return freezeStatusFromState(state), nil
+	return freezeStatusFromState(state, s.adminAccountAvailable(ctx)), nil
 }
 
 // FreezeHistory 返回按事件 ID 倒序的审计历史(不返回 token、配置内容或服务器路径)。
@@ -83,25 +83,23 @@ func (s *Service) FreezeHistory(ctx context.Context, environmentKey, pipelineKey
 // --------------------- 锁定 / 解锁 ---------------------
 
 // LockFreeze 在管理凭据验证通过后锁定范围;锁定前执行受管资源检查。
-func (s *Service) LockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw, authorization string) (*FreezeStatusData, error) {
+func (s *Service) LockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw string) (*FreezeStatusData, error) {
 	return s.applyFreezeTransition(ctx, freezeTransitionInput{
 		environmentKey:      environmentKey,
 		pipelineKey:         pipelineKey,
 		reason:              reason,
 		expectedRevisionRaw: expectedRevisionRaw,
-		authorization:       authorization,
 		desiredState:        model.FreezeStateLocked,
 	})
 }
 
-// UnlockFreeze 在管理凭据验证通过后解除冻结。
-func (s *Service) UnlockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw, authorization string) (*FreezeStatusData, error) {
+// UnlockFreeze 在可信管理员身份验证通过后解除冻结。
+func (s *Service) UnlockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw string) (*FreezeStatusData, error) {
 	return s.applyFreezeTransition(ctx, freezeTransitionInput{
 		environmentKey:      environmentKey,
 		pipelineKey:         pipelineKey,
 		reason:              reason,
 		expectedRevisionRaw: expectedRevisionRaw,
-		authorization:       authorization,
 		desiredState:        model.FreezeStateUnlocked,
 	})
 }
@@ -111,7 +109,6 @@ type freezeTransitionInput struct {
 	pipelineKey         string
 	reason              string
 	expectedRevisionRaw string
-	authorization       string
 	desiredState        string
 }
 
@@ -132,7 +129,8 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 		return nil, err
 	}
 	// 凭据校验先于写协调,避免未授权请求占用协调
-	if err := verifyFreezeAdminCredential(input.authorization); err != nil {
+	identity, err := requireAdminIdentity(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -171,7 +169,7 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 			}
 		}
 		changedAt := time.Now().UTC()
-		applied, err := txLogic.freezeDAO.ApplyTransition(gateCtx, txLogic.db, environmentKey, pipelineKey, expectedRevision, input.desiredState, FreezeAdminActor, reason, changedAt)
+		applied, err := txLogic.freezeDAO.ApplyTransition(gateCtx, txLogic.db, environmentKey, pipelineKey, expectedRevision, input.desiredState, identity.Username, reason, changedAt)
 		if err != nil {
 			return freezeInternalError(err)
 		}
@@ -197,21 +195,22 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 			ToState:        input.desiredState,
 			Revision:       expectedRevision + 1,
 			Reason:         reason,
-			Actor:          FreezeAdminActor,
+			Actor:          identity.Username,
 			CreatedAt:      changedAt,
 		}
 		if err := txLogic.freezeDAO.AppendEvent(gateCtx, txLogic.db, event); err != nil {
 			return freezeInternalError(err)
 		}
+		// 本次迁移已通过可信身份,管理账号必然存在
 		result = freezeStatusFromState(model.ConfigFreezeState{
 			EnvironmentKey: environmentKey,
 			PipelineKey:    pipelineKey,
 			State:          input.desiredState,
 			Revision:       expectedRevision + 1,
 			LastChangedAt:  &changedAt,
-			LastChangedBy:  FreezeAdminActor,
+			LastChangedBy:  identity.Username,
 			LastReason:     reason,
-		})
+		}, true)
 		return nil
 	})
 	if err != nil {
@@ -355,7 +354,7 @@ func (s *Service) assertFreezeScopeExists(ctx context.Context, l *Logic, environ
 	return nil
 }
 
-func freezeStatusFromState(state model.ConfigFreezeState) *FreezeStatusData {
+func freezeStatusFromState(state model.ConfigFreezeState, adminAvailable bool) *FreezeStatusData {
 	lastChangedAt := ""
 	if state.LastChangedAt != nil {
 		lastChangedAt = state.LastChangedAt.UTC().Format(time.RFC3339)
@@ -368,7 +367,7 @@ func freezeStatusFromState(state model.ConfigFreezeState) *FreezeStatusData {
 		LastChangedAt:   lastChangedAt,
 		LastChangedBy:   state.LastChangedBy,
 		LastReason:      state.LastReason,
-		AdminConfigured: freezeAdminConfigured(),
+		AdminConfigured: adminAvailable,
 	}
 }
 

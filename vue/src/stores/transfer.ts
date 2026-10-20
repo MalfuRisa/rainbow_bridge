@@ -1,3 +1,4 @@
+import { isSessionError } from '@/lib/api/http'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { transferApi, type ExportSelection, type ExportTreeEnvironment, type ImportJsonData } from '@/lib/api/transfer'
@@ -18,7 +19,7 @@ export const useTransferStore = defineStore('transfer', () => {
       exportTree.value = response || []
     } catch (e) {
       error.value = e instanceof Error ? e.message : '获取导出树失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
     } finally {
       loading.value = false
     }
@@ -43,7 +44,7 @@ export const useTransferStore = defineStore('transfer', () => {
       toast.success('配置迁移成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '配置迁移失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -61,7 +62,7 @@ export const useTransferStore = defineStore('transfer', () => {
       return response
     } catch (e) {
       const message = e instanceof Error ? e.message : '配置导出失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -75,7 +76,7 @@ export const useTransferStore = defineStore('transfer', () => {
       toast.success('配置导入成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '配置导入失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -89,7 +90,7 @@ export const useTransferStore = defineStore('transfer', () => {
       toast.success('配置导入成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '配置导入失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -103,7 +104,7 @@ export const useTransferStore = defineStore('transfer', () => {
       return response
     } catch (e) {
       const message = e instanceof Error ? e.message : '预览导入失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -117,7 +118,7 @@ export const useTransferStore = defineStore('transfer', () => {
       toast.success('选择性导入成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '选择性导入失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     } finally {
       loading.value = false
@@ -125,6 +126,7 @@ export const useTransferStore = defineStore('transfer', () => {
   }
 
   return {
+    reset: () => { exportTree.value = []; error.value = null; loading.value = false },
     exportTree,
     loading,
     error,

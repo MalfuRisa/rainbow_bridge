@@ -41,6 +41,7 @@ func newFreezeService(t *testing.T) *Service {
 		&model.Environment{}, &model.Pipeline{}, &model.Config{}, &model.Asset{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.AuthUser{}, &model.AuthSession{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func newFreezeService(t *testing.T) *Service {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	svc := NewService(conn, nil, "/rainbow-bridge", nil)
-	if err := svc.EnsureFreezeBootstrap(context.Background()); err != nil {
+	if err := svc.EnsureFreezeBootstrap(adminTestContext()); err != nil {
 		t.Fatalf("freeze bootstrap: %v", err)
 	}
 	return svc
@@ -56,7 +57,7 @@ func newFreezeService(t *testing.T) *Service {
 
 func seedFreezeScope(t *testing.T, svc *Service, environmentKey, pipelineKey string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := adminTestContext()
 	if err := svc.AddEnvironment(ctx, &envpb.Environment{
 		EnvironmentKey:  environmentKey,
 		EnvironmentName: environmentKey,
@@ -95,7 +96,7 @@ func testAdminToken() string { return "unit-test-admin-token-0123456789abcdef" }
 
 func mustLock(t *testing.T, svc *Service, environmentKey, pipelineKey, reason string) *FreezeStatusData {
 	t.Helper()
-	status, err := svc.LockFreeze(context.Background(), environmentKey, pipelineKey, reason, "0", "Bearer "+testAdminToken())
+	status, err := svc.LockFreeze(adminTestContext(), environmentKey, pipelineKey, reason, "0")
 	if err != nil {
 		t.Fatalf("lock %s/%s: %v", environmentKey, pipelineKey, err)
 	}
@@ -108,7 +109,7 @@ func TestFreezeLifecycleAndHistory(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	initial, err := svc.FreezeStatus(ctx, "qa_prod", "main")
 	if err != nil {
@@ -117,12 +118,13 @@ func TestFreezeLifecycleAndHistory(t *testing.T) {
 	if initial.State != model.FreezeStateUnlocked || initial.Revision != 0 {
 		t.Fatalf("unexpected initial status: %+v", initial)
 	}
-	if !initial.AdminConfigured {
-		t.Fatal("admin_configured should be true when token is configured")
+	if initial.AdminConfigured {
+		t.Fatal("admin_configured must be false before any admin account exists")
 	}
+	ensureTestAdminAccount(t, svc)
 
 	locked := mustLock(t, svc, "qa_prod", "main", "上线前验收")
-	if locked.State != model.FreezeStateLocked || locked.Revision != 1 || locked.LastChangedBy != FreezeAdminActor {
+	if locked.State != model.FreezeStateLocked || locked.Revision != 1 || locked.LastChangedBy != "admin" {
 		t.Fatalf("unexpected locked status: %+v", locked)
 	}
 	if locked.LastChangedAt == "" || locked.LastReason != "上线前验收" {
@@ -130,19 +132,19 @@ func TestFreezeLifecycleAndHistory(t *testing.T) {
 	}
 
 	// 再次锁定:目标状态已是当前状态 → 409 STATE_UNCHANGED,且不追加虚假事件
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "重复锁定", "1", "Bearer "+testAdminToken())
+	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "重复锁定", "1")
 	requireFreezeErrorType(t, err, ErrTypeFreezeStateUnchanged)
 
 	// 过期 revision 解锁 → 409 REVISION_CONFLICT 且带最新状态
 	conflict := func() *FreezeError {
-		_, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "过期解锁", "0", "Bearer "+testAdminToken())
+		_, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "过期解锁", "0")
 		return requireFreezeErrorType(t, err, ErrTypeFreezeRevisionConflict)
 	}()
 	if conflict.LatestState != model.FreezeStateLocked || conflict.LatestRevision != 1 {
 		t.Fatalf("conflict payload missing latest state: %+v", conflict)
 	}
 
-	unlocked, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验收调整", "1", "Bearer "+testAdminToken())
+	unlocked, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验收调整", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,39 +189,41 @@ func TestFreezeLifecycleAndHistory(t *testing.T) {
 func TestFreezeAdminCredentialAndValidation(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
-	// 未配置令牌:状态可读,锁定返回 503
-	t.Setenv(FreezeAdminTokenEnv, "")
+	// 无可信身份:状态可读但管理操作 401,且不产生任何副作用
 	status, err := svc.FreezeStatus(ctx, "qa_prod", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status.AdminConfigured {
-		t.Fatal("admin_configured should be false without token")
+		t.Fatal("admin_configured must be false before any admin account exists")
 	}
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "0", "Bearer something")
-	requireFreezeErrorType(t, err, ErrTypeFreezeAdminNotSet)
+	_, err = svc.LockFreeze(context.Background(), "qa_prod", "main", "原因", "0")
+	requireAuthErrorType(t, err, ErrTypeAuthRequired)
 
-	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
-	// 错误凭据 → 401;空凭据 → 401;X-User-Id 之类伪造不被接受(服务只认 Bearer)
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "0", "Bearer wrong-token-wrong-token-wrong-token")
-	requireFreezeErrorType(t, err, ErrTypeFreezeUnauthorized)
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "0", "")
-	requireFreezeErrorType(t, err, ErrTypeFreezeUnauthorized)
+	// 存在管理员账号后 admin_configured 为真,旧式凭据字符串不再被接受
+	ensureTestAdminAccount(t, svc)
+	configured, err := svc.FreezeStatus(ctx, "qa_prod", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configured.AdminConfigured {
+		t.Fatal("admin_configured must be true once an admin account exists")
+	}
 
 	// 空原因/超长原因 → 400
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "   ", "0", "Bearer "+testAdminToken())
+	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "   ", "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidReason)
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", string(make([]byte, 501)), "0", "Bearer "+testAdminToken())
+	_, err = svc.LockFreeze(ctx, "qa_prod", "main", string(make([]byte, 501)), "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidReason)
 
 	// 非法 revision → 400
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "abc", "Bearer "+testAdminToken())
+	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "abc")
 	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidRevision)
 
 	// 不存在的范围 → 404
-	_, err = svc.LockFreeze(ctx, "no_such_env", "main", "原因", "0", "Bearer "+testAdminToken())
+	_, err = svc.LockFreeze(ctx, "no_such_env", "main", "原因", "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeScopeNotFound)
 	_, err = svc.FreezeStatus(ctx, "qa_prod", "no_such_pipeline")
 	requireFreezeErrorType(t, err, ErrTypeFreezeScopeNotFound)
@@ -243,7 +247,7 @@ func TestFreezeLockPrecheck(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
 	seedFreezeScope(t, svc, "qa_dev", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// 跨范围引用:qa_prod/main 的配置引用 qa_dev/main 的资源
 	crossScopeAsset := &model.Asset{
@@ -290,7 +294,7 @@ func TestFreezeLockPrecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "预检失败样本", "0", "Bearer "+testAdminToken())
+	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "预检失败样本", "0")
 	freezeErr := requireFreezeErrorType(t, err, ErrTypeFreezeResourcePrecheck)
 	reasons := map[string]bool{}
 	for _, issue := range freezeErr.Issues {
@@ -317,7 +321,7 @@ func TestFreezeLockPrecheck(t *testing.T) {
 			}
 		}
 	}
-	locked, err := svc.LockFreeze(ctx, "qa_prod", "main", "外部引用允许锁定", "0", "Bearer "+testAdminToken())
+	locked, err := svc.LockFreeze(ctx, "qa_prod", "main", "外部引用允许锁定", "0")
 	if err != nil {
 		t.Fatalf("lock should succeed after resolving managed resource issues: %v", err)
 	}
@@ -326,7 +330,7 @@ func TestFreezeLockPrecheck(t *testing.T) {
 	}
 
 	// 无配置的已存在渠道也可以锁
-	emptyStatus, err := svc.LockFreeze(ctx, "qa_dev", "main", "空渠道可锁", "0", "Bearer "+testAdminToken())
+	emptyStatus, err := svc.LockFreeze(ctx, "qa_dev", "main", "空渠道可锁", "0")
 	if err != nil || emptyStatus.State != model.FreezeStateLocked {
 		t.Fatalf("empty pipeline lock failed: %v %+v", err, emptyStatus)
 	}
@@ -336,13 +340,13 @@ func TestFreezeAuditFailureRollsBackState(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// 审计表缺失:状态迁移必须整体回滚,不允许"有锁无事件"
 	if err := svc.logic.db.Exec("DROP TABLE config_freeze_event").Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "审计失败", "0", "Bearer "+testAdminToken())
+	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "审计失败", "0")
 	if err == nil {
 		t.Fatal("lock must fail when audit write fails")
 	}
@@ -370,5 +374,33 @@ func buildConfig(environmentKey, pipelineKey, alias, typ, content string) *commo
 		PipelineKey:    pipelineKey,
 		Type:           typ,
 		Content:        content,
+	}
+}
+
+// adminTestContext 注入可信管理员身份:服务层不再接受请求自报的凭据。
+func adminTestContext() context.Context {
+	return WithAdminIdentity(context.Background(), AdminIdentity{UserID: 1, Username: "admin", Role: "admin"})
+}
+
+// requireAuthErrorType 断言错误类型并返回 AuthError。
+func requireAuthErrorType(t *testing.T, err error, errorType string) *AuthError {
+	t.Helper()
+	authErr, ok := AsAuthError(err)
+	if !ok {
+		t.Fatalf("expected auth error %s, got %v", errorType, err)
+	}
+	if authErr.ErrorType != errorType {
+		t.Fatalf("error type = %s, want %s (%v)", authErr.ErrorType, errorType, authErr)
+	}
+	return authErr
+}
+
+// ensureTestAdminAccount 建立测试管理员账号(admin_configured 与新身份契约的前提)。
+func ensureTestAdminAccount(t *testing.T, svc *Service) {
+	t.Helper()
+	t.Setenv(AdminInitialPasswordEnv, "unit test admin passphrase")
+	t.Setenv(AdminUsernameEnv, "admin")
+	if err := svc.EnsureAuthBootstrap(context.Background()); err != nil {
+		t.Fatalf("ensure test admin: %v", err)
 	}
 }

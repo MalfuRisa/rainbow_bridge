@@ -1,3 +1,4 @@
+import { gotoPage } from './support/pages'
 import { expect, test } from '@playwright/test'
 import { targetB, writeEvidence } from './support/env'
 import { buildTransferZip } from './support/archives'
@@ -76,7 +77,7 @@ test.describe('T10 普通归档入口字段契约 @t10', () => {
       })
     })
 
-    await page.goto(`${target.origin}${target.prefix}/import-export`, { waitUntil: 'domcontentloaded' })
+    await gotoPage(page, target, '/import-export')
     await page.getByRole('tab', { name: '数据导入' }).click()
     await page.locator('#import-file').setInputFiles({
       name: 'page-import.zip',

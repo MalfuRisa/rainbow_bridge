@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { AlertCircle, ArrowRightLeft, KeyRound } from 'lucide-vue-next'
+import { AlertCircle, ArrowRightLeft } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useReleaseStore } from '@/stores/release'
 import type { ReleaseActivatePayload } from '@/lib/api/release'
+import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api/error'
 
 const props = defineProps<{
@@ -27,11 +28,11 @@ const releaseStore = useReleaseStore()
 
 const scopeSnapshot = ref({ environmentKey: '', pipelineKey: '' })
 const reason = ref('')
-const token = ref('')
+const auth = useAuthStore()
 const submitting = ref(false)
 const errorMessage = ref('')
 const latestActive = ref<{ version: string; revision: string } | null>(null)
-/** 首次提交的整份请求:确认已提交结果必须原样重发,只有凭据可以重新输入。 */
+/** 首次提交的整份请求:确认已提交结果必须原样重发,业务 payload 与请求标识保持不变。 */
 const pendingPayload = ref<ReleaseActivatePayload | null>(null)
 const retryAvailable = ref(false)
 
@@ -63,7 +64,6 @@ watch(
     if (open) {
       scopeSnapshot.value = { environmentKey: props.environmentKey, pipelineKey: props.pipelineKey }
       reason.value = ''
-      token.value = ''
       submitting.value = false
       errorMessage.value = ''
       latestActive.value = null
@@ -71,18 +71,14 @@ watch(
       retryAvailable.value = false
       releaseStore.refreshActive(props.environmentKey, props.pipelineKey)
     } else {
-      token.value = ''
       reason.value = ''
     }
   }
 )
 
 const submit = async (reuseRequestId: boolean) => {
+  if (submitting.value || !auth.authenticated) return
   errorMessage.value = ''
-  if (!token.value.trim()) {
-    errorMessage.value = '请输入管理令牌'
-    return
-  }
   let payload: ReleaseActivatePayload
   if (reuseRequestId && pendingPayload.value) {
     // 原样重发首次提交的整份请求(含当时的 expected revision),不重新读取当前状态
@@ -106,7 +102,7 @@ const submit = async (reuseRequestId: boolean) => {
   submitting.value = true
   retryAvailable.value = false
   try {
-    const result = await releaseStore.activate(payload, token.value.trim())
+    const result = await releaseStore.activate(payload)
     toast.success(
       result.operation.replayed
         ? `该请求已提交过:原生效 revision ${result.operation.applied_revision},当前生效 ${result.active?.version || '未设置'}`
@@ -118,13 +114,6 @@ const submit = async (reuseRequestId: boolean) => {
     if (error instanceof ApiError) {
       const payload = (error.payload || {}) as { latest_active?: { version: string; revision: string } }
       switch (error.errorType) {
-        case 'FREEZE_ADMIN_NOT_CONFIGURED':
-          errorMessage.value = '服务端未配置管理令牌(RAINBOW_FREEZE_ADMIN_TOKEN)'
-          break
-        case 'FREEZE_UNAUTHORIZED':
-          errorMessage.value = '管理凭据不正确'
-          token.value = ''
-          break
         case 'RELEASE_ACTIVE_REVISION_CONFLICT': {
           const latest = payload.latest_active
           latestActive.value = latest ? { version: latest.version, revision: latest.revision } : null
@@ -204,21 +193,14 @@ const submit = async (reuseRequestId: boolean) => {
           <Textarea id="activate-reason" :rows="2" class="resize-none" v-model="reason" placeholder="例如:切换到新验收版本" />
         </div>
 
-        <div class="space-y-2">
-          <Label for="activate-token" class="text-sm font-medium">管理令牌</Label>
-          <div class="relative">
-            <KeyRound class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input id="activate-token" type="password" autocomplete="off" class="pl-9 h-10" v-model="token" placeholder="仅本次操作使用,关闭后清除" />
-          </div>
-        </div>
       </div>
 
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="emit('update:open', false)">取消</Button>
-        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="submitting" @click="submit(true)">
+        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="submitting || !auth.authenticated" @click="submit(true)">
           确认结果(同一请求标识)
         </Button>
-        <Button class="h-10" :disabled="submitting" @click="submit(false)">
+        <Button class="h-10" :disabled="submitting || !auth.authenticated" @click="submit(false)">
           {{ submitting ? '提交中...' : showRetry ? '按当前输入提交新请求' : isSwitchBack ? '切回此版本' : '切换生效版本' }}
         </Button>
       </DialogFooter>

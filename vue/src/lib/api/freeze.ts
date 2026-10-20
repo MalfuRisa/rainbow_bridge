@@ -1,5 +1,5 @@
 /**
- * 冻结控制 API。管理令牌只在单次请求头中传递,不落任何持久存储。
+ * 冻结控制 API。统一通过会话与 CSRF 完成管理认证。
  */
 import { apiClient } from './client'
 
@@ -52,12 +52,9 @@ export interface FreezeTransitionPayload {
   expected_revision: string
 }
 
-function bearer(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}` }
-}
 
 export const freezeApi = {
-  /** 读取范围状态(无凭据要求)。 */
+  /** 读取范围状态(管理会话)。 */
   async status(environmentKey: string, pipelineKey: string): Promise<FreezeStatusData> {
     const response = await apiClient.request<FreezeStatusData>(
       'GET',
@@ -68,24 +65,24 @@ export const freezeApi = {
     return response.data as FreezeStatusData
   },
 
-  /** 锁定;token 只在本次请求头中出现。 */
-  async lock(payload: FreezeTransitionPayload, token: string): Promise<FreezeStatusData> {
+  /** 锁定;身份由统一请求层处理。 */
+  async lock(payload: FreezeTransitionPayload): Promise<FreezeStatusData> {
     const response = await apiClient.request<FreezeStatusData>(
       'POST',
       '/api/v1/freeze/lock',
       { ...payload },
-      { headers: bearer(token), showErrorToast: false }
+      { showErrorToast: false }
     )
     return response.data as FreezeStatusData
   },
 
-  /** 解除冻结;token 只在本次请求头中出现。 */
-  async unlock(payload: FreezeTransitionPayload, token: string): Promise<FreezeStatusData> {
+  /** 解除冻结;身份由统一请求层处理。 */
+  async unlock(payload: FreezeTransitionPayload): Promise<FreezeStatusData> {
     const response = await apiClient.request<FreezeStatusData>(
       'POST',
       '/api/v1/freeze/unlock',
       { ...payload },
-      { headers: bearer(token), showErrorToast: false }
+      { showErrorToast: false }
     )
     return response.data as FreezeStatusData
   },

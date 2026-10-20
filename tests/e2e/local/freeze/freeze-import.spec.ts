@@ -1,3 +1,4 @@
+import { ensureBrowserSession } from '../support/pages'
 import { expect, test } from '@playwright/test'
 import { freezeToken, targetA, writeEvidence } from '../support/env'
 import { buildTransferZip } from '../support/archives'
@@ -37,6 +38,7 @@ test.describe('冻结与导入页面 @freeze', () => {
     // 预览前锁定:页面应在预览后展示受锁目标
     await lockScopeFromCurrentRevision(target, scopeDevMain, token)
 
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/import-export`, { waitUntil: 'domcontentloaded' })
     await page.getByRole('tab', { name: '数据导入' }).click()
     await page.locator('#import-file').setInputFiles({ name: 'freeze-import.zip', mimeType: 'application/zip', buffer: archive })

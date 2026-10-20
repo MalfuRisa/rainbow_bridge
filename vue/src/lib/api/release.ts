@@ -1,7 +1,9 @@
 /**
- * 发布版本 API:只读接口沿用现有部署访问控制;创建/切换在单次请求头携带管理令牌。
+ * 发布版本 API:管理接口统一复用会话与 CSRF。
  */
-import { apiClient } from './client'
+import { apiClient, getBasePath } from './client'
+import { ApiError, ErrorType } from './error'
+import { fetchApi } from './http'
 
 export interface ReleaseVersionMeta {
   snapshot_id: string
@@ -117,9 +119,6 @@ export interface ReleaseActivatePayload {
   reason: string
 }
 
-function bearer(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}` }
-}
 
 export const releaseApi = {
   async list(environmentKey: string, pipelineKey: string, beforeId = ''): Promise<ReleaseListData> {
@@ -162,19 +161,19 @@ export const releaseApi = {
     return response.data as ReleaseHistoryData
   },
 
-  /** 创建版本(不切换生效);token 只在本次请求头中出现。 */
-  async create(payload: ReleaseCreatePayload, token: string): Promise<{ meta: ReleaseVersionMeta; replayed: boolean }> {
+  /** 创建版本(不切换生效);身份由统一请求层处理。 */
+  async create(payload: ReleaseCreatePayload): Promise<{ meta: ReleaseVersionMeta; replayed: boolean }> {
     const response = await apiClient.request<{ meta: ReleaseVersionMeta; replayed: boolean }>(
       'POST',
       '/api/v1/release/create',
       { ...payload },
-      { headers: bearer(token), showErrorToast: false },
+      { showErrorToast: false },
     )
     return response.data as { meta: ReleaseVersionMeta; replayed: boolean }
   },
 
-  /** 切换生效版本(含切回旧版);token 只在本次请求头中出现。 */
-  async activate(payload: ReleaseActivatePayload, token: string): Promise<{
+  /** 切换生效版本(含切回旧版);身份由统一请求层处理。 */
+  async activate(payload: ReleaseActivatePayload): Promise<{
     operation: { request_id: string; replayed: boolean; applied_revision: string }
     active: ReleaseActiveInfo | null
     version: string
@@ -183,7 +182,7 @@ export const releaseApi = {
       operation: { request_id: string; replayed: boolean; applied_revision: string }
       active: ReleaseActiveInfo | null
       version: string
-    }>('POST', '/api/v1/release/activate', { ...payload }, { headers: bearer(token), showErrorToast: false })
+    }>('POST', '/api/v1/release/activate', { ...payload }, { showErrorToast: false })
     return response.data as {
       operation: { request_id: string; replayed: boolean; applied_revision: string }
       active: ReleaseActiveInfo | null
@@ -198,4 +197,193 @@ export function releaseRuntimeURL(basePath: string, version?: string): string {
   return version
     ? `${normalized}/api/v1/runtime/release?version=${encodeURIComponent(version)}`
     : `${normalized}/api/v1/runtime/release`
+}
+
+// --------------------- 首页(当前生效配置)读取与固定快照导出 ---------------------
+
+/** raw 模式下每项 content 都是字符串(结构化内容为渲染后的 JSON 原文)。 */
+export interface RuntimeReleaseRawConfig {
+  resource_key: string
+  alias: string
+  name: string
+  type: string
+  content: string
+  remark: string
+  is_perm: boolean
+  description: string
+}
+
+export interface RuntimeReleaseRawEnvironment {
+  environment_key: string
+  environment_name: string
+  pipeline_key: string
+  pipeline_name: string
+}
+
+export interface RuntimeReleaseRawData {
+  snapshot_id: string
+  version: string
+  source_freeze_revision: string
+  payload_sha256: string
+  selection_mode: string
+  active_revision: string
+  environment: RuntimeReleaseRawEnvironment
+  configs: RuntimeReleaseRawConfig[]
+}
+
+export interface StaticSnapshotPackage {
+  blob: Blob
+  fileName: string
+  snapshotId: string
+  version: string
+}
+
+/** 响应不兼容(200 HTML、被忽略的格式参数、范围/模式不符)时抛出的错误。 */
+function incompatibleResponse(message: string): ApiError {
+  return new ApiError(502, message, '', ErrorType.API)
+}
+
+function requireText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw incompatibleResponse(`生效读取响应缺少 ${field}`)
+  }
+  return value
+}
+
+/** 逐字段校验 raw 读取结果,任何缺失或结构不符都按加载失败处理。 */
+function parseRuntimeReleaseRaw(
+  body: unknown,
+  environmentKey: string,
+  pipelineKey: string,
+): RuntimeReleaseRawData {
+  const envelope = body as { code?: number; data?: unknown } | null
+  const data = (envelope?.data ?? null) as Partial<RuntimeReleaseRawData> | null
+  if (!data || typeof data !== 'object') {
+    throw incompatibleResponse('生效读取响应缺少 data')
+  }
+  const environment = (data.environment ?? null) as Partial<RuntimeReleaseRawEnvironment> | null
+  if (!environment || environment.environment_key !== environmentKey || environment.pipeline_key !== pipelineKey) {
+    throw incompatibleResponse('生效读取响应的范围与本次请求不一致')
+  }
+  if (data.selection_mode !== 'active') {
+    throw incompatibleResponse(`生效读取响应的选择模式异常:${String(data.selection_mode ?? '')}`)
+  }
+  const configs = Array.isArray(data.configs) ? data.configs : null
+  if (!configs) {
+    throw incompatibleResponse('生效读取响应缺少 configs 数组')
+  }
+  const normalized = configs.map((item) => {
+    const raw = item as Partial<RuntimeReleaseRawConfig>
+    if (typeof raw.content !== 'string') {
+      throw incompatibleResponse(`配置 ${String(raw.alias ?? '')} 的内容不是字符串原文`)
+    }
+    return {
+      resource_key: requireText(raw.resource_key, 'resource_key'),
+      alias: typeof raw.alias === 'string' ? raw.alias : '',
+      name: typeof raw.name === 'string' ? raw.name : '',
+      type: typeof raw.type === 'string' ? raw.type : '',
+      content: raw.content,
+      remark: typeof raw.remark === 'string' ? raw.remark : '',
+      is_perm: Boolean(raw.is_perm),
+      description: typeof raw.description === 'string' ? raw.description : '',
+    }
+  })
+  return {
+    snapshot_id: requireText(data.snapshot_id, 'snapshot_id'),
+    version: requireText(data.version, 'version'),
+    source_freeze_revision: typeof data.source_freeze_revision === 'string' ? data.source_freeze_revision : '',
+    payload_sha256: typeof data.payload_sha256 === 'string' ? data.payload_sha256 : '',
+    selection_mode: 'active',
+    active_revision: typeof data.active_revision === 'string' ? data.active_revision : '',
+    environment: {
+      environment_key: environment.environment_key as string,
+      environment_name: typeof environment.environment_name === 'string' ? environment.environment_name : '',
+      pipeline_key: environment.pipeline_key as string,
+      pipeline_name: typeof environment.pipeline_name === 'string' ? environment.pipeline_name : '',
+    },
+    configs: normalized,
+  }
+}
+
+/** 读取当前生效版本(raw 原文);不做任何降级替代。 */
+export async function fetchActiveReleaseRaw(
+  environmentKey: string,
+  pipelineKey: string,
+): Promise<RuntimeReleaseRawData> {
+  const response = await apiClient.request<unknown>(
+    'GET',
+    '/api/v1/runtime/release',
+    { content_format: 'raw' },
+    {
+      headers: {
+        'x-environment': environmentKey,
+        'x-pipeline': pipelineKey,
+      },
+      showErrorToast: false,
+    },
+  )
+  return parseRuntimeReleaseRaw(response, environmentKey, pipelineKey)
+}
+
+function snapshotExportURL(environmentKey: string, pipelineKey: string, version: string, snapshotId: string): string {
+  const basePath = getBasePath().replace(/\/$/, '')
+  const url = new URL(`${basePath}/api/v1/runtime/release/static`, window.location.origin)
+  url.searchParams.set('version', version)
+  url.searchParams.set('expected_snapshot_id', snapshotId)
+  return url.toString()
+}
+
+/** 解析导出失败响应:先取 JSON 错误,绝不把错误体或 HTML 当成 ZIP。 */
+async function exportErrorFrom(response: Response): Promise<ApiError> {
+  let payload: Record<string, unknown> | null = null
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  }
+  const message = (payload?.error as string) || (payload?.msg as string) || `导出失败:HTTP ${response.status}`
+  const error = new ApiError(typeof payload?.code === 'number' ? (payload.code as number) : response.status, message)
+  error.errorType = (payload?.error_type as string) || ''
+  error.payload = payload ?? undefined
+  return error
+}
+
+function fileNameFromDisposition(disposition: string): string {
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  return match ? match[1].trim() : ''
+}
+
+/**
+ * 固定导出页面刚展示的那份快照:同时校验 HTTP 成功、ZIP 类型与两项版本响应头。
+ * 任何一项不符都不创建下载。
+ */
+export async function exportShownSnapshot(
+  environmentKey: string,
+  pipelineKey: string,
+  version: string,
+  snapshotId: string,
+): Promise<StaticSnapshotPackage> {
+  const response = await fetchApi(snapshotExportURL(environmentKey, pipelineKey, version, snapshotId), {
+    method: 'GET',
+    headers: {
+      'x-environment': environmentKey,
+      'x-pipeline': pipelineKey,
+    },
+  })
+  if (!response.ok) {
+    throw await exportErrorFrom(response)
+  }
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!contentType.includes('application/zip')) {
+    throw incompatibleResponse(`导出响应的类型不是 ZIP:${contentType || '未知'}`)
+  }
+  const headerSnapshot = response.headers.get('x-rainbow-snapshot-id') ?? ''
+  const headerVersion = response.headers.get('x-rainbow-version') ?? ''
+  if (headerSnapshot !== snapshotId || headerVersion !== version) {
+    throw incompatibleResponse('导出响应的版本标识与页面展示的不一致')
+  }
+  const blob = await response.blob()
+  const fileName =
+    fileNameFromDisposition(response.headers.get('content-disposition') ?? '') ||
+    `release-${snapshotId}-${version}.zip`
+  return { blob, fileName, snapshotId: headerSnapshot, version: headerVersion }
 }

@@ -48,7 +48,7 @@ watch(
 
 <template>
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
-    <DialogContent class="max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
+    <DialogContent class="spectrum-release-detail max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
       <DialogHeader>
         <DialogTitle class="text-xl font-semibold font-mono">{{ version }}</DialogTitle>
         <DialogDescription class="text-muted-foreground">
@@ -63,7 +63,7 @@ watch(
         <p v-else-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
 
         <template v-else-if="detail">
-          <div class="rounded-md border p-3 text-sm grid grid-cols-2 gap-2">
+          <div class="spectrum-release-detail-meta rounded-md border p-3 text-sm grid grid-cols-2 gap-2">
             <div><span class="text-muted-foreground">来源冻结 revision:</span><span class="font-mono">{{ detail.meta.source_freeze_revision }}</span></div>
             <div><span class="text-muted-foreground">创建时间:</span>{{ new Date(detail.meta.created_at).toLocaleString() }}</div>
             <div><span class="text-muted-foreground">配置:</span>{{ detail.meta.config_count ?? 0 }} 项</div>

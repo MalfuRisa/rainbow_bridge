@@ -32,7 +32,6 @@ type ReleaseCreateInput struct {
 	ExpectedFreezeRevisionRaw string
 	RequestID                 string
 	Reason                    string
-	Authorization             string
 }
 
 // ReleaseActivateInput 是切换生效版本的请求。
@@ -43,7 +42,6 @@ type ReleaseActivateInput struct {
 	ExpectedActiveRevisionRaw string
 	RequestID                 string
 	Reason                    string
-	Authorization             string
 }
 
 // --------------------- 创建版本 ---------------------
@@ -58,7 +56,8 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyFreezeAdminCredential(input.Authorization); err != nil {
+	identity, err := requireAdminIdentity(ctx)
+	if err != nil {
 		return nil, err
 	}
 	// 新入口主动设置不长于 60 秒的期限(不延长调用方更短的期限)
@@ -140,7 +139,7 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 		}
 		stagingUsed = true
 		return s.materializeRelease(gateCtx, txLogic, storage, snapshotID, plan, scopeRow, pipelineRow,
-			version, requestID, fingerprint, expectedRevision, reason, &finalMoved, &result)
+			version, requestID, fingerprint, expectedRevision, reason, identity.Username, &finalMoved, &result)
 	})
 	if err != nil {
 		if storage != nil {
@@ -166,7 +165,7 @@ func (s *Service) materializeRelease(
 	pipelineRow *model.Pipeline,
 	version, requestID, fingerprint string,
 	expectedRevision int64,
-	reason string,
+	reason, actor string,
 	finalMoved *bool,
 	result **ReleaseCreateResult,
 ) error {
@@ -234,7 +233,7 @@ func (s *Service) materializeRelease(
 		AssetBytes:           realTotal,
 		ExternalReferences:   externalJSON,
 		Reason:               reason,
-		Actor:                FreezeAdminActor,
+		Actor:                actor,
 		CreatedAt:            now,
 	}
 	if err := txLogic.releaseDAO.CreateVersion(ctx, txLogic.db, versionRow); err != nil {
@@ -252,7 +251,7 @@ func (s *Service) materializeRelease(
 		SnapshotID:         snapshotID,
 		Version:            version,
 		Reason:             reason,
-		Actor:              FreezeAdminActor,
+		Actor:              actor,
 		CreatedAt:          now,
 	}
 	if err := txLogic.releaseDAO.AppendEvent(ctx, txLogic.db, event); err != nil {
@@ -315,7 +314,8 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyFreezeAdminCredential(input.Authorization); err != nil {
+	identity, err := requireAdminIdentity(ctx)
+	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, writeGateTotalTimeout)
@@ -403,7 +403,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			return err
 		}
 		changedAt := time.Now().UTC()
-		applied, err := txLogic.releaseDAO.ApplyHeadCAS(gateCtx, txLogic.db, environmentKey, pipelineKey, expectedRevision, target.SnapshotID, FreezeAdminActor, reason, changedAt)
+		applied, err := txLogic.releaseDAO.ApplyHeadCAS(gateCtx, txLogic.db, environmentKey, pipelineKey, expectedRevision, target.SnapshotID, identity.Username, reason, changedAt)
 		if err != nil {
 			return releaseInternalError(err)
 		}
@@ -442,7 +442,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			Version:       target.Version,
 			Revision:      expectedRevision + 1,
 			ChangedAt:     changedAt.Format(time.RFC3339),
-			ChangedBy:     FreezeAdminActor,
+			ChangedBy:     identity.Username,
 			ChangedReason: reason,
 		}
 		result = &ReleaseActivateResult{

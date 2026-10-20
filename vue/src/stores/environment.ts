@@ -1,3 +1,4 @@
+import { isSessionError } from '@/lib/api/http'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { environmentApi } from '@/lib/api/environment'
@@ -19,6 +20,12 @@ export const useEnvironmentStore = defineStore('environment', () => {
   const pipelines = ref<Pipeline[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const reset = () => {
+    environments.value = []
+    pipelines.value = []
+    loading.value = false
+    error.value = null
+  }
 
   const fetchOverview = async () => {
     loading.value = true
@@ -28,7 +35,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       environments.value = response.list.map(fromApiEnvironmentOverview)
     } catch (e) {
       error.value = e instanceof Error ? e.message : '获取环境列表失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
     } finally {
       loading.value = false
     }
@@ -42,7 +49,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       environments.value = response.list.map((env: any) => fromApiEnvironment(env, []))
     } catch (e) {
       error.value = e instanceof Error ? e.message : '获取环境列表失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
     } finally {
       loading.value = false
     }
@@ -56,7 +63,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       pipelines.value = response.list.map((item: any) => fromApiPipeline(item))
     } catch (e) {
       error.value = e instanceof Error ? e.message : '获取渠道列表失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
     } finally {
       loading.value = false
     }
@@ -70,7 +77,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('环境创建成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '创建环境失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -83,7 +90,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('环境更新成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '更新环境失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -95,7 +102,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('环境删除成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '删除环境失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -108,7 +115,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('渠道创建成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '创建渠道失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -121,7 +128,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('渠道更新成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '更新渠道失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -133,12 +140,13 @@ export const useEnvironmentStore = defineStore('environment', () => {
       toast.success('渠道删除成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '删除渠道失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
 
   return {
+    reset,
     environments,
     pipelines,
     loading,

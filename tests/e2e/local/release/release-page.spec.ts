@@ -1,3 +1,4 @@
+import { ensureBrowserSession } from '../support/pages'
 import { expect, test } from '@playwright/test'
 import { freezeToken, targetA, writeEvidence } from '../support/env'
 import { createConfig, deleteConfig, ensureScope, listConfigs, scopeDevBeta, scopeDevMain } from '../support/scopes'
@@ -29,6 +30,7 @@ test.describe('版本发布页面流程 @release', () => {
     await lockScopeFromCurrentRevision(target, scopeDevMain, token)
 
     // 打开版本页并选择范围
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/releases`, { waitUntil: 'domcontentloaded' })
     await expectPageTitle(page, '版本发布')
     await selectEnvPipelineOnConfigPage(page, 'QA qa_dev (qa_dev)', 'QA main (main)')
@@ -48,7 +50,6 @@ test.describe('版本发布页面流程 @release', () => {
     await expect(createDialog.getByText(/来源 revision/)).toBeVisible()
     await createDialog.locator('#release-version').fill('v1.0')
     await createDialog.locator('#release-reason').fill('浏览器创建 v1.0')
-    await createDialog.locator('#release-token').fill(token)
     await createDialog.getByRole('button', { name: '保存版本' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已保存,尚未切换生效' }).first()).toBeVisible()
     await expect(page.getByText('v1.0', { exact: true }).first()).toBeVisible()
@@ -64,10 +65,9 @@ test.describe('版本发布页面流程 @release', () => {
 
     // 首次生效
     await page.getByRole('button', { name: '切换生效版本' }).first().click()
-    const activateDialog = page.getByRole('dialog').filter({ has: page.locator('#activate-token') })
+    const activateDialog = page.getByRole('dialog').filter({ has: page.locator('#activate-reason') })
     await expect(activateDialog.getByText(/未设置 → v1\.0/)).toBeVisible()
     await activateDialog.locator('#activate-reason').fill('首次生效')
-    await activateDialog.locator('#activate-token').fill(token)
     await activateDialog.getByRole('button', { name: '切换生效版本' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '已切换生效版本:v1.0' }).first()).toBeVisible()
     await expect(page.getByText('生效中').first()).toBeVisible()
@@ -99,27 +99,24 @@ test.describe('版本发布页面流程 @release', () => {
     const createDialog2 = page.getByRole('dialog').filter({ has: page.locator('#release-version') })
     await createDialog2.locator('#release-version').fill('v1.1')
     await createDialog2.locator('#release-reason').fill('浏览器创建 v1.1')
-    await createDialog2.locator('#release-token').fill(token)
     await createDialog2.getByRole('button', { name: '保存版本' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已保存,尚未切换生效' }).first()).toBeVisible()
 
     // 切换 v1.1(此时按钮文案为“切换生效版本”)
     const v11Row = page.locator('tr').filter({ hasText: 'v1.1' }).first()
     await v11Row.getByRole('button', { name: /切换生效版本|切回此版本/ }).click()
-    const activateDialog2 = page.getByRole('dialog').filter({ has: page.locator('#activate-token') })
+    const activateDialog2 = page.getByRole('dialog').filter({ has: page.locator('#activate-reason') })
     await expect(activateDialog2.getByText(/v1\.0 → v1\.1/)).toBeVisible()
     await activateDialog2.locator('#activate-reason').fill('切到 v1.1')
-    await activateDialog2.locator('#activate-token').fill(token)
     await activateDialog2.getByRole('button', { name: '切换生效版本' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '已切换生效版本:v1.1' }).first()).toBeVisible()
 
     // 切回 v1.0(按钮文案“切回此版本”)
     const v10Row = page.locator('tr').filter({ hasText: 'v1.0' }).first()
     await v10Row.getByRole('button', { name: /切换生效版本|切回此版本/ }).click()
-    const activateDialog3 = page.getByRole('dialog').filter({ has: page.locator('#activate-token') })
+    const activateDialog3 = page.getByRole('dialog').filter({ has: page.locator('#activate-reason') })
     await expect(activateDialog3.getByText(/v1\.1 → v1\.0/)).toBeVisible()
     await activateDialog3.locator('#activate-reason').fill('切回 v1.0')
-    await activateDialog3.locator('#activate-token').fill(token)
     await activateDialog3.getByRole('button', { name: '切回此版本' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '已切换生效版本:v1.0' }).first()).toBeVisible()
 

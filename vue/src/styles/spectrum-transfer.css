@@ -1,0 +1,74 @@
+/* §2.1 / §3.6: scope → preview → commit, with one primary action per stage. */
+.spectrum-workflow-steps { display: flex; flex-wrap: wrap; gap: 24px 48px; list-style: none; padding: 0 0 24px; margin: 0; border-bottom: 1px solid var(--border); }
+.spectrum-workflow-steps li { display: flex; align-items: center; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+.spectrum-workflow-steps li > span { font: 12px/1.5 Consolas, monospace; }
+.spectrum-workflow-steps li.is-current { color: var(--foreground); font-weight: 600; }
+.spectrum-workflow-steps li.is-current > span { color: var(--spectrum-link); }
+.spectrum-migration-route { display: grid; grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr); gap: 24px; align-items: stretch; }
+.spectrum-migration-endpoint { padding: 32px; border-radius: 16px; min-width: 0; }
+.spectrum-migration-endpoint h2 { margin: 24px 0; font-size: 32px; }
+.spectrum-migration-source { background: var(--spectrum-ink); color: var(--spectrum-inverse); }
+.spectrum-migration-source .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
+.spectrum-migration-source [role=combobox] { background: var(--spectrum-ink-panel); color: var(--spectrum-inverse); border-color: var(--spectrum-ink-line); }
+.spectrum-migration-target { background: var(--card); border: 1px solid var(--border); }
+.spectrum-migration-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.spectrum-migration-fields [role=combobox] { min-height: 48px; min-width: 0; width: 100%; box-shadow: none; }
+.spectrum-migration-arrow { display: flex; align-items: center; justify-content: center; color: var(--spectrum-link); }
+.spectrum-migration-page .spectrum-table table { min-width: 480px; }
+.spectrum-operations .spectrum-conflict-row { background: var(--spectrum-warning-bg); color: var(--spectrum-warning); }
+.spectrum-conflict-row .bg-secondary { background: transparent; color: inherit; }
+.spectrum-transfer-page .spectrum-transfer-tabs { display: flex; justify-content: flex-start; height: auto; gap: 8px; border-radius: 0; border-bottom: 1px solid var(--border); padding: 0 0 16px; background: transparent; }
+.spectrum-transfer-tabs [role=tab] { min-height: 44px; padding: 12px 24px; color: var(--muted-foreground); border-radius: 8px; box-shadow: none; }
+.spectrum-transfer-tabs [role=tab][data-state=active] { background: var(--secondary); color: var(--foreground); box-shadow: none; }
+.spectrum-transfer-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 48px; align-items: start; }
+.spectrum-transfer-content, .spectrum-transfer-aside { min-width: 0; }
+.spectrum-transfer-aside { padding-top: 24px; }
+.spectrum-operations .spectrum-transfer-summary { background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; padding: 24px; }
+.spectrum-transfer-summary .spectrum-panel-header { padding-top: 0; }
+.spectrum-transfer-summary .spectrum-panel-header .spectrum-eyebrow { color: var(--spectrum-inverse-muted); font-size: 12px; margin-bottom: 16px; }
+.spectrum-transfer-summary .text-muted-foreground { color: var(--spectrum-inverse-muted); }
+.spectrum-transfer-summary .border, .spectrum-transfer-summary .border-t { border-color: var(--spectrum-ink-line); }
+.spectrum-transfer-summary .border { color: var(--spectrum-inverse); }
+.spectrum-transfer-summary .border > span { color: var(--spectrum-inverse); }
+.spectrum-operations .spectrum-result-success { background: var(--spectrum-success-bg); color: var(--spectrum-success); border: 0; }
+.spectrum-operations .spectrum-result-success * { color: var(--spectrum-success); }
+.spectrum-operations .spectrum-result-warning { background: var(--spectrum-warning-bg); color: var(--spectrum-warning); border: 0; }
+.spectrum-operations .spectrum-result-warning * { color: var(--spectrum-warning); }
+.spectrum-result-icon { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.spectrum-result-icon.is-success { background: var(--spectrum-success-bg); color: var(--spectrum-success); }
+.spectrum-result-icon.is-error { background: var(--spectrum-warning-bg); color: var(--destructive); }
+.spectrum-format-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.spectrum-format-options > button { text-align: left; background: var(--card); border: 1px solid var(--border); min-height: 96px; padding: 24px; gap: 16px; }
+.spectrum-format-options > button[aria-pressed=true] { background: var(--spectrum-warning-bg); border-color: var(--spectrum-warning); color: var(--spectrum-warning); }
+.spectrum-format-options > button svg { width: 24px; height: 24px; color: var(--spectrum-link); flex-shrink: 0; }
+.spectrum-format-options > button[aria-pressed=true] svg, .spectrum-format-options > button[aria-pressed=true] .text-muted-foreground { color: var(--spectrum-warning); }
+.spectrum-format-options .text-sm { font-size: 12px; margin-top: 8px; }
+.spectrum-import-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 256px; width: 100%; background: var(--card); color: var(--foreground); border: 1px dashed var(--input); border-radius: 16px; padding: 32px; cursor: pointer; text-align: center; }
+.spectrum-import-dropzone:hover, .spectrum-import-dropzone.is-dragging { background: var(--accent); border-color: var(--spectrum-warning); }
+.spectrum-import-dropzone:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.spectrum-import-dropzone > svg { color: var(--spectrum-link); width: 32px; height: 32px; }
+.spectrum-import-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 24px; }
+.spectrum-import-stats > div { padding: 16px 8px; background: var(--card); border-radius: 8px; }
+.spectrum-import-stats .spectrum-stat-value { color: var(--foreground); font: 600 24px/1.25 Consolas, monospace; }
+.spectrum-import-stats .text-sm { font-size: 12px; margin-top: 8px; }
+.spectrum-transfer-tree svg.text-blue-500, .spectrum-transfer-tree svg.text-emerald-500, .spectrum-transfer-tree svg.text-amber-500 { color: var(--muted-foreground); }
+.spectrum-transfer-tree .text-primary { color: var(--spectrum-link); }
+.spectrum-transfer-tree button:not([role=checkbox]) { min-width: 32px; }
+.spectrum-transfer-tree [role=checkbox] { min-height: 16px; flex-shrink: 0; }
+.spectrum-transfer-tree .flex-1 { min-width: 0; overflow-wrap: anywhere; }
+.spectrum-transfer-tree .select-none > div.flex { flex-wrap: wrap; }
+@media (max-width: 800px) {
+  .spectrum-migration-route { gap: 16px; grid-template-columns: minmax(0, 1fr); }
+  .spectrum-migration-arrow { height: 24px; transform: rotate(90deg); }
+  .spectrum-migration-endpoint { padding: 24px; }
+  .spectrum-transfer-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .spectrum-transfer-aside { padding-top: 0; }
+}
+@media (max-width: 480px) {
+  .spectrum-migration-fields { grid-template-columns: minmax(0, 1fr); }
+  .spectrum-workflow-steps { gap: 16px 24px; }
+  .spectrum-format-options { grid-template-columns: minmax(0, 1fr); }
+  .spectrum-format-options > button { padding: 16px; min-height: 80px; }
+  .spectrum-import-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .spectrum-transfer-tree .ml-6 { margin-left: 12px; }
+}

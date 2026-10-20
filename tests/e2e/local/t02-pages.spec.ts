@@ -32,13 +32,17 @@ test.describe('T02 页面与部署前缀 @t02 @smoke', () => {
       const appHtmlLength = (await page.locator('#app').innerHTML()).length
       visits.push({ path: route.path, title: route.title, mounted: appHtmlLength > 100 })
       expect(appHtmlLength, `${route.path} 页面似乎未挂载(#app 为空)`).toBeGreaterThan(100)
+      // 页面数据加载完成后再做下一次整页导航,避免把人为取消请求当成服务故障。
+      await page.waitForLoadState('networkidle')
     }
 
     // 刷新 /config 与 /import-export(带前缀直接导航，不允许裸 '/')
     for (const path of ['/config', '/import-export']) {
       currentPage = `${path} (refresh)`
       await page.goto(url(target, path), { waitUntil: 'domcontentloaded' })
+      await page.waitForLoadState('networkidle')
       await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.waitForLoadState('networkidle')
       const appHtmlLength = (await page.locator('#app').innerHTML()).length
       expect(appHtmlLength, `${path} 刷新后未挂载`).toBeGreaterThan(100)
     }
@@ -46,6 +50,7 @@ test.describe('T02 页面与部署前缀 @t02 @smoke', () => {
     // 侧边栏导航可用(点击而非直接 goto)
     currentPage = 'sidebar'
     await gotoPage(page, target, '/')
+    await page.waitForLoadState('networkidle')
     await page.getByText('配置管理', { exact: true }).first().click()
     await expect(page).toHaveURL(new RegExp(`${target.prefix.replace(/\//g, '\\/')}/config$`))
     await expectPageTitle(page, '配置管理')

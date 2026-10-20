@@ -43,12 +43,11 @@ test.describe('冻结控制页面交互 @freeze', () => {
     // 打开锁版弹窗:必须显示目标范围与 revision
     await expect(page.getByRole('button', { name: '锁版' })).toBeEnabled()
     await page.getByRole('button', { name: '锁版' }).click()
-    const dialog = page.getByRole('dialog').filter({ has: page.locator('#freeze-token') })
+    const dialog = page.getByRole('dialog').filter({ has: page.locator('#freeze-reason') })
     await expect(dialog.getByText('QA qa_dev(qa_dev) / QA main(main)')).toBeVisible()
     await expect(dialog.getByText(/当前 revision/)).toBeVisible()
 
     await dialog.locator('#freeze-reason').fill('QA 上线前验收完成')
-    await dialog.locator('#freeze-token').fill(token)
     await dialog.getByRole('button', { name: '确认锁定' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '已锁定该范围' }).first()).toBeVisible()
     await expect(page.getByText('已冻结', { exact: true }).first()).toBeVisible()
@@ -69,9 +68,8 @@ test.describe('冻结控制页面交互 @freeze', () => {
 
     // 解除冻结:弹窗显示最新 revision,成功后恢复可编辑
     await page.getByRole('button', { name: '解除冻结' }).click()
-    const unlockDialog = page.getByRole('dialog').filter({ has: page.locator('#freeze-token') })
+    const unlockDialog = page.getByRole('dialog').filter({ has: page.locator('#freeze-reason') })
     await unlockDialog.locator('#freeze-reason').fill('QA 验收调整')
-    await unlockDialog.locator('#freeze-token').fill(token)
     await unlockDialog.getByRole('button', { name: '确认解除' }).click()
     await expect(page.locator('[data-sonner-toast]').filter({ hasText: '已解除冻结' }).first()).toBeVisible()
     await expect(page.getByText('可编辑', { exact: true })).toBeVisible()

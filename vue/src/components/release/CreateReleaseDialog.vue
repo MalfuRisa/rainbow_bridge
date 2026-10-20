@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { AlertCircle, KeyRound, Lock, PackagePlus } from 'lucide-vue-next'
+import { AlertCircle, Lock, PackagePlus } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
+import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api/error'
 import type { ReleaseCreatePayload, ReleaseResourceIssue } from '@/lib/api/release'
 
@@ -31,12 +32,12 @@ const releaseStore = useReleaseStore()
 const scopeSnapshot = ref({ environmentKey: '', pipelineKey: '', environmentName: '', pipelineName: '' })
 const version = ref('')
 const reason = ref('')
-const token = ref('')
+const auth = useAuthStore()
 const submitting = ref(false)
 const errorMessage = ref('')
 const issues = ref<ReleaseResourceIssue[]>([])
 const limitInfo = ref<{ item: string; limit: number; actual: number } | null>(null)
-/** 首次提交的整份请求:确认已提交结果必须原样重发,只有凭据可以重新输入。 */
+/** 首次提交的整份请求:确认已提交结果必须原样重发,业务 payload 与请求标识保持不变。 */
 const pendingPayload = ref<ReleaseCreatePayload | null>(null)
 const retryAvailable = ref(false)
 
@@ -65,7 +66,6 @@ const pendingFreezeRevision = computed(() => pendingPayload.value?.expected_free
 const resetAttempt = () => {
   version.value = ''
   reason.value = ''
-  token.value = ''
   errorMessage.value = ''
   issues.value = []
   limitInfo.value = null
@@ -86,8 +86,7 @@ watch(
       resetAttempt()
       freezeStore.loadStatus(props.environmentKey, props.pipelineKey)
     } else {
-      // 令牌只存当前操作内存:关闭即清除
-      token.value = ''
+      // 关闭后清除本次操作说明
       reason.value = ''
     }
   }
@@ -113,6 +112,7 @@ const describeIssue = (value: string) => {
 }
 
 const submit = async (reuseRequestId: boolean) => {
+  if (submitting.value || !auth.authenticated) return
   errorMessage.value = ''
   issues.value = []
   limitInfo.value = null
@@ -120,10 +120,6 @@ const submit = async (reuseRequestId: boolean) => {
   const replaying = reuseRequestId && pendingPayload.value !== null
   if (!replaying && !frozen.value) {
     errorMessage.value = '该范围尚未锁定;请先在配置页使用“锁版”完成验收锁定'
-    return
-  }
-  if (!token.value.trim()) {
-    errorMessage.value = '请输入管理令牌'
     return
   }
   let payload: ReleaseCreatePayload
@@ -154,7 +150,7 @@ const submit = async (reuseRequestId: boolean) => {
   submitting.value = true
   retryAvailable.value = false
   try {
-    const result = await releaseStore.create(payload, token.value.trim())
+    const result = await releaseStore.create(payload)
     toast.success(result.replayed ? '该请求已提交过:返回原已保存版本' : '版本已保存,尚未切换生效')
     emit('created', payload.version)
     emit('update:open', false)
@@ -166,13 +162,6 @@ const submit = async (reuseRequestId: boolean) => {
         latest_state?: string
       }
       switch (error.errorType) {
-        case 'FREEZE_ADMIN_NOT_CONFIGURED':
-          errorMessage.value = '服务端未配置管理令牌(RAINBOW_FREEZE_ADMIN_TOKEN)'
-          break
-        case 'FREEZE_UNAUTHORIZED':
-          errorMessage.value = '管理凭据不正确'
-          token.value = ''
-          break
         case 'RELEASE_SOURCE_NOT_FROZEN':
           errorMessage.value = '该范围尚未锁定或已解锁;请重新锁版后再创建'
           pendingPayload.value = null
@@ -276,21 +265,14 @@ const submit = async (reuseRequestId: boolean) => {
           <Textarea id="release-reason" :rows="2" class="resize-none" v-model="reason" placeholder="例如:上线前验收完成" />
         </div>
 
-        <div class="space-y-2">
-          <Label for="release-token" class="text-sm font-medium">管理令牌</Label>
-          <div class="relative">
-            <KeyRound class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input id="release-token" type="password" autocomplete="off" class="pl-9 h-10" v-model="token" placeholder="仅本次操作使用,关闭后清除" />
-          </div>
-        </div>
       </div>
 
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="emit('update:open', false)">取消</Button>
-        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="submitting" @click="submit(true)">
+        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="submitting || !auth.authenticated" @click="submit(true)">
           确认结果(同一请求标识)
         </Button>
-        <Button class="h-10" :disabled="submitting || (!frozen && !showRetry)" @click="submit(false)">
+        <Button class="h-10" :disabled="submitting || !auth.authenticated || (!frozen && !showRetry)" @click="submit(false)">
           {{ submitting ? '提交中...' : showRetry ? '按当前输入提交新请求' : '保存版本' }}
         </Button>
       </DialogFooter>

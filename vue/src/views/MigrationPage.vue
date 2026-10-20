@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
-import { Layout } from '@/components/ui/layout'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Lock } from 'lucide-vue-next'
+import { Lock, GitBranch } from 'lucide-vue-next'
 import SourceTargetSelector from '@/components/Migration/SourceTargetSelector.vue'
 import ChangePreview from '@/components/Migration/ChangePreview.vue'
 import MigrationOperation from '@/components/Migration/MigrationOperation.vue'
@@ -12,6 +13,7 @@ import { transferApi } from '@/lib/api/transfer'
 import { configApi } from '@/lib/api/config'
 import { fromApiConfig } from '@/lib/api/transformers'
 import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
+import { isSessionError } from '@/lib/api/http'
 import { toast } from 'vue-sonner'
 import type { ConfigItem, ConfigType } from '@/lib/types'
 
@@ -40,6 +42,19 @@ const status = ref<MigrationStatus>('idle')
 const previewData = ref<MigrationConfig[]>([])
 const overwriteConflicts = ref(false)
 const sourceConfigs = ref<ConfigItem[]>([])
+const previewed = ref(false)
+let previewBatch = 0
+onUnmounted(() => { previewBatch += 1 })
+
+watch([sourceEnvKey, sourcePipelineKey, targetEnvKey, targetPipelineKey], () => {
+  previewBatch += 1
+  previewData.value = []
+  sourceConfigs.value = []
+  selectedConfigs.value = []
+  previewed.value = false
+  overwriteConflicts.value = false
+  status.value = 'idle'
+})
 
 onMounted(() => {
   environmentStore.fetchOverview()
@@ -66,18 +81,18 @@ const validatePreviewInputs = (): boolean => {
   return !!sourceEnvKey.value && !!sourcePipelineKey.value && !!targetEnvKey.value && !!targetPipelineKey.value
 }
 
-const fetchSourceConfigs = async (): Promise<ConfigItem[]> => {
+const fetchSourceConfigs = async (environmentKey: string, pipelineKey: string): Promise<ConfigItem[]> => {
   const sourceResponse = await configApi.list({
-    environmentKey: sourceEnvKey.value,
-    pipelineKey: sourcePipelineKey.value,
+    environmentKey,
+    pipelineKey,
   })
   return (sourceResponse.list || []).map(fromApiConfig)
 }
 
-const fetchTargetConfigs = async (): Promise<Map<string, ConfigItem>> => {
+const fetchTargetConfigs = async (environmentKey: string, pipelineKey: string): Promise<Map<string, ConfigItem>> => {
   const targetResponse = await configApi.list({
-    environmentKey: targetEnvKey.value,
-    pipelineKey: targetPipelineKey.value,
+    environmentKey,
+    pipelineKey,
   })
   const targetList = (targetResponse.list || []).map(fromApiConfig)
   return new Map(targetList.map((c: ConfigItem) => [c.name, c]))
@@ -110,18 +125,24 @@ const handlePreview = async () => {
   }
 
   status.value = 'previewing'
+  const batch = ++previewBatch
 
   try {
-    const sourceList = await fetchSourceConfigs()
+    const [sourceList, targetMap] = await Promise.all([
+      fetchSourceConfigs(sourceEnvKey.value, sourcePipelineKey.value),
+      fetchTargetConfigs(targetEnvKey.value, targetPipelineKey.value),
+    ])
+    if (batch !== previewBatch) return
     sourceConfigs.value = sourceList
-
-    const targetMap = await fetchTargetConfigs()
     const preview = generatePreviewData(sourceList, targetMap)
 
     previewData.value = preview
     selectedConfigs.value = preview.map((p) => p.id)
     status.value = 'idle'
+    previewed.value = true
   } catch (error) {
+    if (isSessionError(error)) return
+    if (batch !== previewBatch) return
     status.value = 'error'
     toast.error('获取配置失败，请重试')
   }
@@ -193,6 +214,7 @@ const handleMigrate = async () => {
     const result = await executeMigration(selectedResourceKeys)
     handleMigrationResult(result)
   } catch (error) {
+    if (isSessionError(error)) return
     status.value = 'error'
     if (isFreezeBlockedError(error)) {
       await freezeStore.loadStatus(targetEnvKey.value, targetPipelineKey.value)
@@ -217,10 +239,14 @@ const handleReset = () => {
 </script>
 
 <template>
-  <Layout
-    title="配置迁移"
-    description="在不同环境和渠道之间迁移配置项"
-  >
+  <SpectrumLayout>
+    <div class="spectrum-operations spectrum-migration-page">
+    <SpectrumPageHeader eyebrow="MIGRATION / BETWEEN WORKSPACES" title="配置迁移" description="从一处复制到另一处，先看清差异，再决定如何写入。" />
+    <ol class="spectrum-workflow-steps" aria-label="迁移步骤">
+      <li :class="{ 'is-current': !previewed && status !== 'success' }"><span>01</span>选择源与目标</li>
+      <li :class="{ 'is-current': previewed && status !== 'success' }"><span>02</span>核对变更与冲突</li>
+      <li :class="{ 'is-current': status === 'success' }"><span>03</span>确认迁移结果</li>
+    </ol>
     <MigrationOperation 
       v-if="status === 'success' || status === 'error'"
       :status="status" 
@@ -265,6 +291,8 @@ const handleReset = () => {
         @reset="handleReset"
         @migrate="handleMigrate"
       />
+      <div v-if="previewed && previewData.length === 0" class="spectrum-empty mt-8"><GitBranch :size="32" /><h3>源范围暂无配置</h3><p>当前没有可迁移的配置。请选择其他源环境和渠道。</p></div>
     </template>
-  </Layout>
+    </div>
+  </SpectrumLayout>
 </template>

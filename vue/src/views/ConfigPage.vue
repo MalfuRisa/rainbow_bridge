@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { Layout } from '@/components/ui/layout'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useConfigStore } from '@/stores/config'
 import { useFreezeStore } from '@/stores/freeze'
@@ -10,19 +11,28 @@ import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
 import EnvironmentSelector from '@/components/Config/EnvironmentSelector.vue'
 import FreezePanel from '@/components/Config/FreezePanel.vue'
 import ConfigList from '@/components/Config/ConfigList.vue'
-import ImagePreview from '@/components/resources/ImagePreview.vue'
+import ConfigImagePreview from '@/components/Config/ConfigImagePreview.vue'
 
 const environmentStore = useEnvironmentStore()
 const configStore = useConfigStore()
 const freezeStore = useFreezeStore()
+const route = useRoute()
+onUnmounted(() => configStore.resetConfigs())
 
 const selectedEnvKey = ref('')
 const selectedPipelineKey = ref('')
 const imagePreviewUrl = ref<string | null>(null)
 const imagePreviewName = ref<string>('')
 
-onMounted(() => {
-  environmentStore.fetchOverview()
+onMounted(async () => {
+  await environmentStore.fetchOverview()
+  // Honor scoped links only after checking they identify an existing scope.
+  const env = environmentStore.environments.find(item => item.key === route.query.env)
+  const pipeline = env?.pipelines.find(item => item.key === route.query.pipeline)
+  if (env && pipeline) {
+    selectedEnvKey.value = env.key
+    selectedPipelineKey.value = pipeline.key
+  }
 })
 
 const selectedEnvironment = computed(() =>
@@ -40,12 +50,19 @@ const frozenReason = computed(() => freezeStore.statusFor(selectedEnvKey.value, 
 
 watch(selectedEnvKey, () => {
   selectedPipelineKey.value = ''
-})
+}, { flush: 'sync' })
+
+const refreshConfigs = () => {
+  if (selectedEnvKey.value && selectedPipelineKey.value) {
+    void configStore.fetchConfigs(selectedEnvKey.value, selectedPipelineKey.value)
+  }
+}
 
 watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
   if (envKey && pipelineKey) {
     configStore.fetchConfigs(envKey, pipelineKey)
-    freezeStore.loadStatus(envKey, pipelineKey)
+  } else {
+    configStore.resetConfigs()
   }
 })
 
@@ -56,12 +73,14 @@ const handleCreate = async (config: {
   content: string
   description: string
 }, done: (ok: boolean, message?: string) => void) => {
+  const environmentKey = selectedEnvKey.value
+  const pipelineKey = selectedPipelineKey.value
   if (!selectedEnvKey.value || !selectedPipelineKey.value) {
     done(false, '请先选择环境和渠道')
     return
   }
   try {
-    await configStore.createConfig(selectedEnvKey.value, selectedPipelineKey.value, {
+    await configStore.createConfig(environmentKey, pipelineKey, {
       name: config.name,
       alias: config.alias,
       type: config.type as ConfigType,
@@ -72,7 +91,7 @@ const handleCreate = async (config: {
   } catch (error) {
     if (isFreezeBlockedError(error)) {
       // 页面已打开后被锁定:保留草稿,刷新状态,不允许显示成功
-      await freezeStore.loadStatus(selectedEnvKey.value, selectedPipelineKey.value)
+      await freezeStore.loadStatus(environmentKey, pipelineKey)
       done(false, `${freezeErrorMessage(error)}。已刷新冻结状态`)
       return
     }
@@ -88,12 +107,14 @@ const handleUpdate = async (config: {
   content: string
   description: string
 }, done: (ok: boolean, message?: string) => void) => {
+  const environmentKey = selectedEnvKey.value
+  const pipelineKey = selectedPipelineKey.value
   if (!selectedEnvKey.value || !selectedPipelineKey.value) {
     done(false, '请先选择环境和渠道')
     return
   }
   try {
-    await configStore.updateConfig(selectedEnvKey.value, selectedPipelineKey.value, {
+    await configStore.updateConfig(environmentKey, pipelineKey, {
       id: config.id,
       name: config.name,
       alias: config.alias,
@@ -104,7 +125,7 @@ const handleUpdate = async (config: {
     done(true)
   } catch (error) {
     if (isFreezeBlockedError(error)) {
-      await freezeStore.loadStatus(selectedEnvKey.value, selectedPipelineKey.value)
+      await freezeStore.loadStatus(environmentKey, pipelineKey)
       done(false, `${freezeErrorMessage(error)}。已刷新冻结状态`)
       return
     }
@@ -112,14 +133,18 @@ const handleUpdate = async (config: {
   }
 }
 
-const handleDelete = async (id: string) => {
-  if (!selectedEnvKey.value || !selectedPipelineKey.value) return
+const handleDelete = async (id: string, done: (ok: boolean, message?: string) => void) => {
+  const environmentKey = selectedEnvKey.value
+  const pipelineKey = selectedPipelineKey.value
+  if (!environmentKey || !pipelineKey) { done(false, '请先选择环境和渠道'); return }
   try {
-    await configStore.deleteConfig(selectedEnvKey.value, selectedPipelineKey.value, id)
+    await configStore.deleteConfig(environmentKey, pipelineKey, id)
+    done(true)
   } catch (error) {
     if (isFreezeBlockedError(error)) {
-      await freezeStore.loadStatus(selectedEnvKey.value, selectedPipelineKey.value)
+      await freezeStore.loadStatus(environmentKey, pipelineKey)
     }
+    done(false, isFreezeBlockedError(error) ? freezeErrorMessage(error) : error instanceof Error ? error.message : '删除失败')
   }
 }
 
@@ -134,10 +159,8 @@ const handleCloseImagePreview = () => {
 </script>
 
 <template>
-  <Layout
-    title="配置管理"
-    description="管理指定环境和渠道的运行时配置项"
-  >
+  <SpectrumLayout>
+    <div class="config-page-heading"><p class="spectrum-eyebrow">CONFIGURATION / EDITING AREA</p><h1>配置管理</h1><p>一处维护内容，按版本决定何时生效。</p></div>
     <EnvironmentSelector
       v-model:selected-env-key="selectedEnvKey"
       v-model:selected-pipeline-key="selectedPipelineKey"
@@ -153,8 +176,10 @@ const handleCloseImagePreview = () => {
     />
 
     <ConfigList
+      :key="`${selectedEnvKey}/${selectedPipelineKey}`"
       :configs="configStore.configs"
       :loading="configStore.loading"
+      :error="configStore.error"
       :selected-env-key="selectedEnvKey"
       :selected-pipeline-key="selectedPipelineKey"
       :selected-environment-name="selectedEnvironment?.name"
@@ -165,13 +190,13 @@ const handleCloseImagePreview = () => {
       @update="handleUpdate"
       @delete="handleDelete"
       @image-preview="handleImagePreview"
+      @retry="refreshConfigs"
     />
 
-    <ImagePreview
-      :is-open="!!imagePreviewUrl"
-      :image-url="imagePreviewUrl || ''"
-      :image-name="imagePreviewName"
-      :on-close="handleCloseImagePreview"
+    <ConfigImagePreview
+      :url="imagePreviewUrl"
+      :name="imagePreviewName"
+      @close="handleCloseImagePreview"
     />
-  </Layout>
+  </SpectrumLayout>
 </template>

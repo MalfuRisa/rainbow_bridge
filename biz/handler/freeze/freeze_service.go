@@ -47,7 +47,7 @@ func Lock(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	data, err := svc.LockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision(), string(c.GetHeader("Authorization")))
+	data, err := svc.LockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision())
 	if err != nil {
 		writeTransitionError(c, err)
 		return
@@ -72,7 +72,7 @@ func Unlock(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	data, err := svc.UnlockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision(), string(c.GetHeader("Authorization")))
+	data, err := svc.UnlockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision())
 	if err != nil {
 		writeTransitionError(c, err)
 		return

@@ -58,6 +58,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 			LogLevel:                  logger.Warn,            // 日志级别
 			IgnoreRecordNotFoundError: true,                   // 忽略记录未找到错误
 			Colorful:                  false,                  // 禁用彩色输出
+			// 认证表会写入密码哈希、会话摘要与 CSRF;日志只保留参数化 SQL,不输出参数值
+			ParameterizedQueries: true,
 		},
 	)
 

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Layout } from '@/components/ui/layout'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ArrowRightLeft, Eye, History, Loader2, PackagePlus, RefreshCw } from 'lucide-vue-next'
+import { ArrowRightLeft, ChevronDown, Eye, History, Loader2, PackagePlus, RefreshCw, ArrowUpRight } from 'lucide-vue-next'
 import EnvironmentChannelSelector from '@/components/resources/EnvironmentChannelSelector.vue'
 import CreateReleaseDialog from '@/components/release/CreateReleaseDialog.vue'
 import ActivateReleaseDialog from '@/components/release/ActivateReleaseDialog.vue'
@@ -88,62 +89,51 @@ const formatTime = (value: string) => {
 </script>
 
 <template>
-  <Layout title="版本发布" description="从已冻结范围创建不可变快照,并选择业务应用读取的生效版本">
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-lg">选择环境与渠道</CardTitle>
+  <SpectrumLayout>
+    <div class="spectrum-operations spectrum-release-page">
+    <!-- §2.1: active business version first; editable/frozen source second; immutable
+         version catalog third. Create is primary; switch and history stay secondary. -->
+    <SpectrumPageHeader eyebrow="RELEASES / FROM SNAPSHOT TO LIVE" title="版本发布" description="留下不可变的快照，由你决定哪一个版本正式生效。">
+      <div v-if="hasScope" class="spectrum-release-actions">
+        <Button size="sm" variant="ghost" @click="releaseStore.refreshScope(selectedEnvKey, selectedPipelineKey)"><RefreshCw class="w-4 h-4 mr-1" />刷新</Button>
+        <Button size="sm" variant="outline" @click="historyOpen = true"><History class="w-4 h-4 mr-1" />操作记录</Button>
+        <Button size="sm" @click="createOpen = true"><PackagePlus class="w-4 h-4 mr-1" />创建版本</Button>
+      </div>
+    </SpectrumPageHeader>
+    <Card class="spectrum-panel spectrum-scope-panel">
+      <CardHeader class="spectrum-panel-header">
+        <CardTitle class="text-lg">工作范围</CardTitle>
         <CardDescription>版本属于一个具体范围;同范围内版本号唯一,不同范围可同名</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent class="spectrum-panel-content">
         <EnvironmentChannelSelector v-model="envPipelineModel" />
       </CardContent>
     </Card>
 
-    <Card v-if="hasScope">
-      <CardContent class="pt-6">
-        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div class="flex flex-wrap items-center gap-4">
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-muted-foreground">编辑区</span>
-              <Badge :variant="frozen ? 'destructive' : 'secondary'" class="px-2 py-0.5">
-                {{ frozen ? '已冻结' : '可编辑' }}
-              </Badge>
-              <span class="text-xs text-muted-foreground font-mono">revision {{ freezeStatus?.revision ?? '0' }}</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-muted-foreground">生效版本</span>
-              <Badge v-if="releaseStore.active" class="px-2 py-0.5">{{ releaseStore.activeVersion }}</Badge>
-              <Badge v-else variant="outline" class="px-2 py-0.5">未设置</Badge>
-              <span class="text-xs text-muted-foreground font-mono">head revision {{ releaseStore.active?.revision ?? '0' }}</span>
-            </div>
-            <p v-if="releaseStore.active?.changed_reason" class="text-xs text-muted-foreground">
+    <section v-if="hasScope" class="spectrum-release-status" aria-label="当前发布状态">
+          <div class="spectrum-release-current">
+            <p class="spectrum-eyebrow">CURRENTLY SERVING / 生效版本</p>
+            <strong>{{ releaseStore.active ? releaseStore.activeVersion : releaseStore.loading ? '加载中…' : '未设置' }}</strong>
+            <span v-if="releaseStore.active" class="spectrum-state-pill is-active">生效中</span>
+            <p v-if="releaseStore.active?.changed_reason" class="spectrum-release-change">
               最近切换:{{ releaseStore.active.changed_reason }}({{ formatTime(releaseStore.active.changed_at) }})
             </p>
+            <p v-else class="spectrum-release-change">创建版本后不会自动生效，需显式切换。</p>
+            <code>head revision {{ releaseStore.active?.revision ?? '0' }}</code>
           </div>
-          <div class="flex items-center gap-2">
-            <Button size="sm" variant="ghost" @click="releaseStore.refreshScope(selectedEnvKey, selectedPipelineKey)">
-              <RefreshCw class="w-4 h-4 mr-1" />
-              刷新
-            </Button>
-            <Button size="sm" variant="outline" @click="historyOpen = true">
-              <History class="w-4 h-4 mr-1" />
-              操作记录
-            </Button>
-            <Button size="sm" @click="createOpen = true">
-              <PackagePlus class="w-4 h-4 mr-1" />
-              创建版本
-            </Button>
+          <div class="spectrum-release-editing">
+            <p class="spectrum-eyebrow">EDITING AREA / 快照来源</p>
+            <div class="spectrum-release-source-status"><span>编辑区</span><span class="spectrum-state-pill" :class="frozen ? 'is-frozen' : 'is-idle'">{{ frozen ? '已冻结' : freezeStatus ? '可编辑' : '状态待确认' }}</span><code>revision {{ freezeStatus?.revision ?? '—' }}</code></div>
+            <p>{{ frozen ? '已锁定当前内容，可以保存为新版本。' : '先在配置管理中锁版，再从冻结内容创建快照。' }}</p>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+    </section>
 
-    <Card v-if="hasScope">
-      <CardHeader>
+    <Card v-if="hasScope" class="spectrum-panel spectrum-section">
+      <CardHeader class="spectrum-panel-header">
         <CardTitle class="text-lg">版本列表</CardTitle>
         <CardDescription>按创建顺序倒序;版本不可修改、不可覆盖、本版不提供删除</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent class="spectrum-panel-content">
         <p v-if="releaseStore.error" class="text-sm text-destructive mb-3">{{ releaseStore.error }}</p>
         <div v-if="releaseStore.loading && releaseStore.items.length === 0" class="flex justify-center py-10">
           <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
@@ -152,9 +142,9 @@ const formatTime = (value: string) => {
           暂无版本:先锁版,再点击“创建版本”
         </div>
         <template v-else>
-          <div class="border rounded-lg overflow-hidden">
-            <Table class="w-full">
-              <TableHeader class="bg-gray-50 dark:bg-gray-800">
+          <div class="spectrum-table">
+            <Table class="spectrum-release-table">
+              <TableHeader>
                 <TableRow>
                   <TableHead class="py-3 px-4 text-left text-sm">版本</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">来源冻结</TableHead>
@@ -166,16 +156,16 @@ const formatTime = (value: string) => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow v-for="item in releaseStore.items" :key="item.meta.snapshot_id">
-                  <TableCell class="py-3 px-4 font-mono text-sm">{{ item.meta.version }}</TableCell>
-                  <TableCell class="py-3 px-4 text-sm font-mono">rev {{ item.meta.source_freeze_revision }}</TableCell>
-                  <TableCell class="py-3 px-4 text-sm">{{ formatTime(item.meta.created_at) }}</TableCell>
-                  <TableCell class="py-3 px-4 text-sm max-w-xs truncate" :title="item.meta.reason">{{ item.meta.reason }}</TableCell>
+                <TableRow v-for="item in releaseStore.items" :key="item.meta.snapshot_id" :class="item.is_active ? 'is-active-version' : ''">
+                  <TableCell class="spectrum-release-version font-mono"><span aria-hidden="true" />{{ item.meta.version }}</TableCell>
+                  <TableCell data-label="来源冻结" class="text-sm font-mono">rev {{ item.meta.source_freeze_revision }}</TableCell>
+                  <TableCell data-label="创建时间" class="text-xs text-muted-foreground">{{ formatTime(item.meta.created_at) }}</TableCell>
+                  <TableCell class="spectrum-release-reason" :title="item.meta.reason">{{ item.meta.reason }}</TableCell>
                   <TableCell class="py-3 px-4 text-xs text-muted-foreground">
                     {{ item.meta.config_count ?? 0 }} 配置 · {{ item.meta.asset_count ?? 0 }} 资源
                   </TableCell>
                   <TableCell class="py-3 px-4">
-                    <Badge v-if="item.is_active" class="px-2 py-0.5">生效中</Badge>
+                    <span v-if="item.is_active" class="spectrum-state-pill is-active">生效中</span>
                     <Badge v-else variant="outline" class="px-2 py-0.5">未生效</Badge>
                   </TableCell>
                   <TableCell class="py-3 px-4 text-right">
@@ -203,18 +193,22 @@ const formatTime = (value: string) => {
       </CardContent>
     </Card>
 
-    <Card v-else>
-      <CardContent class="py-10 text-center text-muted-foreground text-sm">
+    <Card v-else class="spectrum-panel">
+      <CardContent class="spectrum-panel-content">
+        <div class="spectrum-empty"><PackagePlus :size="32" /><h3>先确定发布范围</h3><p>
         请先选择环境和渠道以查看发布版本
+        </p></div>
       </CardContent>
     </Card>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-lg">业务接入说明</CardTitle>
+    <details class="spectrum-help" open>
+      <summary><span>业务接入说明</span><ChevronDown :size="18" /></summary>
+    <Card class="spectrum-panel">
+      <CardHeader class="spectrum-panel-header">
+        <CardTitle class="text-lg">运行时读取</CardTitle>
         <CardDescription>两类读取地址,选择一种接入方式</CardDescription>
       </CardHeader>
-      <CardContent class="space-y-3 text-sm">
+      <CardContent class="spectrum-panel-content space-y-3 text-sm">
         <div class="rounded-md border p-3 space-y-1">
           <div class="font-medium">跟随生效版本(推荐,配合切换/切回)</div>
           <pre class="text-xs bg-muted/60 rounded p-2 overflow-x-auto">GET {{ followingURL }}
@@ -234,6 +228,8 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
         </ul>
       </CardContent>
     </Card>
+    </details>
+    <RouterLink v-if="hasScope" class="spectrum-quiet-link mt-6" :to="{ path: '/config', query: { env: selectedEnvKey, pipeline: selectedPipelineKey } }">返回当前范围的配置工作区 <ArrowUpRight :size="14" /></RouterLink>
 
     <CreateReleaseDialog
       :open="createOpen"
@@ -263,5 +259,6 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
       :version="detailVersion"
       @update:open="detailOpen = $event"
     />
-  </Layout>
+    </div>
+  </SpectrumLayout>
 </template>

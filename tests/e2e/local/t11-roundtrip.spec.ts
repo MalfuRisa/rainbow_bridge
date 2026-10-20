@@ -1,3 +1,4 @@
+import { gotoPage } from './support/pages'
 import { expect, test } from '@playwright/test'
 import * as http from 'http'
 import { targetA, targetB, writeEvidence } from './support/env'
@@ -69,7 +70,7 @@ test.describe('T11 导出往返与静态托管 @t11 @smoke', () => {
     page.on('request', (request_) => {
       if (request_.url().includes('/api/v1/transfer/')) pageRequests.push(`${request_.method()} ${new URL(request_.url()).pathname}`)
     })
-    await page.goto(`${b.origin}${b.prefix}/import-export`, { waitUntil: 'domcontentloaded' })
+    await gotoPage(page, b, '/import-export')
     await page.getByRole('tab', { name: '数据导入' }).click()
     await page.locator('#import-file').setInputFiles({ name: 'roundtrip.zip', mimeType: 'application/zip', buffer: zipExport.bytes })
     await expect(page.getByText('选择导入内容')).toBeVisible({ timeout: 15_000 })

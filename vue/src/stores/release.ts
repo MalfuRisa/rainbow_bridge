@@ -147,8 +147,8 @@ export const useReleaseStore = defineStore('release', () => {
     releaseApi.history(environmentKey, pipelineKey, beforeEventId)
 
   /** 创建版本:成功后开启新批次刷新列表与双状态(创建不切换生效)。 */
-  const create = async (payload: ReleaseCreatePayload, token: string) => {
-    const result = await releaseApi.create(payload, token)
+  const create = async (payload: ReleaseCreatePayload) => {
+    const result = await releaseApi.create(payload)
     if (isCurrentScope(payload.environment_key, payload.pipeline_key)) {
       const batch = beginBatch()
       await Promise.all([
@@ -160,8 +160,8 @@ export const useReleaseStore = defineStore('release', () => {
   }
 
   /** 切换生效版本:成功后开启新批次刷新列表与 active。 */
-  const activate = async (payload: ReleaseActivatePayload, token: string) => {
-    const result = await releaseApi.activate(payload, token)
+  const activate = async (payload: ReleaseActivatePayload) => {
+    const result = await releaseApi.activate(payload)
     if (isCurrentScope(payload.environment_key, payload.pipeline_key)) {
       const batch = beginBatch()
       await Promise.all([
@@ -173,6 +173,7 @@ export const useReleaseStore = defineStore('release', () => {
   }
 
   return {
+    resetSession: () => { scopeKey.value = ''; beginBatch(); reset() },
     scopeKey,
     items,
     hasMore,

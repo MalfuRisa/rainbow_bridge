@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, computed } from 'vue'
-import { Layout } from '@/components/ui/layout'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, Layers } from 'lucide-vue-next'
+import { Loader2, Layers, LockKeyhole } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useAssetStore } from '@/stores/asset'
 import { useFreezeStore } from '@/stores/freeze'
@@ -17,6 +21,7 @@ import Uploader from '@/components/resources/Uploader.vue'
 const environmentStore = useEnvironmentStore()
 const assetStore = useAssetStore()
 const freezeStore = useFreezeStore()
+const route = useRoute()
 
 const searchTerm = ref('')
 const selectedEnvKey = ref('')
@@ -38,16 +43,25 @@ const previewImage = ref<string>('')
 const previewImageName = ref<string>('')
 const isPreviewOpen = ref(false)
 
-onMounted(() => {
-  environmentStore.fetchOverview()
+onMounted(async () => {
+  await environmentStore.fetchOverview()
+  const env = environmentStore.environments.find(item => item.key === route.query.env)
+  if (env?.pipelines.some(item => item.key === route.query.pipeline)) {
+    envPipelineModel.value = { envKey: env.key, pipelineKey: String(route.query.pipeline) }
+  }
 })
+onUnmounted(() => assetStore.resetAssets())
 
 // 监听环境和渠道变化
 watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
   if (envKey && pipelineKey) {
     assetStore.fetchAssets(envKey, pipelineKey)
     freezeStore.loadStatus(envKey, pipelineKey)
+  } else {
+    assetStore.resetAssets()
   }
+  searchTerm.value = ''
+  copiedId.value = null
 })
 
 const frozen = computed(() => freezeStore.isLocked(selectedEnvKey.value, selectedPipelineKey.value))
@@ -56,7 +70,8 @@ const frozenReason = computed(() => freezeStore.statusFor(selectedEnvKey.value, 
 // 处理复制链接
 const handleCopy = async (url: string, id: string) => {
   const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`
-  await navigator.clipboard.writeText(fullUrl)
+  try { await navigator.clipboard.writeText(fullUrl) }
+  catch { toast.error('复制失败，请手动复制资源链接'); return }
   copiedId.value = id
   setTimeout(() => copiedId.value = null, 2000)
 }
@@ -80,27 +95,27 @@ const handleSearchChange = (value: string) => {
 </script>
 
 <template>
-  <Layout
-    title="资源管理"
-    description="集中管理静态资源，自动生成 URL"
-  >
+  <SpectrumLayout>
+    <div class="spectrum-operations spectrum-resources-page">
+    <SpectrumPageHeader eyebrow="ASSETS / CONTENT LIBRARY" title="资源管理" description="把图片与文件集中收好，在配置中引用同一份资源。" />
     <!-- 环境和渠道选择组件 -->
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-lg">选择环境与渠道</CardTitle>
+    <Card class="spectrum-panel spectrum-scope-panel">
+      <CardHeader class="spectrum-panel-header">
+        <CardTitle class="text-lg">工作范围</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent class="spectrum-panel-content">
         <EnvironmentChannelSelector
           v-model="envPipelineModel"
         />
       </CardContent>
     </Card>
+    <div v-if="frozen" class="spectrum-resource-freeze"><LockKeyhole :size="16" /><strong>已冻结 · 资源只读</strong><span>{{ frozenReason || '当前范围不可上传资源，预览与链接复制不受影响。' }}</span></div>
 
     <!-- 资源列表和上传功能 -->
-    <Card>
-      <CardHeader>
-        <div class="flex items-center justify-between">
-          <CardTitle class="text-lg">资源列表</CardTitle>
+    <Card class="spectrum-panel spectrum-section">
+      <CardHeader class="spectrum-panel-header">
+        <div class="spectrum-resource-heading">
+          <CardTitle class="text-lg">资源列表 <span v-if="selectedEnvKey && selectedPipelineKey && !assetStore.loading" class="ml-3 text-xs text-muted-foreground font-normal">{{ assetStore.assets.length }} 份资源</span></CardTitle>
           <!-- 上传功能组件 -->
           <Uploader
             :selectedEnvKey="selectedEnvKey"
@@ -112,8 +127,8 @@ const handleSearchChange = (value: string) => {
           />
         </div>
       </CardHeader>
-      <CardContent>
-        <div v-if="!selectedEnvKey || !selectedPipelineKey" class="flex flex-col items-center justify-center py-16 text-center">
+      <CardContent class="spectrum-panel-content">
+        <div v-if="!selectedEnvKey || !selectedPipelineKey" class="spectrum-empty">
           <div class="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
             <Layers class="w-8 h-8 text-muted-foreground" />
           </div>
@@ -125,6 +140,7 @@ const handleSearchChange = (value: string) => {
         <div v-else-if="assetStore.loading" class="flex items-center justify-center py-16">
           <Loader2 class="w-8 h-8 animate-spin text-muted-foreground" />
         </div>
+        <div v-else-if="assetStore.error" class="spectrum-empty" role="alert"><h3>资源加载失败</h3><p>{{ assetStore.error }}</p><Button variant="outline" @click="assetStore.fetchAssets(selectedEnvKey, selectedPipelineKey)">重试</Button></div>
         <div v-else>
           <!-- 资源列表组件 -->
           <ResourceList
@@ -138,6 +154,7 @@ const handleSearchChange = (value: string) => {
         </div>
       </CardContent>
     </Card>
+    <p class="spectrum-resource-note">资源按环境与渠道归档。上传后可复制访问链接，或在图片、文件类配置中使用资源引用。</p>
 
     <!-- 图片预览组件 -->
     <ImagePreview
@@ -146,5 +163,6 @@ const handleSearchChange = (value: string) => {
       :imageName="previewImageName"
       :onClose="closePreview"
     />
-  </Layout>
+    </div>
+  </SpectrumLayout>
 </template>

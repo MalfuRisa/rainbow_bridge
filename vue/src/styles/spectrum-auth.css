@@ -1,0 +1,24 @@
+.spectrum-login-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.spectrum-login-header { width: 100%; max-width: 1440px; margin: 0 auto; padding: 32px 48px; display: flex; align-items: center; justify-content: space-between; }
+.spectrum-login-back { display: inline-flex; align-items: center; gap: 8px; color: var(--spectrum-link); font-size: 14px; min-height: 40px; }
+.spectrum-login-layout { width: calc(100% - 96px); max-width: 1280px; margin: 32px auto 48px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); flex: 1; min-height: 560px; }
+.spectrum-login-statement { background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; padding: 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 48px; }
+.spectrum-login-statement .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
+.spectrum-login-line { display: block; width: 64px; height: 4px; background: var(--spectrum-orange); margin-bottom: 32px; }
+.spectrum-login-motto { font-size: 56px; font-weight: 600; line-height: 1.5; letter-spacing: -1px; }
+.spectrum-login-caption { color: var(--spectrum-inverse-muted); font-size: 14px; line-height: 2; }
+.spectrum-login-form { align-self: center; width: 100%; max-width: 464px; padding: 48px; margin: auto; }
+.spectrum-login-form h1 { margin-top: 16px; }
+.spectrum-login-description { color: var(--muted-foreground); font-size: 14px; line-height: 2; margin: 16px 0 32px; }
+.spectrum-login-field { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+.spectrum-login-field input { min-height: 48px; background: var(--card); }
+.spectrum-login-submit { width: 100%; min-height: 48px; margin-top: 8px; gap: 12px; }
+.spectrum-login-error { color: var(--destructive); font-size: 14px; margin-bottom: 16px; line-height: 2; }
+.spectrum-login-footer { max-width: 1280px; width: calc(100% - 96px); margin: 0 auto; padding: 24px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font: 12px/2 Consolas, 'Microsoft YaHei', monospace; color: var(--muted-foreground); }
+.spectrum-account { display: flex; align-items: center; gap: 12px; position: relative; font-size: 12px; white-space: nowrap; }
+.spectrum-account-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; color: var(--muted-foreground); }
+.spectrum-account button, .spectrum-account > a { min-height: 40px; padding: 8px; cursor: pointer; color: var(--spectrum-link); }
+.spectrum-account-error { white-space: normal; position: absolute; top: 48px; right: 0; width: 288px; z-index: 20; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--destructive); box-shadow: 0 8px 24px #1b161414; }
+.spectrum-auth-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; margin: 24px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--spectrum-warning-bg); color: var(--spectrum-warning); font-size: 14px; line-height: 2; }
+.spectrum-auth-loading { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; }
+.spectrum-auth-loading p { display: flex; align-items: center; gap: 12px; color: var(--muted-foreground); }

@@ -1,3 +1,4 @@
+import { ensureBrowserSession } from '../support/pages'
 import { expect, test, type Route } from '@playwright/test'
 import { freezeToken, targetA, writeEvidence } from '../support/env'
 import { createConfig, ensureScope, listConfigs, scopeDevBeta, type Scope } from '../support/scopes'
@@ -100,13 +101,13 @@ test.describe('发布流程韧性复核回归 @release', () => {
       await route.continue()
     })
 
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/releases`, { waitUntil: 'domcontentloaded' })
     await selectEnvPipelineOnConfigPage(page, ENV_OPTION, PIPELINE_OPTION)
     await page.getByRole('button', { name: '创建版本' }).click()
     const dialog = page.getByRole('dialog').filter({ has: page.locator('#release-version') })
     await dialog.locator('#release-version').fill('v1.0')
     await dialog.locator('#release-reason').fill('韧性创建')
-    await dialog.locator('#release-token').fill(token)
     await dialog.getByRole('button', { name: '保存版本' }).click()
 
     const retry = dialog.getByRole('button', { name: '确认结果(同一请求标识)' })
@@ -189,14 +190,14 @@ test.describe('发布流程韧性复核回归 @release', () => {
       await route.continue()
     })
 
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/releases`, { waitUntil: 'domcontentloaded' })
     await selectEnvPipelineOnConfigPage(page, ENV_OPTION, PIPELINE_OPTION)
     const v11Row = page.locator('tr').filter({ hasText: 'v1.1' }).first()
     await expect(v11Row).toBeVisible()
     await v11Row.getByRole('button', { name: /切换生效版本|切回此版本/ }).click()
-    const dialog = page.getByRole('dialog').filter({ has: page.locator('#activate-token') })
+    const dialog = page.getByRole('dialog').filter({ has: page.locator('#activate-reason') })
     await dialog.locator('#activate-reason').fill('韧性切换')
-    await dialog.locator('#activate-token').fill(token)
     await dialog.getByRole('button', { name: /切换生效版本|切回此版本/ }).click()
 
     const retry = dialog.getByRole('button', { name: '确认结果(同一请求标识)' })
@@ -280,6 +281,7 @@ test.describe('发布流程韧性复核回归 @release', () => {
       await route.continue()
     })
 
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/releases`, { waitUntil: 'domcontentloaded' })
     await selectEnvPipelineOnConfigPage(page, ENV_OPTION, PIPELINE_OPTION)
     const v10Row = page.locator('tr').filter({ hasText: 'v1.0' }).first()
@@ -340,6 +342,7 @@ test.describe('发布流程韧性复核回归 @release', () => {
       await route.continue()
     })
 
+    await ensureBrowserSession(page, target)
     await page.goto(`${target.origin}${target.prefix}/releases`, { waitUntil: 'domcontentloaded' })
     await selectEnvPipelineOnConfigPage(page, ENV_OPTION, PIPELINE_OPTION)
     await expect(page.getByRole('button', { name: '刷新' })).toBeVisible()

@@ -1,0 +1,47 @@
+/* §2.1 / §2.8: active version is the anchor; creating a snapshot is the primary action. */
+.spectrum-release-status { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; padding: 32px; margin-top: 32px; background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; }
+.spectrum-release-status .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
+.spectrum-release-current { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-content: start; align-items: center; gap: 16px; }
+.spectrum-release-current > .spectrum-eyebrow, .spectrum-release-current > .spectrum-release-change, .spectrum-release-current > code { grid-column: 1 / -1; }
+.spectrum-release-current > strong { display: block; font: 600 48px/1.25 Consolas, monospace; margin: 0; overflow-wrap: anywhere; }
+.spectrum-release-current > .spectrum-state-pill { justify-self: start; }
+.spectrum-release-current > code { display: block; color: var(--spectrum-inverse-muted); font-size: 12px; }
+.spectrum-release-status p.spectrum-release-change { color: var(--spectrum-inverse-muted); font-size: 12px; line-height: 2; overflow-wrap: anywhere; }
+.spectrum-release-editing { padding-left: 32px; border-left: 1px solid var(--spectrum-ink-line); }
+.spectrum-release-source-status { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0 16px; }
+.spectrum-release-source-status code { color: var(--spectrum-inverse-muted); font-size: 12px; }
+.spectrum-release-editing > p:not(.spectrum-eyebrow) { color: var(--spectrum-inverse-muted); font-size: 12px; line-height: 2; }
+.spectrum-release-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.spectrum-release-table { min-width: 880px; }
+.spectrum-release-table .spectrum-release-version { font-size: 20px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.spectrum-release-version > span { display: inline-block; width: 8px; height: 8px; margin-right: 12px; border-radius: 50%; background: var(--border); vertical-align: middle; }
+.spectrum-release-table .is-active-version { background: var(--card); }
+.spectrum-release-table .is-active-version .spectrum-release-version > span { background: var(--spectrum-success); }
+.spectrum-release-table .spectrum-release-reason { max-width: 192px; font-size: 12px; overflow-wrap: anywhere; }
+:root:has(.spectrum-shell) [role=dialog].spectrum-release-detail { max-width: min(960px, calc(100vw - 32px)); }
+.spectrum-release-detail .grid > div { min-width: 0; overflow-wrap: anywhere; }
+.spectrum-release-detail .flex { flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .spectrum-release-status { grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 24px; }
+  .spectrum-release-editing { border: 0; border-top: 1px solid var(--spectrum-ink-line); padding: 24px 0 0; }
+}
+@media (max-width: 680px) {
+  .spectrum-release-table { min-width: 0; table-layout: fixed; }
+  .spectrum-release-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .spectrum-release-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding: 24px 12px; }
+  .spectrum-operations .spectrum-release-table td { padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
+  .spectrum-release-table td:nth-child(1) { grid-column: 1; grid-row: 1; }
+  .spectrum-release-table td:nth-child(6) { grid-column: 2; grid-row: 1; text-align: right; }
+  .spectrum-release-table td:nth-child(2) { grid-column: 1; grid-row: 2; }
+  .spectrum-release-table td:nth-child(3) { grid-column: 2; grid-row: 2; }
+  .spectrum-release-table td:nth-child(4) { grid-column: 1 / -1; grid-row: 3; max-width: none; }
+  .spectrum-release-table td:nth-child(5) { grid-column: 1 / -1; grid-row: 4; }
+  .spectrum-release-table td:nth-child(7) { grid-column: 1 / -1; grid-row: 5; }
+  .spectrum-release-table td:nth-child(7) > div { justify-content: flex-start; flex-wrap: wrap; }
+  .spectrum-release-table td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; }
+  .spectrum-release-table td button { min-height: 44px; }
+  .spectrum-release-status { padding: 24px 16px; }
+  .spectrum-release-actions { width: 100%; }
+  .spectrum-release-detail-meta { grid-template-columns: minmax(0, 1fr); }
+  .spectrum-release-detail-meta .col-span-2 { grid-column: 1; }
+}

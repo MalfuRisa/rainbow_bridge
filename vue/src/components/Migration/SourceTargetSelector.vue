@@ -67,24 +67,24 @@ const handlePreview = () => {
 </script>
 
 <template>
-  <Card>
-    <CardHeader>
+  <Card class="spectrum-panel">
+    <CardHeader class="spectrum-panel-header">
       <CardTitle class="text-base">选择源和目标</CardTitle>
       <CardDescription>
         选择要迁移配置的源环境/渠道和目标环境/渠道
       </CardDescription>
     </CardHeader>
-    <CardContent>
-      <div class="flex items-center gap-4">
-        <div class="flex-1 space-y-3">
-          <p class="text-sm font-medium text-foreground">源</p>
-          <div class="grid grid-cols-2 gap-3">
+    <CardContent class="spectrum-panel-content">
+      <div class="spectrum-migration-route">
+        <div class="spectrum-migration-source spectrum-migration-endpoint">
+          <p class="spectrum-eyebrow">SOURCE / 复制来源</p><h2>源</h2>
+          <div class="spectrum-migration-fields">
             <Select 
               :model-value="sourceEnvKey" 
               @update:model-value="handleSourceEnvChange" 
-              :disabled="environmentStore.loading"
+              :disabled="environmentStore.loading || status === 'migrating'"
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="源环境">
                 <SelectValue :placeholder="environmentStore.loading ? '加载中...' : '选择环境'" />
               </SelectTrigger>
               <SelectContent>
@@ -96,9 +96,9 @@ const handlePreview = () => {
             <Select 
               :model-value="sourcePipelineKey" 
               @update:model-value="handleSourcePipelineChange" 
-              :disabled="!sourceEnvKey"
+              :disabled="!sourceEnvKey || status === 'migrating'"
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="源渠道">
                 <SelectValue placeholder="选择渠道" />
               </SelectTrigger>
               <SelectContent>
@@ -110,19 +110,19 @@ const handlePreview = () => {
           </div>
         </div>
 
-        <div class="flex items-center justify-center w-12 h-12 rounded-full bg-muted mt-6">
+        <div class="spectrum-migration-arrow" aria-hidden="true">
           <ArrowRight class="w-5 h-5 text-muted-foreground" />
         </div>
 
-        <div class="flex-1 space-y-3">
-          <p class="text-sm font-medium text-foreground">目标</p>
-          <div class="grid grid-cols-2 gap-3">
+        <div class="spectrum-migration-target spectrum-migration-endpoint">
+          <p class="spectrum-eyebrow">DESTINATION / 写入目标</p><h2>目标</h2>
+          <div class="spectrum-migration-fields">
             <Select 
               :model-value="targetEnvKey" 
               @update:model-value="handleTargetEnvChange" 
-              :disabled="environmentStore.loading"
+              :disabled="environmentStore.loading || status === 'migrating'"
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="目标环境">
                 <SelectValue :placeholder="environmentStore.loading ? '加载中...' : '选择环境'" />
               </SelectTrigger>
               <SelectContent>
@@ -134,9 +134,9 @@ const handlePreview = () => {
             <Select 
               :model-value="targetPipelineKey" 
               @update:model-value="handleTargetPipelineChange" 
-              :disabled="!targetEnvKey"
+              :disabled="!targetEnvKey || status === 'migrating'"
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label="目标渠道">
                 <SelectValue placeholder="选择渠道" />
               </SelectTrigger>
               <SelectContent>
@@ -152,7 +152,7 @@ const handlePreview = () => {
       <div class="mt-6 flex justify-end">
         <Button
           @click="handlePreview"
-          :disabled="!sourceEnvKey || !sourcePipelineKey || !targetEnvKey || !targetPipelineKey || status === 'previewing' || targetLocked"
+          :disabled="!sourceEnvKey || !sourcePipelineKey || !targetEnvKey || !targetPipelineKey || status === 'previewing' || status === 'migrating' || targetLocked"
           :title="targetLocked ? `目标已冻结:${targetFrozenReason || '不可迁移到该范围'}` : undefined"
         >
           <Loader2 v-if="status === 'previewing'" class="w-4 h-4 mr-2 animate-spin" />

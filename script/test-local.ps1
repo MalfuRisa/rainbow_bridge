@@ -24,6 +24,9 @@ $script:PhaseResults = [ordered]@{}
 $script:GoExe = ''
 # 本轮冻结测试管理令牌:每次运行随机生成,只注入实例进程与被测用例进程环境,不写入证据文件
 $script:FreezeToken = 'qa-freeze-' + ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
+# 隔离实例的管理员初始密码:仅注入实例进程与被测用例进程环境,不写入配置文件或证据
+$script:AdminUsername = 'admin'
+$script:AdminPassword = 'qa-admin-' + ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
 
 # ---------------------------------------------------------------- utilities
 
@@ -228,6 +231,14 @@ redis:
   enabled: false
 storage:
   type: "local"
+auth:
+  cookie_name: rb_admin_auth_dev
+  cookie_secure: false
+  allow_insecure_localhost: true
+  idle_timeout: 30m
+  absolute_timeout: 2h
+  trusted_origins:
+    - "http://127.0.0.1:$Port"
 intranet:
   enabled: true
 log:
@@ -258,7 +269,7 @@ function Start-QaInstance {
     }
     $outLog = Join-Path $ctx.artifacts "instance-$Name.out.log"
     $errLog = Join-Path $ctx.artifacts "instance-$Name.err.log"
-    $process = Invoke-WithEnv -Set @{ FRONTEND_DIR = $FrontendDir; RAINBOW_FREEZE_ADMIN_TOKEN = $script:FreezeToken } -Clear @('BASE_PATH') -Action {
+    $process = Invoke-WithEnv -Set @{ FRONTEND_DIR = $FrontendDir; RAINBOW_FREEZE_ADMIN_TOKEN = $script:FreezeToken; RAINBOW_ADMIN_USERNAME = $script:AdminUsername; RAINBOW_ADMIN_INITIAL_PASSWORD = $script:AdminPassword } -Clear @('BASE_PATH') -Action {
         Start-Process -FilePath $exe -ArgumentList '--config', $configPath `
             -WorkingDirectory $InstanceDir -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $outLog -RedirectStandardError $errLog
@@ -429,6 +440,8 @@ function Invoke-PlaywrightPhase {
         RB_QA_EXPECTED_STATE   = Join-Path $ctx.artifacts 'expected-state.json'
         RB_QA_CHANNEL          = $BrowserChannel
         RB_QA_FREEZE_TOKEN     = $script:FreezeToken
+        RB_QA_ADMIN_PASSWORD   = $script:AdminPassword
+        RB_QA_ADMIN_USERNAME   = $script:AdminUsername
         RB_QA_A_ORIGIN         = $(if ($a) { $a.origin } else { '' })
         RB_QA_A_PREFIX         = $(if ($a) { $a.basePath } else { '' })
         RB_QA_A_PID            = $(if ($a) { "$($a.pid)" } else { '' })
@@ -551,6 +564,10 @@ function Invoke-QaRun {
 
     Get-InstanceDataSnapshot $second 'post-suite'
     Get-InstanceDataSnapshot $instanceBRecord 'post-suite'
+
+    if ($mainExit -ne 0) {
+        throw '主套件失败,停止依赖它产生期望数据的重启/恢复阶段;详见 pw-prefix-main.console.log'
+    }
 
     if ($Suite -eq 'Full') {
         # ---- T25: 停进程 → 同配置重启 → 校验持久化

@@ -27,6 +27,7 @@ export class ApiError extends Error {
   errorType: string
   /** 原始响应体(供展示实际受阻范围等声明式字段) */
   payload?: Record<string, unknown>
+  retryAfter = 0
 
   constructor(
     code: number,

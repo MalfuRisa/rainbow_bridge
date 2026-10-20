@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
@@ -54,6 +55,10 @@ type Service struct {
 	basePath    string
 	config      *config.Config
 	redisClient *redis.Client
+	auth        *AuthSettings
+	clock       func() time.Time
+	loginRate   *authRateLimiter
+	passwordOps *authComputeLimiter
 }
 
 func NewService(db *gorm.DB, redisClient *redis.Client, basePath string, cfg *config.Config) *Service {
@@ -62,6 +67,8 @@ func NewService(db *gorm.DB, redisClient *redis.Client, basePath string, cfg *co
 		basePath:    sanitizeServiceBasePath(basePath),
 		config:      cfg,
 		redisClient: redisClient,
+		loginRate:   newAuthRateLimiter(nil),
+		passwordOps: newAuthComputeLimiter(authPasswordConcurrent),
 	}
 }
 

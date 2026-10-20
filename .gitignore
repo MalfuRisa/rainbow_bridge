@@ -104,3 +104,8 @@ test_*.sh
 
 # Config files
 config.yaml.demo
+
+# 本地联调实例(数据、二进制与本地凭据,不入库)
+.dev-18081/
+.dev-integration/
+/tests/e2e/test-results-auth/

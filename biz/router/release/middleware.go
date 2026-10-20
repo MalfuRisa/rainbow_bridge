@@ -75,3 +75,13 @@ func _runtimereleaseMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
+
+func _release0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _runtimereleasestaticMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}

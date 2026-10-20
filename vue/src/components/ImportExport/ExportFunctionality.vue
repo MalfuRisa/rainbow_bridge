@@ -102,16 +102,16 @@ const handleFormatChange = (format: ExportFormat) => {
 </script>
 
 <template>
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <div class="lg:col-span-2 space-y-6">
-      <Card>
-        <CardHeader>
+  <div class="spectrum-transfer-layout">
+    <div class="spectrum-transfer-content space-y-6">
+      <Card class="spectrum-panel">
+        <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">选择导出内容</CardTitle>
           <CardDescription>
             选择要导出的环境、渠道或配置项
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent class="spectrum-panel-content">
           <Alert v-if="exportError" variant="destructive" class="mb-4">
             <AlertCircle class="h-4 w-4" />
             <AlertTitle>错误</AlertTitle>
@@ -128,12 +128,13 @@ const handleFormatChange = (format: ExportFormat) => {
       <FormatSelector :format="exportFormat" @change="handleFormatChange" />
     </div>
 
-    <div class="space-y-6">
-      <Card>
-        <CardHeader>
+    <div class="spectrum-transfer-aside space-y-6">
+      <Card class="spectrum-panel spectrum-transfer-summary">
+        <CardHeader class="spectrum-panel-header">
+          <p class="spectrum-eyebrow">EXPORT / 打包清单</p>
           <CardTitle class="text-lg">导出预览</CardTitle>
         </CardHeader>
-        <CardContent class="space-y-4">
+        <CardContent class="spectrum-panel-content space-y-4">
           <StatsDisplay :format="exportFormat" :stats="exportStats" />
 
           <div class="pt-4 border-t">
@@ -148,10 +149,10 @@ const handleFormatChange = (format: ExportFormat) => {
             </Button>
           </div>
 
-          <Alert v-if="exportSuccess" class="border-emerald-500 bg-emerald-50 dark:bg-emerald-950">
-            <Check class="h-4 w-4 text-emerald-600" />
-            <AlertTitle class="text-emerald-600">导出成功</AlertTitle>
-            <AlertDescription class="text-emerald-600">
+          <Alert v-if="exportSuccess" class="spectrum-result-success">
+            <Check class="h-4 w-4" />
+            <AlertTitle>导出成功</AlertTitle>
+            <AlertDescription>
               文件已开始下载
             </AlertDescription>
           </Alert>

@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	Auth     AuthConfig     `yaml:"auth"`
 	CORS     CORSConfig     `yaml:"cors"`
 	Upload   UploadConfig   `yaml:"upload"`
 	Intranet IntranetConfig `yaml:"intranet"`
@@ -57,6 +58,16 @@ type RedisConfig struct {
 	Address  string `yaml:"address"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+}
+
+// AuthConfig defines admin login session settings.
+type AuthConfig struct {
+	CookieName           string   `yaml:"cookie_name"`
+	CookieSecure         *bool    `yaml:"cookie_secure"`
+	AllowInsecureLocal    bool     `yaml:"allow_insecure_localhost"`
+	IdleTimeout          string   `yaml:"idle_timeout"`
+	AbsoluteTimeout      string   `yaml:"absolute_timeout"`
+	TrustedOrigins       []string `yaml:"trusted_origins"`
 }
 
 // CORSConfig defines CORS middleware settings.
@@ -122,6 +133,10 @@ func Load(name string) (*Config, error) {
 	}
 	if configPath == "" {
 		log.Printf("Warning: config file %q not found, using defaults", name)
+		ApplyAuthDefaults(cfg)
+		if _, err := ValidateAuthConfig(cfg); err != nil {
+			return nil, err
+		}
 		return cfg, nil
 	}
 
@@ -139,6 +154,10 @@ func Load(name string) (*Config, error) {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	applyDefaults(&parsed)
+	ApplyAuthDefaults(&parsed)
+	if _, err := ValidateAuthConfig(&parsed); err != nil {
+		return nil, err
+	}
 	return &parsed, nil
 }
 

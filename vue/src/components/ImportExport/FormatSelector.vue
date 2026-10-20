@@ -18,43 +18,37 @@ const handleFormatChange = (newFormat: ExportFormat) => {
 </script>
 
 <template>
-  <Card>
-    <CardHeader>
+  <Card class="spectrum-panel spectrum-section">
+    <CardHeader class="spectrum-panel-header">
       <CardTitle class="text-lg">导出格式</CardTitle>
       <CardDescription>选择导出文件的格式</CardDescription>
     </CardHeader>
-    <CardContent>
-      <div class="grid grid-cols-2 gap-4">
-        <div
-          :class="[
-            'flex items-center gap-4 p-4 rounded-lg border-2 cursor-pointer transition-colors',
-            format === 'zip'
-              ? 'border-primary bg-primary/5'
-              : 'border-border hover:border-muted-foreground/50'
-          ]"
+    <CardContent class="spectrum-panel-content">
+      <div class="spectrum-format-options" role="group" aria-label="导出格式">
+        <button
+          type="button"
+          :aria-pressed="format === 'zip'"
+          class="spectrum-format-option flex items-center rounded-lg"
           @click="handleFormatChange('zip')"
         >
-          <FileArchive class="w-8 h-8 text-amber-500" />
+          <FileArchive class="w-8 h-8" />
           <div>
             <div class="font-medium">ZIP</div>
             <div class="text-sm text-muted-foreground">推荐格式</div>
           </div>
-        </div>
-        <div
-          :class="[
-            'flex items-center gap-4 p-4 rounded-lg border-2 cursor-pointer transition-colors',
-            format === 'tar.gz'
-              ? 'border-primary bg-primary/5'
-              : 'border-border hover:border-muted-foreground/50'
-          ]"
+        </button>
+        <button
+          type="button"
+          :aria-pressed="format === 'tar.gz'"
+          class="spectrum-format-option flex items-center rounded-lg"
           @click="handleFormatChange('tar.gz')"
         >
-          <FileArchive class="w-8 h-8 text-blue-500" />
+          <FileArchive class="w-8 h-8" />
           <div>
             <div class="font-medium">TAR.GZ</div>
             <div class="text-sm text-muted-foreground">通用压缩格式</div>
           </div>
-        </div>
+        </button>
       </div>
     </CardContent>
   </Card>

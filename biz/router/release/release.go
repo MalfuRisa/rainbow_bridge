@@ -37,6 +37,8 @@ func Register(r *server.Hertz) {
 			{
 				_runtime := _v1.Group("/runtime", _runtimeMw()...)
 				_runtime.GET("/release", append(_runtimereleaseMw(), release.RuntimeRelease)...)
+				_release0 := _runtime.Group("/release", _release0Mw()...)
+				_release0.GET("/static", append(_runtimereleasestaticMw(), release.RuntimeReleaseStatic)...)
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package release
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,6 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		ExpectedFreezeRevisionRaw: req.GetExpectedFreezeRevision(),
 		RequestID:                 req.GetRequestId(),
 		Reason:                    req.GetReason(),
-		Authorization:             string(c.GetHeader("Authorization")),
 	})
 	if err != nil {
 		writeCreateError(c, err)
@@ -149,7 +149,6 @@ func Activate(ctx context.Context, c *app.RequestContext) {
 		ExpectedActiveRevisionRaw: req.GetExpectedActiveRevision(),
 		RequestID:                 req.GetRequestId(),
 		Reason:                    req.GetReason(),
-		Authorization:             string(c.GetHeader("Authorization")),
 	})
 	if err != nil {
 		writeActivateError(c, err)
@@ -228,6 +227,11 @@ func RuntimeRelease(ctx context.Context, c *app.RequestContext) {
 		value := c.Query("version")
 		versionParam = &value
 	}
+	rawContent, err := resolveReleaseContentFormat(c)
+	if err != nil {
+		writeRuntimeError(c, err)
+		return
+	}
 	data, err := svc.RuntimeRelease(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, versionParam)
 	if err != nil {
 		writeRuntimeError(c, err)
@@ -237,8 +241,48 @@ func RuntimeRelease(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &runtimeReleaseResponseJSON{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: runtimeDataJSON(data),
+		Data: runtimeDataJSON(data, rawContent),
 	})
+}
+
+// resolveReleaseContentFormat 解析 content_format:缺失或 json 保持原契约,raw 输出字符串原文。
+// 显式空值与其他取值按 400 拒绝(不能用缺省值掩盖调用方参数错误)。
+func resolveReleaseContentFormat(c *app.RequestContext) (bool, error) {
+	if !c.QueryArgs().Has("content_format") {
+		return false, nil
+	}
+	switch strings.TrimSpace(c.Query("content_format")) {
+	case "json":
+		return false, nil
+	case "raw":
+		return true, nil
+	default:
+		return false, service.ReleaseInvalidRequestError("content_format must be json or raw")
+	}
+}
+
+// RuntimeReleaseStatic .
+// @router /api/v1/runtime/release/static [GET]
+func RuntimeReleaseStatic(ctx context.Context, c *app.RequestContext) {
+	environmentKey := strings.TrimSpace(string(c.GetHeader("x-environment")))
+	pipelineKey := strings.TrimSpace(string(c.GetHeader("x-pipeline")))
+	result, err := svc.ReleaseStaticExport(handler.EnrichContext(ctx, c), service.ReleaseStaticExportInput{
+		EnvironmentKey:     environmentKey,
+		PipelineKey:        pipelineKey,
+		Version:            c.Query("version"),
+		ExpectedSnapshotID: c.Query("expected_snapshot_id"),
+	})
+	if err != nil {
+		writeStaticExportError(c, err)
+		return
+	}
+	// 临时包在整次响应(含流式发送)结束后清理
+	defer os.Remove(result.TempPath)
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Type", "application/zip")
+	c.Header("X-Rainbow-Snapshot-Id", result.SnapshotID)
+	c.Header("X-Rainbow-Version", result.Version)
+	c.FileAttachment(result.TempPath, result.FileName)
 }
 
 // Asset .
@@ -326,6 +370,12 @@ func writeHistoryError(c *app.RequestContext, err error) {
 func writeRuntimeError(c *app.RequestContext, err error) {
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.RuntimeReleaseResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
+}
+
+// writeStaticExportError 版本静态导出的错误信封:与读取共用同一映射(含 409/503/413/500)。
+func writeStaticExportError(c *app.RequestContext, err error) {
+	status, code, errorType, message := releaseErrorParts(err)
+	c.JSON(status, releaseErrorJSON{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeAssetError(c *app.RequestContext, err error) {
@@ -578,7 +628,7 @@ type runtimeReleaseResponseJSON struct {
 	Data runtimeReleaseDataJSON `json:"data"`
 }
 
-func runtimeDataJSON(data *service.ReleaseRuntimeConfig) runtimeReleaseDataJSON {
+func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtimeReleaseDataJSON {
 	result := runtimeReleaseDataJSON{
 		SnapshotID:           data.SnapshotID,
 		Version:              data.Version,
@@ -591,7 +641,7 @@ func runtimeDataJSON(data *service.ReleaseRuntimeConfig) runtimeReleaseDataJSON 
 			PipelineKey:     data.PipelineKey,
 			PipelineName:    data.PipelineName,
 		},
-		Configs: marshalRuntimeConfigs(data),
+		Configs: marshalRuntimeConfigs(data, rawContent),
 	}
 	if data.ActiveRevision != nil {
 		result.ActiveRevision = strconv.FormatInt(*data.ActiveRevision, 10)
@@ -600,12 +650,19 @@ func runtimeDataJSON(data *service.ReleaseRuntimeConfig) runtimeReleaseDataJSON 
 }
 
 // marshalRuntimeConfigs 把 object/keyvalue 的 content 字符串解析为 JSON 对象(与既有 runtime 相同形态)。
-func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig) []runtimeConfigJSON {
+// marshalRuntimeConfigs 生成配置列表:默认把 object/keyvalue 解析成 JSON 对象,
+// rawContent 时保持服务端的字符串原文(调用方自行决定是否无损解析)。
+func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig, rawContent bool) []runtimeConfigJSON {
 	result := make([]runtimeConfigJSON, 0, len(data.Configs))
 	for _, cfg := range data.Configs {
 		item := runtimeConfigJSON{
 			ResourceKey: cfg.ResourceKey, Alias: cfg.Alias, Name: cfg.Name,
 			Type: cfg.Type, Remark: cfg.Remark, IsPerm: cfg.IsPerm, Description: cfg.Description,
+		}
+		if rawContent {
+			item.Content = cfg.Content
+			result = append(result, item)
+			continue
 		}
 		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
 		if normalizedType == "object" || normalizedType == "keyvalue" {

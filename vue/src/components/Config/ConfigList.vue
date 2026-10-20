@@ -1,237 +1,112 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
-import { Input } from '@/components/ui/input'
+import { computed, nextTick, ref } from 'vue'
+import { Search, Pencil, Trash2, Loader2, Layers, ArrowRight, FileText } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Search, Pencil, Trash2, Loader2, Layers } from 'lucide-vue-next'
-import { type ConfigItem } from '@/lib/types'
-import { CONFIG_TYPE_META } from '@/lib/types'
-import ConfigContent from './ConfigContent.vue'
+import { Input } from '@/components/ui/input'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { CONFIG_TYPE_META, type ConfigItem } from '@/lib/types'
 import ConfigDialog from './ConfigDialog.vue'
+import ConfigDetail from './ConfigDetail.vue'
+import ConfigTypeIcon from './ConfigTypeIcon.vue'
 
 const props = defineProps<{
-  configs: ConfigItem[]
-  loading: boolean
-  selectedEnvKey: string
-  selectedPipelineKey: string
-  selectedEnvironmentName: string | undefined
-  selectedPipelineName: string | undefined
-  /** 当前范围已冻结:禁止配置新增/编辑/删除,并说明原因 */
-  frozen?: boolean
-  frozenReason?: string
+  configs: ConfigItem[]; loading: boolean; error?: string | null
+  selectedEnvKey: string; selectedPipelineKey: string
+  selectedEnvironmentName: string | undefined; selectedPipelineName: string | undefined
+  frozen?: boolean; frozenReason?: string
 }>()
-
+type ConfigPayload = { name: string; alias: string; type: string; content: string; description: string }
+type SaveDone = (ok: boolean, message?: string) => void
 const emit = defineEmits<{
-  (e: 'search', value: string): void
-  (e: 'create', config: {
-    name: string
-    alias: string
-    type: string
-    content: string
-    description: string
-  }, done: (ok: boolean, message?: string) => void): void
-  (e: 'update', config: {
-    id: string
-    name: string
-    alias: string
-    type: string
-    content: string
-    description: string
-  }, done: (ok: boolean, message?: string) => void): void
-  (e: 'delete', id: string): void
-  (e: 'imagePreview', url: string, name: string): void
+  search: [value: string]
+  create: [config: ConfigPayload, done: SaveDone]
+  update: [config: ConfigPayload & { id: string }, done: SaveDone]
+  delete: [id: string, done: SaveDone]
+  imagePreview: [url: string, name: string]
+  retry: []
 }>()
-
 const searchTerm = ref('')
+const selectedId = ref('')
 const isAddDialogOpen = ref(false)
 const editingConfig = ref<ConfigItem | null>(null)
-
+const deleteTarget = ref<ConfigItem | null>(null)
+const deleting = ref(false)
+const deleteError = ref('')
+let editTrigger: HTMLElement | null = null
+const hasScope = computed(() => Boolean(props.selectedEnvKey && props.selectedPipelineKey))
 const filteredConfigs = computed(() => {
-  if (!searchTerm.value) return props.configs
-  return props.configs.filter(
-    (config) =>
-      config.name.toLowerCase().includes(searchTerm.value.toLowerCase()) ||
-      config.alias.toLowerCase().includes(searchTerm.value.toLowerCase())
-  )
+  const term = searchTerm.value.toLowerCase().trim()
+  return props.configs.filter(config => !term || `${config.name}\n${config.alias}`.toLowerCase().includes(term))
 })
+const selectedConfig = computed(() => filteredConfigs.value.find(item => item.id === selectedId.value) || filteredConfigs.value[0])
+const detailRegion = ref<HTMLElement | null>(null)
 
-const handleSearch = (value: string) => {
-  searchTerm.value = value
-  emit('search', value)
+async function selectConfig(id: string) {
+  selectedId.value = id
+  if (!window.matchMedia('(max-width: 800px)').matches) return
+  await nextTick()
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  detailRegion.value?.scrollIntoView({ behavior: reduceMotion ? 'instant' : 'smooth', block: 'start' })
 }
 
-const handleEdit = (config: ConfigItem) => {
+function openEdit(config: ConfigItem, event?: MouseEvent) {
+  editTrigger = (event?.currentTarget as HTMLElement | null) || document.activeElement as HTMLElement | null
   editingConfig.value = config
 }
-
-const handleDelete = (id: string) => {
-  emit('delete', id)
-}
-
-const handleImagePreview = (url: string, name: string = '图片预览') => {
-  emit('imagePreview', url, name)
-}
-
-const handleCreate = (config: {
-  name: string
-  alias: string
-  type: string
-  content: string
-  description: string
-}, done: (ok: boolean, message?: string) => void) => {
-  emit('create', config, done)
-}
-
-const handleUpdate = (config: {
-  id: string
-  name: string
-  alias: string
-  type: string
-  content: string
-  description: string
-}, done: (ok: boolean, message?: string) => void) => {
-  emit('update', config, done)
-}
-
-const handleReset = () => {
+function closeForm(open: boolean) {
+  isAddDialogOpen.value = open
+  if (open) return
   editingConfig.value = null
+  void nextTick(() => { if (editTrigger?.isConnected) editTrigger.focus(); editTrigger = null })
+}
+function resetForm() { closeForm(false) }
+function createConfig(config: ConfigPayload, done: SaveDone) {
+  emit('create', config, (ok, message) => {
+    done(ok, message)
+    if (ok) void nextTick(() => { selectedId.value = props.configs.find(item => item.alias === config.alias)?.id || '' })
+  })
+}
+function requestDelete(config: ConfigItem) { deleteTarget.value = config; deleteError.value = '' }
+function confirmDelete() {
+  if (!deleteTarget.value || deleting.value || props.frozen) return
+  deleting.value = true
+  emit('delete', deleteTarget.value.id, (ok, message) => {
+    deleting.value = false
+    if (ok) deleteTarget.value = null
+    else deleteError.value = message || '删除失败，请重试'
+  })
 }
 </script>
 
 <template>
-  <Card class="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-300">
-    <CardHeader class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <CardTitle class="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-          配置列表
-          <Badge v-if="frozen" variant="destructive" class="px-2 py-0.5 text-xs" :title="frozenReason || undefined">
-            已冻结
-          </Badge>
-        </CardTitle>
-        <div class="flex items-center gap-4">
-          <div class="relative">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="搜索配置..."
-              class="pl-9 w-72 h-10"
-              v-model="searchTerm"
-              @input="handleSearch($event.target.value)"
-              :disabled="!selectedEnvKey || !selectedPipelineKey"
-            />
-          </div>
-          <ConfigDialog
-            :open="isAddDialogOpen"
-            :editing-config="editingConfig"
-            :selected-env-key="selectedEnvKey"
-            :selected-pipeline-key="selectedPipelineKey"
-            :selected-environment-name="selectedEnvironmentName"
-            :selected-pipeline-name="selectedPipelineName"
-            :frozen="frozen"
-            :frozen-reason="frozenReason"
-            @update:open="isAddDialogOpen = $event"
-            @update:editing-config="editingConfig = $event"
-            @create="handleCreate"
-            @update="handleUpdate"
-            @reset="handleReset"
-          />
+  <!-- §2.1: selected content first; catalog second. Semantic table rows and
+       Pencil/Trash controls retain stable, accessible regression entrypoints. -->
+  <section class="config-workspace-section" aria-label="配置列表">
+    <div class="config-list-heading"><div><h2>配置列表</h2><span v-if="hasScope">{{ configs.length }} 项配置<span v-if="searchTerm"> · 匹配 {{ filteredConfigs.length }} 项</span></span></div><span v-if="frozen" class="config-readonly-label">已冻结 · 只读</span></div>
+    <div class="config-workspace" :class="{ 'has-content': hasScope && !loading && !error && selectedConfig }">
+      <div class="config-catalog">
+        <div class="config-catalog-tools">
+          <label class="config-search"><Search :size="16" aria-hidden="true" /><Input v-model="searchTerm" placeholder="搜索配置..." aria-label="搜索配置名称或别名" :disabled="!hasScope" @update:model-value="emit('search', String($event))" /></label>
+          <ConfigDialog :key="editingConfig?.id || 'create'" :open="isAddDialogOpen || Boolean(editingConfig)" :editing-config="editingConfig" :selected-env-key="selectedEnvKey" :selected-pipeline-key="selectedPipelineKey" :selected-environment-name="selectedEnvironmentName" :selected-pipeline-name="selectedPipelineName" :frozen="frozen" :frozen-reason="frozenReason" @update:open="closeForm" @update:editing-config="editingConfig = $event" @create="createConfig" @update="(config, done) => emit('update', config, done)" @reset="resetForm" />
         </div>
+        <div v-if="!hasScope" class="config-empty-state"><Layers :size="32" /><h3>请先选择环境和渠道</h3><p>配置按环境和渠道管理。选择工作范围，查看和维护对应内容。</p></div>
+        <div v-else-if="loading" class="config-empty-state" role="status"><Loader2 :size="28" class="animate-spin" /><p>正在加载配置…</p></div>
+        <div v-else-if="error" class="config-empty-state" role="alert"><FileText :size="28" /><h3>配置加载失败</h3><p>{{ error }}</p><Button variant="outline" @click="emit('retry')">重试</Button></div>
+        <div v-else-if="filteredConfigs.length === 0" class="config-empty-state"><Search v-if="searchTerm" :size="28" /><FileText v-else :size="28" /><h3>{{ searchTerm ? '未找到匹配的配置' : '当前环境和渠道下暂无配置' }}</h3><p>{{ searchTerm ? '尝试其他名称或别名，或清空搜索。' : '从第一条配置开始，选择适合内容的配置类型。' }}</p><Button v-if="searchTerm" variant="outline" @click="searchTerm = ''">清空搜索</Button></div>
+        <table v-else class="config-catalog-table">
+          <thead><tr><th>名称 / 别名</th><th>类型</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody><tr v-for="config in filteredConfigs" :key="config.id" :class="{ 'is-selected': selectedConfig?.id === config.id }">
+            <td><button class="config-select" :aria-pressed="selectedConfig?.id === config.id" @click="selectConfig(config.id)"><span class="config-item-mark"><ConfigTypeIcon :type="config.type" /></span><span><strong>{{ config.name }}</strong><code>{{ config.alias }}</code></span><ArrowRight :size="14" class="config-selected-arrow" aria-hidden="true" /></button></td>
+            <td><span class="config-type-label">{{ CONFIG_TYPE_META[config.type]?.label || config.type }}</span></td>
+            <td><div class="config-row-actions"><Button variant="ghost" size="icon" :disabled="frozen" :aria-label="`编辑 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可编辑配置'}` : '编辑配置'" @click="openEdit(config, $event)"><Pencil :size="15" /></Button><Button variant="ghost" size="icon" :disabled="loading || frozen" :aria-label="`删除 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可删除配置'}` : '删除配置'" @click="requestDelete(config)"><Trash2 :size="15" /></Button></div></td>
+          </tr></tbody>
+        </table>
+        <div v-if="hasScope && !loading && !error" class="config-catalog-footer"><span>{{ selectedEnvironmentName }} / {{ selectedPipelineName }}</span><span>编辑区</span></div>
       </div>
-    </CardHeader>
-    <CardContent class="p-6">
-      <div v-if="!selectedEnvKey || !selectedPipelineKey" class="flex flex-col items-center justify-center py-20 text-center">
-        <div class="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-6">
-          <Layers class="w-10 h-10 text-muted-foreground" />
-        </div>
-        <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-white">请先选择环境和渠道</h3>
-        <p class="text-muted-foreground text-sm max-w-md">
-          配置项与环境和渠道关联，请在上方选择要管理的环境和渠道后查看对应的配置列表
-        </p>
-      </div>
-      <div v-else-if="loading" class="flex items-center justify-center py-20">
-        <Loader2 class="w-10 h-10 animate-spin text-muted-foreground" />
-      </div>
-      <div v-else class="border rounded-lg overflow-hidden shadow-sm">
-        <Table class="w-full">
-          <TableHeader class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-            <TableRow>
-              <TableHead class="w-64 py-4 px-6 text-left text-sm font-semibold text-gray-900 dark:text-white">名称</TableHead>
-              <TableHead class="w-48 py-4 px-6 text-left text-sm font-semibold text-gray-900 dark:text-white">别名</TableHead>
-              <TableHead class="w-32 py-4 px-6 text-left text-sm font-semibold text-gray-900 dark:text-white">类型</TableHead>
-              <TableHead class="py-4 px-6 text-left text-sm font-semibold text-gray-900 dark:text-white">内容</TableHead>
-              <TableHead class="w-40 py-4 px-6 text-right text-sm font-semibold text-gray-900 dark:text-white">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow v-if="filteredConfigs.length === 0" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-              <TableCell colspan="5" class="text-center py-12 text-muted-foreground">
-                {{ searchTerm ? '未找到匹配的配置' : '当前环境和渠道下暂无配置' }}
-              </TableCell>
-            </TableRow>
-            <TableRow v-for="config in filteredConfigs" :key="config.id" class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-              <TableCell class="py-4 px-6 font-medium text-gray-900 dark:text-white break-all max-w-xs">
-                {{ config.name }}
-                <p v-if="config.description" class="text-xs text-muted-foreground mt-1 font-normal line-clamp-2">{{ config.description }}</p>
-              </TableCell>
-              <TableCell class="py-4 px-6 text-muted-foreground break-all max-w-xs font-mono text-sm">
-                {{ config.alias }}
-              </TableCell>
-              <TableCell class="py-4 px-6">
-                <Badge :class="CONFIG_TYPE_META[config.type]?.color || ''" class="px-2 py-1 border">
-                  {{ CONFIG_TYPE_META[config.type]?.label || config.type }}
-                </Badge>
-              </TableCell>
-              <TableCell class="py-4 px-6">
-                <ConfigContent :config="config" :on-image-preview="handleImagePreview" />
-              </TableCell>
-              <TableCell class="py-4 px-6 text-right">
-                <div class="flex items-center justify-end gap-2">
-                  <Dialog :open="editingConfig?.id === config.id" @update:open="(open) => { if (!open) editingConfig = null; else handleEdit(config) }">
-                    <DialogTrigger as-child>
-                      <Button variant="ghost" size="icon" @click="handleEdit(config)" :disabled="frozen" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑配置'}` : undefined" class="h-9 w-9 hover:bg-gray-100 dark:hover:bg-gray-700">
-                        <Pencil class="w-4 h-4 text-gray-600 dark:text-gray-300" />
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent class="max-w-xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
-                      <DialogHeader>
-                        <DialogTitle class="text-xl font-semibold">编辑配置</DialogTitle>
-                        <DialogDescription class="text-muted-foreground">修改配置项信息</DialogDescription>
-                      </DialogHeader>
-                      <ConfigDialog
-                        :open="editingConfig?.id === config.id"
-                        :editing-config="editingConfig"
-                        :selected-env-key="selectedEnvKey"
-                        :selected-pipeline-key="selectedPipelineKey"
-                        :selected-environment-name="selectedEnvironmentName"
-                        :selected-pipeline-name="selectedPipelineName"
-                        :frozen="frozen"
-                        :frozen-reason="frozenReason"
-                        @update:open="(value) => { if (!value) editingConfig = null }"
-                        @update:editing-config="editingConfig = $event"
-                        @update="handleUpdate"
-                        @reset="handleReset"
-                      />
-                    </DialogContent>
-                  </Dialog>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    :disabled="loading || frozen"
-                    :title="frozen ? `已冻结:${frozenReason || '该范围不可删除配置'}` : undefined"
-                    @click="handleDelete(config.id)"
-                    class="h-9 w-9 hover:bg-gray-100 dark:hover:bg-gray-700"
-                  >
-                    <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
-                    <Trash2 v-else class="w-4 h-4 text-destructive" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </div>
-    </CardContent>
-  </Card>
+      <div v-if="hasScope && !loading && !error && selectedConfig" ref="detailRegion" class="config-detail-region"><ConfigDetail :config="selectedConfig" :frozen="frozen" @edit="openEdit" @image-preview="(url, name) => emit('imagePreview', url, name)" /></div>
+    </div>
+    <Dialog :open="Boolean(deleteTarget)" @update:open="(open) => { if (!open && !deleting) deleteTarget = null }">
+      <DialogContent class="spectrum-dialog"><DialogHeader><DialogTitle>删除配置</DialogTitle><DialogDescription>将删除 {{ deleteTarget?.name }}（{{ deleteTarget?.alias }}）。此操作不可撤销，已发布快照不受影响。</DialogDescription></DialogHeader><p v-if="frozen" class="text-sm text-destructive">该范围已冻结，无法删除配置。</p><p v-if="deleteError" role="alert" class="text-sm text-destructive">{{ deleteError }}</p><DialogFooter><Button variant="outline" :disabled="deleting" @click="deleteTarget = null">取消</Button><Button variant="destructive" :disabled="deleting || frozen" @click="confirmDelete">{{ deleting ? '正在删除…' : '确认删除' }}</Button></DialogFooter></DialogContent>
+    </Dialog>
+  </section>
 </template>

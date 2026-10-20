@@ -328,12 +328,12 @@ if (isEditing.value && props.editingConfig) {
 <template>
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
     <DialogTrigger as-child>
-      <Button v-if="!isEditing" class="h-10 px-4" :disabled="frozen" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑'}` : undefined">
+      <Button v-if="!isEditing" class="h-10 px-4" :disabled="frozen || !selectedEnvKey || !selectedPipelineKey" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑'}` : undefined">
         <Plus class="w-4 h-4 mr-2" />
         新增配置
       </Button>
     </DialogTrigger>
-    <DialogContent class="max-w-xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
+    <DialogContent class="spectrum-config-dialog max-w-xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
       <DialogHeader>
         <DialogTitle class="text-xl font-semibold">{{ isEditing ? '编辑配置' : '新增配置' }}</DialogTitle>
         <DialogDescription class="text-muted-foreground">
@@ -429,7 +429,7 @@ if (isEditing.value && props.editingConfig) {
             class="resize-none"
           />
           <div v-else-if="formData.type === 'boolean'" class="flex items-center gap-4 p-4 border rounded-md bg-muted/50 dark:bg-muted">
-            <Switch v-model="booleanValue" />
+            <Switch v-model="booleanValue" aria-label="配置布尔值" />
             <span class="text-sm">
               当前值: <Badge :variant="booleanValue ? 'default' : 'secondary'" class="ml-1">{{ booleanValue ? 'true' : 'false' }}</Badge>
             </span>

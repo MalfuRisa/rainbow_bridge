@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +46,7 @@ func TestReleaseRichTextMediaRejections(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newFreezeService(t)
 			seedFreezeScope(t, svc, "qa_prod", "main")
-			ctx := context.Background()
+			ctx := adminTestContext()
 			if _, err := svc.AddConfig(ctx, buildConfig("qa_prod", "main", "RICH_MEDIA", "richtext", tc.content)); err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +84,7 @@ func TestReleaseRichTextMediaRejections(t *testing.T) {
 func TestReleaseRichTextBusinessHyperlinkStaysLiteral(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 	content := `<p><a href="https://docs.example.com/guide?v=2#top">文档</a>与<a href="/relative/page">站内页</a></p>`
 	if _, err := svc.AddConfig(ctx, buildConfig("qa_prod", "main", "RICH_LINK", "richtext", content)); err != nil {
 		t.Fatal(err)
@@ -115,7 +114,7 @@ func TestReleaseRichTextManagedMediaRoundTrip(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	fileA, fileB := "rich-media-a", "rich-media-b"
 	writeUploadedFile(t, fileA, "a.png", []byte("A-BYTES"))
@@ -154,7 +153,6 @@ func TestReleaseRichTextManagedMediaRoundTrip(t *testing.T) {
 	result, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "富文本媒体往返",
-		Authorization: "Bearer " + testAdminToken(),
 	})
 	if err != nil {
 		t.Fatalf("create with managed media: %v", err)
@@ -255,7 +253,7 @@ func TestReleaseCrossScopeRequestIDIsConflict(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "a|b", "c")
 	seedFreezeScope(t, svc, "a", "b|c")
-	ctx := context.Background()
+	ctx := adminTestContext()
 	for _, pair := range [][2]string{{"a|b", "c"}, {"a", "b|c"}} {
 		if _, err := svc.AddConfig(ctx, buildConfig(pair[0], pair[1], "SCOPE_TEXT", "text", "scope="+pair[0]+"|"+pair[1])); err != nil {
 			t.Fatal(err)
@@ -268,7 +266,6 @@ func TestReleaseCrossScopeRequestIDIsConflict(t *testing.T) {
 	first, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "a|b", PipelineKey: "c", Version: "v1.0",
 		ExpectedFreezeRevisionRaw: "1", RequestID: requestID, Reason: reason,
-		Authorization: "Bearer " + testAdminToken(),
 	})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
@@ -280,7 +277,6 @@ func TestReleaseCrossScopeRequestIDIsConflict(t *testing.T) {
 	second, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "a", PipelineKey: "b|c", Version: "v1.0",
 		ExpectedFreezeRevisionRaw: "1", RequestID: requestID, Reason: reason,
-		Authorization: "Bearer " + testAdminToken(),
 	})
 	requireReleaseErrorType(t, err, ErrTypeReleaseRequestConflict)
 	if second != nil {
@@ -297,7 +293,6 @@ func TestReleaseCrossScopeRequestIDIsConflict(t *testing.T) {
 	replay, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "a|b", PipelineKey: "c", Version: "v1.0",
 		ExpectedFreezeRevisionRaw: "1", RequestID: requestID, Reason: reason,
-		Authorization: "Bearer " + testAdminToken(),
 	})
 	if err != nil {
 		t.Fatalf("true replay must succeed: %v", err)
@@ -314,7 +309,7 @@ func TestReleaseCrossScopeRequestIDIsConflict(t *testing.T) {
 func TestReleaseActivateReplayAfterFurtherSwitches(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 	if _, err := fixture.create(t, "v1.0", "1", ""); err != nil {
 		t.Fatalf("create v1.0: %v", err)
 	}
@@ -325,7 +320,6 @@ func TestReleaseActivateReplayAfterFurtherSwitches(t *testing.T) {
 		return svc.ActivateRelease(ctx, ReleaseActivateInput{
 			EnvironmentKey: "qa_prod", PipelineKey: "main", Version: version,
 			ExpectedActiveRevisionRaw: expected, RequestID: id, Reason: "时序回归 " + version,
-			Authorization: "Bearer " + fixture.token,
 		})
 	}
 	requestID := uuid.NewString()
@@ -369,7 +363,7 @@ func TestReleaseActivateReplayAfterFurtherSwitches(t *testing.T) {
 func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 	if _, err := fixture.create(t, "v1.0", "1", ""); err != nil {
 		t.Fatalf("create v1.0: %v", err)
 	}
@@ -379,7 +373,6 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	if _, err := svc.ActivateRelease(ctx, ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 		ExpectedActiveRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "R17 基线",
-		Authorization: "Bearer " + fixture.token,
 	}); err != nil {
 		t.Fatalf("activate v1.0: %v", err)
 	}
@@ -398,7 +391,7 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	}
 	done := make(chan readResult, 1)
 	go func() {
-		data, err := svc.RuntimeRelease(context.Background(), "qa_prod", "main", nil)
+		data, err := svc.RuntimeRelease(adminTestContext(), "qa_prod", "main", nil)
 		done <- readResult{data: data, err: err}
 	}()
 
@@ -407,7 +400,6 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	if _, err := svc.ActivateRelease(ctx, ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.1",
 		ExpectedActiveRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "R17 途中切换",
-		Authorization: "Bearer " + fixture.token,
 	}); err != nil {
 		t.Fatalf("activate during read: %v", err)
 	}
@@ -453,7 +445,7 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 func TestReleaseCreateDuringConcurrentWrites(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	rows, err := svc.logic.ListConfigs(ctx, "qa_prod", "main", "", "", "", false)
 	if err != nil {
@@ -487,10 +479,9 @@ func TestReleaseCreateDuringConcurrentWrites(t *testing.T) {
 	outcomes := make(chan outcome, 3)
 	createDone := make(chan error, 1)
 	go func() {
-		_, err := svc.CreateRelease(context.Background(), ReleaseCreateInput{
+		_, err := svc.CreateRelease(adminTestContext(), ReleaseCreateInput{
 			EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 			ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "R13 复制中并发",
-			Authorization: "Bearer " + fixture.token,
 		})
 		createDone <- err
 	}()
@@ -505,19 +496,19 @@ func TestReleaseCreateDuringConcurrentWrites(t *testing.T) {
 	// 复制暂停期间发起三种写:解锁、改配置、重新锁版(锁版排在解锁之后)
 	unlocked := make(chan struct{})
 	go func() {
-		_, err := svc.UnlockFreeze(context.Background(), "qa_prod", "main", "R13 解锁", "1", "Bearer "+fixture.token)
+		_, err := svc.UnlockFreeze(adminTestContext(), "qa_prod", "main", "R13 解锁", "1")
 		outcomes <- outcome{"unlock", err}
 		close(unlocked)
 	}()
 	go func() {
 		updated := buildConfig("qa_prod", "main", "REL_TEXT", "text", "api=https://api.example.com/v1/after")
 		updated.ResourceKey = textKey
-		_, err := svc.UpdateConfig(context.Background(), updated)
+		_, err := svc.UpdateConfig(adminTestContext(), updated)
 		outcomes <- outcome{"update", err}
 	}()
 	go func() {
 		<-unlocked
-		_, err := svc.LockFreeze(context.Background(), "qa_prod", "main", "R13 重新锁版", "2", "Bearer "+fixture.token)
+		_, err := svc.LockFreeze(adminTestContext(), "qa_prod", "main", "R13 重新锁版", "2")
 		outcomes <- outcome{"lock", err}
 	}()
 	time.Sleep(150 * time.Millisecond)
@@ -618,12 +609,11 @@ func releaseAssetIDFromURL(t *testing.T, value string) string {
 func TestReleaseReplayIndependentOfSourceChanges(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	input := ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "存储变更前创建",
-		Authorization: "Bearer " + fixture.token,
 	}
 	first, err := svc.CreateRelease(ctx, input)
 	if err != nil {
@@ -672,7 +662,6 @@ func TestReleaseReplayIndependentOfSourceChanges(t *testing.T) {
 	activated, err := svc.ActivateRelease(ctx, ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 		ExpectedActiveRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "切换 v1.0",
-		Authorization: "Bearer " + fixture.token,
 	})
 	if err != nil {
 		t.Fatalf("activate: %v", err)
@@ -681,7 +670,6 @@ func TestReleaseReplayIndependentOfSourceChanges(t *testing.T) {
 	activateReplay, err := svc.ActivateRelease(ctx, ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
 		ExpectedActiveRevisionRaw: "0", RequestID: activated.RequestID, Reason: "切换 v1.0",
-		Authorization: "Bearer " + fixture.token,
 	})
 	if err != nil {
 		t.Fatalf("activate replay must survive snapshot root change: %v", err)

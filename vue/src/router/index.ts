@@ -1,7 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { safeReturnTo } from '@/lib/auth/redirect'
 
 const routes: RouteRecordRaw[] = [
+  { path: '/login', name: 'Login', component: () => import('@/views/LoginPage.vue') },
   {
     path: '/',
     name: 'Home',
@@ -42,6 +45,22 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    if (to.path !== from.path) return { top: 0 }
+    return false
+  },
+})
+
+router.beforeEach(async to => {
+  const auth = useAuthStore()
+  if (to.path === '/') {
+    void auth.restore()
+    return true
+  }
+  await auth.restore()
+  if (to.path === '/login') return auth.authenticated ? safeReturnTo(to.query.redirect) : true
+  return auth.authenticated ? true : { path: '/login', query: { redirect: safeReturnTo(to.fullPath) } }
 })
 
 export default router

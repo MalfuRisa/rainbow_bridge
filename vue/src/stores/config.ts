@@ -1,3 +1,4 @@
+import { isSessionError } from '@/lib/api/http'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { configApi, type ListConfigParams } from '@/lib/api/config'
@@ -9,8 +10,23 @@ export const useConfigStore = defineStore('config', () => {
   const configs = ref<ConfigItem[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let requestId = 0
+  let currentScope = ''
+  const scopeKey = (environmentKey: string, pipelineKey: string) => JSON.stringify([environmentKey, pipelineKey])
+
+  const resetConfigs = () => {
+    requestId += 1
+    currentScope = ''
+    configs.value = []
+    loading.value = false
+    error.value = null
+  }
 
   const fetchConfigs = async (environmentKey: string, pipelineKey: string, type?: string) => {
+    const batch = ++requestId
+    const scope = scopeKey(environmentKey, pipelineKey)
+    if (scope !== currentScope) configs.value = []
+    currentScope = scope
     loading.value = true
     error.value = null
     try {
@@ -22,13 +38,20 @@ export const useConfigStore = defineStore('config', () => {
         params.type = type
       }
       const response = await configApi.list(params)
+      if (batch !== requestId) return
       configs.value = response.list.map(fromApiConfig)
     } catch (e) {
+      if (batch !== requestId) return
       error.value = e instanceof Error ? e.message : '获取配置列表失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
     } finally {
-      loading.value = false
+      if (batch === requestId) loading.value = false
     }
+  }
+
+  const refreshCurrentScope = async (environmentKey: string, pipelineKey: string) => {
+    // A mutation started in A must not replace the list after the user moves to B.
+    if (currentScope === scopeKey(environmentKey, pipelineKey)) await fetchConfigs(environmentKey, pipelineKey)
   }
 
   const fetchConfigDetail = async (
@@ -43,7 +66,7 @@ export const useConfigStore = defineStore('config', () => {
       return response.config ? fromApiConfig(response.config) : null
     } catch (e) {
       error.value = e instanceof Error ? e.message : '获取配置详情失败'
-      toast.error(error.value)
+      if (!isSessionError(e)) toast.error(error.value)
       return null
     } finally {
       loading.value = false
@@ -72,11 +95,11 @@ export const useConfigStore = defineStore('config', () => {
         pipelineId: pipelineKey,
       })
       await configApi.create(apiConfig as any)
-      await fetchConfigs(environmentKey, pipelineKey)
+      await refreshCurrentScope(environmentKey, pipelineKey)
       toast.success('配置创建成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '创建配置失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -105,11 +128,11 @@ export const useConfigStore = defineStore('config', () => {
         pipelineId: pipelineKey,
       })
       await configApi.update(apiConfig as any)
-      await fetchConfigs(environmentKey, pipelineKey)
+      await refreshCurrentScope(environmentKey, pipelineKey)
       toast.success('配置更新成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '更新配置失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -117,11 +140,11 @@ export const useConfigStore = defineStore('config', () => {
   const deleteConfig = async (environmentKey: string, pipelineKey: string, resourceKey: string) => {
     try {
       await configApi.delete(resourceKey, { environmentKey, pipelineKey })
-      await fetchConfigs(environmentKey, pipelineKey)
+      await refreshCurrentScope(environmentKey, pipelineKey)
       toast.success('配置删除成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '删除配置失败'
-      toast.error(message)
+      if (!isSessionError(e)) toast.error(message)
       throw e
     }
   }
@@ -131,6 +154,7 @@ export const useConfigStore = defineStore('config', () => {
     loading,
     error,
     fetchConfigs,
+    resetConfigs,
     fetchConfigDetail,
     createConfig,
     updateConfig,

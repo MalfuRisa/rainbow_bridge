@@ -6,6 +6,7 @@ import { buildTransferZip } from './support/archives'
 import { importPreview, importSelective, previewSummary } from './support/imports'
 import { listAssets, listConfigs, scopeDevMain, setupSentinelScopes } from './support/scopes'
 import { getJson, sha256Hex } from './support/net'
+import { dumpTable } from './support/db'
 
 function walkHashes(rootDir: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -16,7 +17,13 @@ function walkHashes(rootDir: string): Record<string, string> {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) stack.push(full)
-      else result[path.relative(rootDir, full).replace(/\\/g, '/')] = sha256Hex(fs.readFileSync(full))
+      else {
+        const relative = path.relative(rootDir, full).replace(/\\/g, '/')
+        // 管理请求会更新会话续期,不能用整个 SQLite 文件的字节变化判断业务写入。
+        // 业务表逐行快照在下方独立比较;资源文件仍逐字节核验。
+        if (['resource.db', 'resource.db-wal', 'resource.db-shm', 'resource.db-journal'].includes(relative)) continue
+        result[relative] = sha256Hex(fs.readFileSync(full))
+      }
     }
   }
   return result
@@ -40,6 +47,7 @@ test.describe('T12 预览只读与统计一致性 @t12', () => {
     const beforeEnvs = (await getJson(target, '/api/v1/environment/list')).json?.data?.list?.length ?? -1
     const beforePipelines = (await getJson(target, '/api/v1/pipeline/list?environment_key=qa_dev')).json?.data?.list?.length ?? -1
     const beforeFiles = walkHashes(dataDir(target))
+    const beforeBusiness = ['environment', 'pipeline', 'resource_config', 'asset'].map(table => dumpTable(target, table))
 
     const preview1 = await importPreview(target, { bytes: archive, filename: 'preview-1.zip' })
     const preview2 = await importPreview(target, { bytes: archive, filename: 'preview-2.zip' })
@@ -51,6 +59,7 @@ test.describe('T12 预览只读与统计一致性 @t12', () => {
     const afterEnvs = (await getJson(target, '/api/v1/environment/list')).json?.data?.list?.length ?? -1
     const afterPipelines = (await getJson(target, '/api/v1/pipeline/list?environment_key=qa_dev')).json?.data?.list?.length ?? -1
     const afterPreviewFiles = walkHashes(dataDir(target))
+    const afterBusiness = ['environment', 'pipeline', 'resource_config', 'asset'].map(table => dumpTable(target, table))
 
     const previewLeftovers = {
       configs: afterPreviewConfigs - beforeConfigs,
@@ -87,6 +96,7 @@ test.describe('T12 预览只读与统计一致性 @t12', () => {
     expect(previewLeftovers.envs).toBe(0)
     expect(previewLeftovers.pipelines).toBe(0)
     expect(previewLeftovers.files, '预览后磁盘文件变化').toBe(false)
+    expect(afterBusiness, '预览不得改动业务表的任何字段').toEqual(beforeBusiness)
     // 两次预览统计一致
     expect(summary2).toEqual(summary1)
     // 导入的摘要只计实际写入:该包只有一个新项

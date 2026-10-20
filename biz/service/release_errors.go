@@ -23,6 +23,8 @@ const (
 	ErrTypeReleaseLimitExceeded      = "RELEASE_LIMIT_EXCEEDED"
 	ErrTypeReleaseStorageUnsupported = "RELEASE_STORAGE_UNSUPPORTED"
 	ErrTypeReleaseIncomplete         = "RELEASE_INCOMPLETE"
+	ErrTypeReleaseSnapshotMismatch   = "RELEASE_SNAPSHOT_MISMATCH"
+	ErrTypeReleaseExportTimeout      = "RELEASE_EXPORT_TIMEOUT"
 	ErrTypeReleaseInternalError      = "RELEASE_INTERNAL_ERROR"
 	ErrTypeReleaseStorageError       = "RELEASE_STORAGE_ERROR"
 )
@@ -143,4 +145,20 @@ func releaseStorageError(err error) *ReleaseError {
 
 func releaseInternalError(err error) *ReleaseError {
 	return newReleaseError(500, ErrTypeReleaseInternalError, fmt.Sprintf("release operation failed: %v", err))
+}
+
+// releaseSnapshotMismatchError 导出的版本行与页面展示的 snapshot 不一致(过期标识或跨范围标识)。
+func releaseSnapshotMismatchError(environmentKey, pipelineKey, version, expected, actual string) *ReleaseError {
+	return newReleaseError(409, ErrTypeReleaseSnapshotMismatch,
+		fmt.Sprintf("version %s in scope %s/%s resolves to snapshot %s, expected %s", version, environmentKey, pipelineKey, actual, expected))
+}
+
+// releaseExportTimeoutError 构包超过期限;此时响应尚未开始,可安全返回 503。
+func releaseExportTimeoutError() *ReleaseError {
+	return newReleaseError(503, ErrTypeReleaseExportTimeout, "release static export timed out")
+}
+
+// ReleaseInvalidRequestError 供 HTTP 层做查询参数/请求头校验时复用同一错误契约。
+func ReleaseInvalidRequestError(message string) *ReleaseError {
+	return releaseInvalidRequestError(message)
 }

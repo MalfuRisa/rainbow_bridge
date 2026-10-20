@@ -471,14 +471,26 @@ func verifyNoManagedRoutes(payload, basePath string) error {
 
 // --------------------- 读取渲染 ---------------------
 
+// releaseMarkerRenderer 把快照内的 release-asset:// 标记解析为目标地址;
+// 在线读取返回本服务下载地址,静态包返回包内相对路径。
+type releaseMarkerRenderer func(assetID, suffix string) (string, bool)
+
 // renderReleaseContent 把内部标记渲染为本快照自己的下载地址;其他内容原样返回。
 func (s *Service) renderReleaseContent(snapshotID, content, typ string) (string, error) {
+	return renderReleaseContentWith(content, typ, func(assetID, suffix string) (string, bool) {
+		return fmt.Sprintf("%s/api/v1/release/asset/%s/%s%s", s.basePath, snapshotID, assetID, suffix), true
+	})
+}
+
+// renderReleaseContentWith 按类型渲染内容中的标记;标记→目标地址由调用方决定。
+// object/keyvalue 递归处理字符串字段,richtext 按标签边界处理,其余类型整段判定。
+func renderReleaseContentWith(content, typ string, render releaseMarkerRenderer) (string, error) {
 	renderMarker := func(value string) (string, bool) {
 		assetID, suffix, matched := matchReleaseMarker(value)
 		if !matched {
 			return value, false
 		}
-		return fmt.Sprintf("%s/api/v1/release/asset/%s/%s%s", s.basePath, snapshotID, assetID, suffix), true
+		return render(assetID, suffix)
 	}
 	switch normalizeConfigTypeString(typ) {
 	case "object", "keyvalue":

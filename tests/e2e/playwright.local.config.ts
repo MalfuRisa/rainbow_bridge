@@ -15,6 +15,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  maxFailures: Number(process.env.RB_QA_MAX_FAILURES || 0),
   forbidOnly: false,
   timeout: 60_000,
   expect: { timeout: 10_000 },
@@ -26,7 +27,8 @@ export default defineConfig({
   use: {
     browserName: 'chromium',
     /* 第一次失败即保留现场 */
-    trace: 'retain-on-failure',
+    // 登录请求包含凭据,本地鉴权回归不归档网络 trace。
+    trace: 'off',
     screenshot: 'only-on-failure',
     video: 'off',
     /* 不设置全局 baseURL：所有导航必须显式包含本轮前缀(baseURL 只能由用例自身拼接)。 */

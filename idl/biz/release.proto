@@ -268,7 +268,8 @@ message ReleaseHistoryResponse {
 
 // RuntimeReleaseRequest reads a snapshot through headers; optional fixed version query.
 message RuntimeReleaseRequest {
-  string version = 1; // optional query parameter; empty means follow active
+  string version = 1;        // optional query parameter; empty means follow active
+  string content_format = 2; // optional query parameter: json (default) | raw
 }
 
 // RuntimeReleaseEnvironment mirrors runtime environment info.
@@ -310,6 +311,20 @@ message RuntimeReleaseResponse {
   string error = 3;
   string error_type = 4;
   RuntimeReleaseData data = 5;
+}
+
+// RuntimeReleaseStaticRequest locates the snapshot shown on the page and exports it.
+message RuntimeReleaseStaticRequest {
+  string version = 1;              // required query parameter
+  string expected_snapshot_id = 2; // required query parameter; must match the located snapshot
+}
+
+// RuntimeReleaseStaticResponse is only used for error envelopes; success returns a zip.
+message RuntimeReleaseStaticResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
 }
 
 // ReleaseAssetRequest locates one file inside a committed snapshot.
@@ -361,6 +376,11 @@ service ReleaseService {
   // RuntimeRelease reads a snapshot for business clients (active by default).
   rpc RuntimeRelease(RuntimeReleaseRequest) returns (RuntimeReleaseResponse) {
     option (api.get) = "/api/v1/runtime/release";
+  }
+
+  // RuntimeReleaseStatic exports the committed snapshot that matches expected_snapshot_id.
+  rpc RuntimeReleaseStatic(RuntimeReleaseStaticRequest) returns (RuntimeReleaseStaticResponse) {
+    option (api.get) = "/api/v1/runtime/release/static";
   }
 
   // Asset downloads one file from a committed snapshot after full SHA-256 verification.

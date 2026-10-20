@@ -28,7 +28,7 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	fileA := "release-fixture-asset-a"
 	writeUploadedFile(t, fileA, "pic-a.png", []byte("PNG-A-BYTES"))
@@ -58,10 +58,9 @@ func (f *releaseFixture) create(t *testing.T, version, expectedRev string, reque
 	if requestID == "" {
 		requestID = uuid.NewString()
 	}
-	return f.svc.CreateRelease(context.Background(), ReleaseCreateInput{
+	return f.svc.CreateRelease(adminTestContext(), ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: version,
 		ExpectedFreezeRevisionRaw: expectedRev, RequestID: requestID, Reason: "发布 " + version,
-		Authorization: "Bearer " + f.token,
 	})
 }
 
@@ -70,10 +69,9 @@ func (f *releaseFixture) activate(t *testing.T, version, expectedRev string, req
 	if requestID == "" {
 		requestID = uuid.NewString()
 	}
-	return f.svc.ActivateRelease(context.Background(), ReleaseActivateInput{
+	return f.svc.ActivateRelease(adminTestContext(), ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: version,
 		ExpectedActiveRevisionRaw: expectedRev, RequestID: requestID, Reason: "切换 " + version,
-		Authorization: "Bearer " + f.token,
 	})
 }
 
@@ -83,30 +81,32 @@ func TestReleaseCreateRequiresFrozenScopeAndRevision(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
-	authorization := "Bearer " + testAdminToken()
+	ctx := adminTestContext()
 
 	_, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "未锁版", Authorization: authorization,
+		ExpectedFreezeRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "未锁版",
 	})
 	requireReleaseErrorType(t, err, ErrTypeReleaseSourceNotFrozen)
 
 	mustLock(t, svc, "qa_prod", "main", "锁定")
 	_, err = svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "错误修订", Authorization: authorization,
+		ExpectedFreezeRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "错误修订",
 	})
 	requireReleaseErrorType(t, err, ErrTypeReleaseSourceRevision)
 
-	// 凭据错误 / 未配置
-	_, err = svc.CreateRelease(ctx, ReleaseCreateInput{
+	// 缺少可信身份(未登录):401 AUTH_REQUIRED,旧 Bearer 不再授予管理权限
+	_, err = svc.CreateRelease(context.Background(), ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "错误令牌", Authorization: "Bearer wrong-token-wrong-token-wrong-token",
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "未登录",
 	})
-	if _, ok := AsFreezeError(err); !ok {
-		t.Fatalf("expected freeze credential error, got %v", err)
-	}
+	requireAuthErrorType(t, err, ErrTypeAuthRequired)
+	_, err = svc.CreateRelease(context.Background(), ReleaseCreateInput{
+		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "旧密钥",
+	})
+	requireAuthErrorType(t, err, ErrTypeAuthRequired)
 	// 无副作用:无版本、无快照目录、冻结 revision 不变
 	versions, _, err := svc.logic.releaseDAO.ListVersions(ctx, svc.logic.db, "qa_prod", "main", 10, 0)
 	if err != nil || len(versions) != 0 {
@@ -123,7 +123,7 @@ func TestReleaseCreateRequiresFrozenScopeAndRevision(t *testing.T) {
 func TestReleaseSnapshotPayloadAndFixedRuntime(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	result, err := fixture.create(t, "v1.0", "1", "")
 	if err != nil {
@@ -200,14 +200,14 @@ func TestReleaseSnapshotPayloadAndFixedRuntime(t *testing.T) {
 func TestReleaseIndependentFromEditorAndSourceFiles(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	result, err := fixture.create(t, "v1.0", "1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 解锁并修改编辑区
-	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验收后调整", "1", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验收后调整", "1"); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := svc.logic.ListConfigs(ctx, "qa_prod", "main", "", "", "", false)
@@ -251,7 +251,7 @@ func TestReleaseIndependentFromEditorAndSourceFiles(t *testing.T) {
 
 func TestReleaseCreateIdempotencyAndConflicts(t *testing.T) {
 	fixture := newReleaseFixture(t)
-	ctx := context.Background()
+	ctx := adminTestContext()
 	requestID := uuid.NewString()
 
 	first, err := fixture.create(t, "v1.0", "1", requestID)
@@ -268,7 +268,7 @@ func TestReleaseCreateIdempotencyAndConflicts(t *testing.T) {
 	// 同 request_id 不同字段 → 409 REQUEST_CONFLICT
 	_, err = fixture.svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "1", RequestID: requestID, Reason: "不同原因", Authorization: "Bearer " + fixture.token,
+		ExpectedFreezeRevisionRaw: "1", RequestID: requestID, Reason: "不同原因",
 	})
 	requireReleaseErrorType(t, err, ErrTypeReleaseRequestConflict)
 	// 同版本不同 request_id → 409 VERSION_EXISTS
@@ -287,13 +287,13 @@ func TestReleaseEmptyAndAssetlessVersions(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_empty", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// 空渠道:configs=[]、资源数 0,可创建
 	mustLock(t, svc, "qa_empty", "main", "空范围锁定")
 	result, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_empty", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "空范围", Authorization: "Bearer " + testAdminToken(),
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "空范围",
 	})
 	if err != nil {
 		t.Fatalf("empty scope release: %v", err)
@@ -317,7 +317,7 @@ func TestReleaseEmptyAndAssetlessVersions(t *testing.T) {
 	mustLock(t, svc, "qa_textonly", "main", "文本锁定")
 	if _, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_textonly", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "纯文本", Authorization: "Bearer " + testAdminToken(),
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "纯文本",
 	}); err != nil {
 		t.Fatalf("assetless release: %v", err)
 	}
@@ -328,12 +328,12 @@ func TestReleaseEmptyAndAssetlessVersions(t *testing.T) {
 func TestReleaseActivateLifecycleCASAndAudit(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	if _, err := fixture.create(t, "v1.0", "1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "二轮", "1", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "二轮", "1"); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := svc.logic.ListConfigs(ctx, "qa_prod", "main", "", "", "", false)
@@ -346,7 +346,7 @@ func TestReleaseActivateLifecycleCASAndAudit(t *testing.T) {
 			}
 		}
 	}
-	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "二轮验收", "2", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "二轮验收", "2"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.create(t, "v1.1", "3", ""); err != nil {
@@ -406,7 +406,7 @@ func TestReleaseReferenceRewriteAndRejections(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
 	seedFreezeScope(t, svc, "qa_dev", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	fileOK := "rel-ref-ok"
 	writeUploadedFile(t, fileOK, "ok.png", []byte("OK-BYTES"))
@@ -475,7 +475,7 @@ func TestReleaseReferenceRewriteAndRejections(t *testing.T) {
 	mustLock(t, svc, "qa_prod", "main", "引用预检修复")
 	result, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "预检修复", Authorization: "Bearer " + testAdminToken(),
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "预检修复",
 	})
 	if err != nil {
 		t.Fatalf("create after fixing: %v", err)
@@ -503,7 +503,7 @@ func TestReleaseReferenceRewriteAndRejections(t *testing.T) {
 func TestReleaseLimitsAndStorageRules(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// 单份资源超限:直接以极小上限调用复制(真实字节计数)
 	storage, err := svc.releaseStorage()
@@ -518,7 +518,7 @@ func TestReleaseLimitsAndStorageRules(t *testing.T) {
 	}
 
 	// 解锁后追加超大资源配置,再重新锁定(编辑区写入需未冻结)
-	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "追加限额样本", "1", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "追加限额样本", "1"); err != nil {
 		t.Fatal(err)
 	}
 	// 声明总量超限(4 x 30MiB 稀疏文件 > 100MiB)在复制前预查
@@ -549,7 +549,7 @@ func TestReleaseLimitsAndStorageRules(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "限额样本锁定", "2", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "限额样本锁定", "2"); err != nil {
 		t.Fatal(err)
 	}
 	_, err = fixture.create(t, "v1.0", "3", "")
@@ -569,7 +569,7 @@ func TestReleaseStorageRootCustomAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create with custom root: %v", err)
 	}
-	assets, err := fixture.svc.logic.releaseDAO.ListAssets(context.Background(), fixture.svc.logic.db, result.Meta.SnapshotID)
+	assets, err := fixture.svc.logic.releaseDAO.ListAssets(adminTestContext(), fixture.svc.logic.db, result.Meta.SnapshotID)
 	if err != nil || len(assets) != 1 {
 		t.Fatalf("asset rows: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestReleaseStorageRootCustomAbsolute(t *testing.T) {
 func TestReleaseRuntimeIntegrityFailures(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 	result, err := fixture.create(t, "v1.0", "1", "")
 	if err != nil {
 		t.Fatal(err)
@@ -613,7 +613,7 @@ func TestReleaseRuntimeIntegrityFailures(t *testing.T) {
 	// 激活校验检出同长度损坏
 	if _, err := svc.ActivateRelease(ctx, ReleaseActivateInput{
 		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
-		ExpectedActiveRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "篡改后激活", Authorization: "Bearer " + fixture.token,
+		ExpectedActiveRevisionRaw: "0", RequestID: uuid.NewString(), Reason: "篡改后激活",
 	}); err == nil {
 		t.Fatal("activation must detect tampering")
 	} else {
@@ -642,12 +642,12 @@ func TestReleaseRuntimeIntegrityFailures(t *testing.T) {
 func TestReleaseParentDeleteProtection(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 	if _, err := fixture.create(t, "v1.0", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 	// 解锁:即使 unlocked 也必须拒绝删除
-	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "删除保护", "1", "Bearer "+fixture.token); err != nil {
+	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "删除保护", "1"); err != nil {
 		t.Fatal(err)
 	}
 	err := svc.DeletePipeline(ctx, "qa_prod", "main")
@@ -667,7 +667,7 @@ func TestReleaseParentDeleteProtection(t *testing.T) {
 func TestReleaseValidationAndListPagination(t *testing.T) {
 	fixture := newReleaseFixture(t)
 	svc := fixture.svc
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	for _, bad := range []struct{ version, requestID, reason, revision string }{
 		{"V1.0", uuid.NewString(), "原因", "1"},
@@ -683,7 +683,6 @@ func TestReleaseValidationAndListPagination(t *testing.T) {
 		_, err := svc.CreateRelease(ctx, ReleaseCreateInput{
 			EnvironmentKey: "qa_prod", PipelineKey: "main", Version: bad.version,
 			ExpectedFreezeRevisionRaw: bad.revision, RequestID: bad.requestID, Reason: bad.reason,
-			Authorization: "Bearer " + fixture.token,
 		})
 		requireReleaseErrorType(t, err, ErrTypeReleaseInvalidRequest)
 	}

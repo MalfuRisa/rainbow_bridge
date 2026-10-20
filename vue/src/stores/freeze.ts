@@ -44,20 +44,21 @@ export const useFreezeStore = defineStore('freeze', () => {
     )
   }
 
-  const lock = async (payload: FreezeTransitionPayload, token: string) => {
-    const status = await freezeApi.lock(payload, token)
+  const lock = async (payload: FreezeTransitionPayload) => {
+    const status = await freezeApi.lock(payload)
     statuses.value = { ...statuses.value, [scopeKey(payload.environment_key, payload.pipeline_key)]: status }
     return status
   }
 
-  const unlock = async (payload: FreezeTransitionPayload, token: string) => {
-    const status = await freezeApi.unlock(payload, token)
+  const unlock = async (payload: FreezeTransitionPayload) => {
+    const status = await freezeApi.unlock(payload)
     statuses.value = { ...statuses.value, [scopeKey(payload.environment_key, payload.pipeline_key)]: status }
     return status
   }
 
   const reset = () => {
     statuses.value = {}
+    loading.value = false
   }
 
   return {

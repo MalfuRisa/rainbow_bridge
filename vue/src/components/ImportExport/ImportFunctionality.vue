@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Upload, Loader2, Check, AlertCircle, X, FileArchive, FileWarning, Lock } from 'lucide-vue-next'
 import ImportPreviewTree from './ImportPreviewTree.vue'
 import { transferApi, type ExportSelection, type ImportPreviewData } from '@/lib/api/transfer'
@@ -38,6 +39,7 @@ const overwriteConflicts = ref(false)
 const showConfirmDialog = ref(false)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const dragging = ref(false)
 
 // 预览后加载所有目标范围的冻结状态(仅展示;服务端仍会在提交时复查)
 watch(importPreview, async (preview) => {
@@ -98,6 +100,17 @@ const processPreviewData = (preview: ImportPreviewData): ExportSelection[] => {
 const handleFileSelect = async (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
+  await processFile(file)
+}
+
+const handleDrop = async (event: DragEvent) => {
+  dragging.value = false
+  const file = event.dataTransfer?.files[0]
+  if (file) await processFile(file)
+}
+
+const processFile = async (file: File) => {
+  if (isParsing.value || isImporting.value) return
 
   const validationError = validateFile(file)
   if (validationError) {
@@ -204,20 +217,30 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
 </script>
 
 <template>
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <div class="lg:col-span-2 space-y-6">
-      <Card>
-        <CardHeader>
+  <div class="spectrum-transfer-layout">
+    <div class="spectrum-transfer-content space-y-6">
+      <Card class="spectrum-panel">
+        <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">上传文件</CardTitle>
           <CardDescription>
             支持 ZIP 和 TAR.GZ 格式的配置备份文件
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent class="spectrum-panel-content">
+          <Alert v-if="importError && !importFile" variant="destructive" class="mb-4"><AlertCircle :size="16" /><AlertTitle>无法选择文件</AlertTitle><AlertDescription>{{ importError }}</AlertDescription></Alert>
           <template v-if="!importFile">
             <label
               for="import-file"
-              class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer hover:border-primary hover:bg-muted/50 transition-colors"
+              class="spectrum-import-dropzone"
+              :class="{ 'is-dragging': dragging }"
+              role="button"
+              tabindex="0"
+              aria-label="选择或拖入配置备份文件"
+              @keydown.enter="fileInputRef?.click()"
+              @keydown.space.prevent="fileInputRef?.click()"
+              @dragover.prevent="dragging = true"
+              @dragleave.prevent="dragging = false"
+              @drop.prevent="handleDrop"
             >
               <Upload class="w-12 h-12 text-muted-foreground mb-4" />
               <span class="text-sm font-medium">
@@ -239,14 +262,14 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
           <template v-else>
             <div class="space-y-4">
               <div class="flex items-center gap-4 p-4 bg-muted rounded-lg">
-                <FileArchive class="w-10 h-10 text-amber-500" />
+                <FileArchive class="w-10 h-10 text-muted-foreground" />
                 <div class="flex-1 min-w-0">
                   <div class="font-medium truncate">{{ importFile.name }}</div>
                   <div class="text-sm text-muted-foreground">
                     {{ (importFile.size / 1024).toFixed(2) }} KB
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" @click="clearImport">
+                <Button variant="ghost" size="icon" :disabled="isParsing || isImporting" aria-label="移除导入文件" @click="clearImport">
                   <X class="w-4 h-4" />
                 </Button>
               </div>
@@ -256,7 +279,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
                 <span class="ml-2 text-muted-foreground">解析文件中...</span>
               </div>
 
-              <Alert v-if="importError" variant="destructive">
+              <Alert v-if="importError && !importPreview" variant="destructive">
                 <AlertCircle class="h-4 w-4" />
                 <AlertTitle>解析失败</AlertTitle>
                 <AlertDescription>{{ importError }}</AlertDescription>
@@ -266,14 +289,14 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
         </CardContent>
       </Card>
 
-      <Card v-if="importPreview">
-        <CardHeader>
+      <Card v-if="importPreview" class="spectrum-panel spectrum-section">
+        <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">选择导入内容</CardTitle>
           <CardDescription>
             选择要导入的环境、渠道或配置项
           </CardDescription>
         </CardHeader>
-        <CardContent class="space-y-4">
+        <CardContent class="spectrum-panel-content space-y-4">
           <Alert v-if="lockedTargets.length" variant="destructive">
             <Lock class="h-4 w-4" />
             <AlertTitle>以下目标已冻结，导入将在写入前被整体拒绝</AlertTitle>
@@ -288,33 +311,33 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
             </AlertDescription>
           </Alert>
 
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+          <div class="spectrum-import-stats">
             <div class="p-4 bg-muted rounded-lg text-center">
-              <div class="text-2xl font-bold text-blue-600">
+              <div class="spectrum-stat-value">
                 {{ importPreview.summary.total_environments }}
               </div>
               <div class="text-sm text-muted-foreground">环境</div>
             </div>
             <div class="p-4 bg-muted rounded-lg text-center">
-              <div class="text-2xl font-bold text-indigo-600">
+              <div class="spectrum-stat-value">
                 {{ importPreview.summary.total_pipelines }}
               </div>
               <div class="text-sm text-muted-foreground">渠道</div>
             </div>
             <div class="p-4 bg-muted rounded-lg text-center">
-              <div class="text-2xl font-bold text-purple-600">
+              <div class="spectrum-stat-value">
                 {{ importPreview.summary.total_configs }}
               </div>
               <div class="text-sm text-muted-foreground">配置</div>
             </div>
             <div class="p-4 bg-muted rounded-lg text-center">
-              <div class="text-2xl font-bold text-cyan-600">
+              <div class="spectrum-stat-value">
                 {{ importPreview.summary.total_assets || 0 }}
               </div>
               <div class="text-sm text-muted-foreground">资源</div>
             </div>
             <div class="p-4 bg-muted rounded-lg text-center">
-              <div class="text-2xl font-bold text-amber-600">
+              <div class="spectrum-stat-value">
                 {{ importPreview.summary.conflict_count }}
               </div>
               <div class="text-sm text-muted-foreground">冲突</div>
@@ -340,12 +363,13 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
       </Card>
     </div>
 
-    <div class="space-y-6">
-      <Card>
-        <CardHeader>
+    <div class="spectrum-transfer-aside space-y-6">
+      <Card class="spectrum-panel spectrum-transfer-summary">
+        <CardHeader class="spectrum-panel-header">
+          <p class="spectrum-eyebrow">IMPORT / 恢复清单</p>
           <CardTitle class="text-lg">导入操作</CardTitle>
         </CardHeader>
-        <CardContent class="space-y-4">
+        <CardContent class="spectrum-panel-content space-y-4">
           <template v-if="importPreview">
             <div class="space-y-3">
               <div class="flex items-center justify-between text-sm">
@@ -361,7 +385,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               <div class="flex items-center justify-between text-sm">
                 <span class="text-muted-foreground">冲突项</span>
                 <span
-                  :class="importPreview.summary.conflict_count > 0 ? 'text-amber-600 font-medium' : ''"
+                  :class="importPreview.summary.conflict_count > 0 ? 'spectrum-state-pill is-frozen' : ''"
                 >
                   {{ importPreview.summary.conflict_count }} 项
                 </span>
@@ -393,10 +417,10 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               <AlertDescription>{{ importError }}</AlertDescription>
             </Alert>
 
-            <Alert v-if="importSuccess" class="border-emerald-500 bg-emerald-50 dark:bg-emerald-950">
-              <Check class="h-4 w-4 text-emerald-600" />
+            <Alert v-if="importSuccess" :class="importResult?.resource_import?.status === 'partial' ? 'spectrum-result-warning' : 'spectrum-result-success'">
+              <AlertCircle v-if="importResult?.resource_import?.status === 'partial'" class="h-4 w-4" /><Check v-else class="h-4 w-4" />
               <AlertTitle>{{ resourceMessage }}</AlertTitle>
-              <AlertDescription class="text-emerald-600">
+              <AlertDescription>
                 本次写入 {{ importResult?.total ?? 0 }} 项配置。
                 <template v-if="importResult?.resource_import">
                   资源：预期 {{ importResult.resource_import.expected }}，恢复 {{ importResult.resource_import.restored }}，
@@ -435,7 +459,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
     <DialogContent>
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
-          <FileWarning class="w-5 h-5 text-amber-500" />
+          <FileWarning class="w-5 h-5" />
           确认导入
         </DialogTitle>
         <DialogDescription>

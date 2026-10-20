@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -18,66 +19,49 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Copy, Check, RefreshCw, Download, Loader2 } from 'lucide-vue-next'
-import { useEnvironmentStore } from '@/stores/environment'
-import { runtimeApi } from '@/lib/api/runtime'
-import { CONFIG_TYPE_META, type ConfigItem, type ConfigType } from '@/lib/types'
+import { Copy, Check, RefreshCw, Download, Loader2, AlertTriangle, PackageOpen } from 'lucide-vue-next'
+import { useRuntimeOverview } from '@/composables/useRuntimeOverview'
+import { useActiveRelease } from '@/composables/useActiveRelease'
+import { CONFIG_TYPE_META, type ConfigType } from '@/lib/types'
 import { toast } from 'vue-sonner'
+import type { ActiveReleaseView } from '@/composables/useActiveRelease'
 
-const environmentStore = useEnvironmentStore()
+const emit = defineEmits<{ viewChange: [value: ActiveReleaseView | null] }>()
+
+const environmentStore = useRuntimeOverview()
+const { state, view, errorMessage, exporting, exportError, load, reset, exportShown } = useActiveRelease()
 
 const selectedEnv = ref<string>('')
 const selectedPipeline = ref<string>('')
-const configs = ref<ConfigItem[]>([])
-const loading = ref(false)
 const copiedId = ref<string | null>(null)
-const exporting = ref(false)
 
 const environments = computed(() => environmentStore.environments)
+const selectedEnvData = computed(() => environments.value.find((env) => env.key === selectedEnv.value))
+const pipelines = computed(() => selectedEnvData.value?.pipelines || [])
+const hasScope = computed(() => Boolean(selectedEnv.value && selectedPipeline.value))
 
-const selectedEnvData = computed(() => 
-  environments.value.find(e => e.key === selectedEnv.value)
+/** 当前选择器显示的名称(不使用快照中的历史名称改写选择器)。 */
+const scopeLabel = computed(() => {
+  const envName = selectedEnvData.value?.name || selectedEnv.value
+  const pipelineName = pipelines.value.find((item) => item.key === selectedPipeline.value)?.name || selectedPipeline.value
+  return `${envName} / ${pipelineName}`
+})
+
+const configs = computed(() => view.value?.configs ?? [])
+const canExport = computed(() => state.value === 'ready' && Boolean(view.value))
+watch(view, (value) => emit('viewChange', value), { immediate: true })
+const loadedAtText = computed(() =>
+  view.value ? view.value.loadedAt.toLocaleString() : '',
 )
 
-const pipelines = computed(() => selectedEnvData.value?.pipelines || [])
-
-const fetchConfigs = async () => {
-  if (!selectedEnv.value || !selectedPipeline.value) {
-    configs.value = []
-    return
-  }
-  
-  loading.value = true
-  try {
-    const response = await runtimeApi.config(selectedEnv.value, selectedPipeline.value)
-    if (response?.configs) {
-      configs.value = response.configs.map(config => ({
-        id: config.resource_key,
-        name: config.name,
-        alias: config.alias,
-        type: config.type as ConfigType,
-        content: typeof config.content === 'object' ? JSON.stringify(config.content, null, 2) : config.content,
-        environmentId: config.environment_key,
-        pipelineId: config.pipeline_key,
-        description: (config as any).description || '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }))
-    } else {
-      configs.value = []
-    }
-  } catch (e) {
-    console.error('获取配置列表失败:', e)
-    toast.error('获取配置列表失败')
-  } finally {
-    loading.value = false
-  }
-}
+/** 范围变化(含清空)都开启新批次;未选齐范围不发请求。 */
+watch([selectedEnv, selectedPipeline], ([environmentKey, pipelineKey]) => {
+  void load(environmentKey, pipelineKey)
+})
 
 const handleEnvChange = (value: string) => {
   selectedEnv.value = value
   selectedPipeline.value = ''
-  configs.value = []
 }
 
 const handlePipelineChange = (value: string) => {
@@ -85,43 +69,25 @@ const handlePipelineChange = (value: string) => {
 }
 
 const handleRefresh = () => {
-  fetchConfigs()
-}
-
-const handleExport = async () => {
-  if (!selectedEnv.value || !selectedPipeline.value) return
-  
-  setExporting(true)
-  try {
-    const blob = await runtimeApi.exportStatic(selectedEnv.value, selectedPipeline.value)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `config-${selectedEnv.value}-${selectedPipeline.value}.zip`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('导出成功')
-  } catch {
-    const data = JSON.stringify(configs.value, null, 2)
-    const blob = new Blob([data], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `config-${selectedEnv.value}-${selectedPipeline.value}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('已导出为 JSON 格式')
-  } finally {
-    setExporting(false)
+  if (hasScope.value) {
+    void load(selectedEnv.value, selectedPipeline.value)
   }
 }
 
-const setExporting = (value: boolean) => {
-  exporting.value = value
+const handleExport = async () => {
+  if (!canExport.value) return
+  await exportShown()
+  if (!exportError.value) {
+    toast.success(`已导出版本 ${view.value?.version ?? ''} 的静态包`)
+  } else {
+    toast.error(exportError.value)
+  }
 }
 
+/** 复制本次快照的字符串原文;不做 JSON.parse/stringify,避免大整数失真。 */
 const handleCopy = async (content: string, id: string) => {
-  await navigator.clipboard.writeText(content)
+  try { await navigator.clipboard.writeText(content) }
+  catch { toast.error('复制失败，请选择配置原文后手动复制'); return }
   copiedId.value = id
   toast.success('已复制到剪贴板')
   setTimeout(() => {
@@ -129,40 +95,48 @@ const handleCopy = async (content: string, id: string) => {
   }, 2000)
 }
 
-watch(selectedPipeline, () => {
-  if (selectedPipeline.value) {
-    fetchConfigs()
-  }
-})
+const displayContent = (content: string) => content
 
 onMounted(() => {
   environmentStore.fetchOverview()
 })
+
+onUnmounted(() => {
+  reset()
+})
 </script>
 
 <template>
-  <Card>
-    <CardHeader>
-      <CardTitle class="text-lg">运行时配置</CardTitle>
+  <Card class="runtime-panel">
+    <CardHeader class="runtime-header">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p class="spectrum-eyebrow">CURRENTLY SERVING</p>
+          <CardTitle class="runtime-title text-lg">当前生效配置</CardTitle>
+          <p class="text-sm text-muted-foreground mt-1">
+            展示所选环境和渠道已发布的版本,编辑区修改需发布后才生效
+          </p>
+        </div>
+          <RouterLink v-if="view" class="spectrum-runtime-release-link" :to="{ path: '/releases', query: { env: view.environmentKey, pipeline: view.pipelineKey } }">
+            <PackageOpen class="w-4 h-4 mr-1" />
+            前往版本发布
+          </RouterLink>
+      </div>
     </CardHeader>
-    <CardContent class="space-y-4">
-      <div class="flex flex-wrap items-end gap-4">
+    <CardContent class="runtime-content space-y-4">
+      <div class="runtime-toolbar flex flex-wrap items-end gap-4">
         <div class="space-y-2">
           <label class="text-sm font-medium text-foreground">环境:</label>
-          <Select 
-            :model-value="selectedEnv" 
+          <Select
+            :model-value="selectedEnv"
             @update:model-value="handleEnvChange"
             :disabled="environmentStore.loading"
           >
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-48" aria-label="环境">
               <SelectValue :placeholder="environmentStore.loading ? '加载中...' : '选择环境'" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem 
-                v-for="env in environments" 
-                :key="env.key" 
-                :value="env.key"
-              >
+              <SelectItem v-for="env in environments" :key="env.key" :value="env.key">
                 {{ env.name }}
               </SelectItem>
             </SelectContent>
@@ -171,46 +145,55 @@ onMounted(() => {
 
         <div class="space-y-2">
           <label class="text-sm font-medium text-foreground">渠道:</label>
-          <Select 
+          <Select
             :model-value="selectedPipeline"
             @update:model-value="handlePipelineChange"
             :disabled="!selectedEnv"
           >
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-48" aria-label="渠道">
               <SelectValue placeholder="选择渠道" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem 
-                v-for="pipeline in pipelines" 
-                :key="pipeline.key" 
-                :value="pipeline.key"
-              >
+              <SelectItem v-for="pipeline in pipelines" :key="pipeline.key" :value="pipeline.key">
                 {{ pipeline.name }}
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        <Button
-          @click="handleRefresh"
-          :disabled="!selectedEnv || !selectedPipeline || loading"
-        >
-          <RefreshCw :class="['w-4 h-4 mr-2', { 'animate-spin': loading }]" />
-          刷新配置
+        <Button variant="outline" @click="handleRefresh" :disabled="!hasScope || state === 'loading'">
+          <RefreshCw :class="['w-4 h-4 mr-2', { 'animate-spin': state === 'loading' }]" />
+          刷新
         </Button>
 
-        <Button
-          variant="outline"
-          @click="handleExport"
-          :disabled="configs.length === 0 || exporting"
-        >
+        <Button variant="outline" @click="handleExport" :disabled="!canExport || exporting">
           <Loader2 v-if="exporting" class="w-4 h-4 mr-2 animate-spin" />
           <Download v-else class="w-4 h-4 mr-2" />
-          导出静态资源
+          导出此版本静态包<span v-if="view" class="ml-1 font-mono">{{ view.version }}</span>
         </Button>
       </div>
 
-      <div class="border rounded-lg overflow-hidden">
+      <!-- 状态条:一次成功响应的元数据 -->
+      <div v-if="view" class="runtime-summary rounded-md border bg-muted/40 px-3 py-2 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span class="runtime-summary-version flex items-center gap-2">
+          <Badge class="runtime-active-badge px-2 py-0.5">生效中</Badge>
+          <span class="font-mono">{{ view.version }}</span>
+        </span>
+        <span class="text-muted-foreground">配置 {{ configs.length }} 项</span>
+        <span class="text-muted-foreground">来源冻结 revision {{ view.sourceFreezeRevision || '-' }}</span>
+        <span class="text-muted-foreground">head revision {{ view.activeRevision || '-' }}</span>
+        <span class="text-muted-foreground">本次加载:{{ loadedAtText }}</span>
+        <span class="text-muted-foreground">范围:{{ scopeLabel }}</span>
+        <span class="text-xs text-muted-foreground">
+          按本次加载结果展示,切换后请刷新(其他管理员的切换不会自动推送)
+        </span>
+      </div>
+
+      <div v-if="exportError" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" data-testid="export-error">
+        导出失败:{{ exportError }}
+      </div>
+
+      <div class="runtime-table-wrap border rounded-lg overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -222,49 +205,60 @@ onMounted(() => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            <TableRow v-if="loading">
-              <TableCell colspan="5" class="text-center py-8">
+            <TableRow v-if="state === 'loading'">
+              <TableCell colspan="5" class="text-center py-8" data-testid="loading-row">
                 <RefreshCw class="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
-                <span class="text-sm text-muted-foreground mt-2 block">
-                  加载中...
-                </span>
+                <span class="text-sm text-muted-foreground mt-2 block">加载中...</span>
               </TableCell>
             </TableRow>
-            <TableRow v-else-if="!selectedEnv || !selectedPipeline">
-              <TableCell colspan="5" class="text-center py-8 text-muted-foreground">
-                请选择环境和渠道查看配置
+            <TableRow v-else-if="!hasScope">
+              <TableCell colspan="5" class="text-center py-8 text-muted-foreground" data-testid="idle-row">
+                请选择环境和渠道查看生效配置
+              </TableCell>
+            </TableRow>
+            <TableRow v-else-if="state === 'not-active'">
+              <TableCell colspan="5" class="text-center py-8 text-muted-foreground" data-testid="not-active-row">
+                <AlertTriangle class="w-5 h-5 mx-auto mb-2 text-amber-500" />
+                {{ errorMessage }}
+                <div class="mt-2">
+                  <RouterLink
+                    :to="{ path: '/releases', query: { env: selectedEnv, pipeline: selectedPipeline } }"
+                    class="text-primary hover:underline"
+                  >
+                    前往版本发布,创建版本并切换生效
+                  </RouterLink>
+                </div>
+              </TableCell>
+            </TableRow>
+            <TableRow v-else-if="state === 'incomplete' || state === 'error'">
+              <TableCell colspan="5" class="text-center py-8 text-muted-foreground" data-testid="error-row">
+                <AlertTriangle class="w-5 h-5 mx-auto mb-2 text-destructive" />
+                {{ errorMessage }}
+                <div class="mt-2">
+                  <Button variant="outline" size="sm" @click="handleRefresh">重试</Button>
+                </div>
               </TableCell>
             </TableRow>
             <TableRow v-else-if="configs.length === 0">
-              <TableCell colspan="5" class="text-center py-8 text-muted-foreground">
-                当前环境和渠道下暂无配置
+              <TableCell colspan="5" class="text-center py-8 text-muted-foreground" data-testid="empty-version-row">
+                本版本没有配置(版本 {{ view?.version }},仍可导出空版本静态包)
               </TableCell>
             </TableRow>
-            <TableRow v-else v-for="config in configs" :key="config.id">
-              <TableCell class="font-mono text-sm">
-                {{ config.name }}
-              </TableCell>
-              <TableCell class="text-muted-foreground">
-                {{ config.alias }}
-              </TableCell>
+            <TableRow v-else v-for="config in configs" :key="config.resource_key">
+              <TableCell class="font-mono text-sm">{{ config.name || config.alias }}</TableCell>
+              <TableCell class="text-muted-foreground">{{ config.alias }}</TableCell>
               <TableCell>
                 <Badge
-                  :class="CONFIG_TYPE_META[config.type]?.color || ''"
-                  class="border"
+                  variant="secondary"
+                  class="runtime-type border"
                 >
-                  {{ CONFIG_TYPE_META[config.type]?.label || config.type }}
+                  {{ CONFIG_TYPE_META[config.type as ConfigType]?.label || config.type }}
                 </Badge>
               </TableCell>
-              <TableCell class="font-mono text-sm max-w-xs truncate">
-                {{ config.content }}
-              </TableCell>
+              <TableCell class="runtime-raw-content font-mono text-sm max-w-xs truncate" :title="config.content">{{ displayContent(config.content) }}</TableCell>
               <TableCell>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  @click="handleCopy(config.content, config.id)"
-                >
-                  <Check v-if="copiedId === config.id" class="w-4 h-4 text-green-600" />
+                <Button variant="ghost" size="icon" :aria-label="`复制 ${config.alias} 原文`" @click="handleCopy(config.content, config.resource_key)">
+                  <Check v-if="copiedId === config.resource_key" class="w-4 h-4 text-green-600" />
                   <Copy v-else class="w-4 h-4" />
                 </Button>
               </TableCell>
@@ -272,6 +266,14 @@ onMounted(() => {
           </TableBody>
         </Table>
       </div>
+
+      <p class="text-xs text-muted-foreground">
+        编辑区内容请前往
+        <RouterLink :to="{ path: '/config', query: hasScope ? { env: selectedEnv, pipeline: selectedPipeline } : {} }" class="text-primary hover:underline">配置管理</RouterLink>
+        查看;旧接口
+        <span class="font-mono">/api/v1/runtime/config</span>
+        仍读取编辑区,不受发布切换控制。
+      </p>
     </CardContent>
   </Card>
 </template>

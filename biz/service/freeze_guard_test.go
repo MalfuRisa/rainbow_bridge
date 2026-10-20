@@ -27,7 +27,7 @@ func TestFreezeBlocksAllWriteEntries(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// 锁定前创建一条配置,用于更新/删除拦截验证
 	existing, err := svc.AddConfig(ctx, buildConfig("qa_prod", "main", "BEFORE_LOCK", "text", "original"))
@@ -94,7 +94,7 @@ func TestFreezeBlocksAllWriteEntries(t *testing.T) {
 	}
 
 	// 解锁后恢复可编辑
-	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验证完成", "1", "Bearer "+testAdminToken()); err != nil {
+	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "验证完成", "1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.AddConfig(ctx, buildConfig("qa_prod", "main", "AFTER_UNLOCK", "text", "ok")); err != nil {
@@ -117,7 +117,7 @@ func TestFreezeScopeIsolation(t *testing.T) {
 	seedFreezeScope(t, svc, "qa_prod", "main")
 	seedFreezeScope(t, svc, "qa_prod", "beta")
 	seedFreezeScope(t, svc, "qa_dev", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	mustLock(t, svc, "qa_prod", "main", "仅冻结 prod/main")
 
@@ -140,7 +140,7 @@ func TestFreezeImportAndMigrateRules(t *testing.T) {
 	seedFreezeScope(t, svc, "qa_dev", "main")
 	seedFreezeScope(t, svc, "qa_dev", "beta")
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	// dev/main 资源(文件真实落盘)
 	assetID := "freeze-test-asset-1"
@@ -239,7 +239,7 @@ func TestFreezeConcurrencyRejectsAfterLock(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 	mustLock(t, svc, "qa_prod", "main", "并发拒绝")
 
 	var wg sync.WaitGroup
@@ -271,7 +271,7 @@ func TestFreezeGateSerializationAndBusy(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	oldAcquire := writeGateAcquireTimeout
 	writeGateAcquireTimeout = 300 * time.Millisecond
@@ -290,7 +290,7 @@ func TestFreezeGateSerializationAndBusy(t *testing.T) {
 	<-entered
 
 	// 协调被旧写持有:锁版请求等待超时返回 503,且不产生虚假 locked 状态
-	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "并发锁版", "0", "Bearer "+testAdminToken())
+	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "并发锁版", "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeGateBusy)
 
 	// 普通写入同样等待超时返回 503(不静默成功)
@@ -323,7 +323,7 @@ func TestFreezeResourceStageTiming(t *testing.T) {
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_dev", "main")
 	seedFreezeScope(t, svc, "qa_prod", "main")
-	ctx := context.Background()
+	ctx := adminTestContext()
 
 	oldAcquire := writeGateAcquireTimeout
 	writeGateAcquireTimeout = 300 * time.Millisecond
@@ -367,7 +367,7 @@ func TestFreezeResourceStageTiming(t *testing.T) {
 	<-blocked // 资源阶段被人工阻塞:第一个资源已写入,协调仍被导入持有
 
 	// F17:资源阶段未结束前,锁版不能提前成功
-	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "资源阶段阻塞时锁版", "0", "Bearer "+testAdminToken())
+	_, err := svc.LockFreeze(ctx, "qa_prod", "main", "资源阶段阻塞时锁版", "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeGateBusy)
 
 	close(resume)
@@ -379,7 +379,7 @@ func TestFreezeResourceStageTiming(t *testing.T) {
 	}
 
 	// 资源结果确定后,锁版成功
-	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "资源完成后锁版", "0", "Bearer "+testAdminToken()); err != nil {
+	if _, err := svc.LockFreeze(ctx, "qa_prod", "main", "资源完成后锁版", "0"); err != nil {
 		t.Fatalf("lock after completed write must succeed: %v", err)
 	}
 }
@@ -388,7 +388,7 @@ func TestFreezeImportCancelCleansCreatedFiles(t *testing.T) {
 	t.Setenv(FreezeAdminTokenEnv, testAdminToken())
 	svc := newFreezeService(t)
 	seedFreezeScope(t, svc, "qa_dev", "main")
-	baseCtx := context.Background()
+	baseCtx := adminTestContext()
 
 	oldAcquire := writeGateAcquireTimeout
 	writeGateAcquireTimeout = 500 * time.Millisecond
@@ -506,7 +506,7 @@ func countUploadFiles(t *testing.T) int {
 
 func countScopeConfigs(t *testing.T, svc *Service, environmentKey, pipelineKey string) int {
 	t.Helper()
-	rows, err := svc.logic.ListConfigs(context.Background(), environmentKey, pipelineKey, "", "", "", false)
+	rows, err := svc.logic.ListConfigs(adminTestContext(), environmentKey, pipelineKey, "", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

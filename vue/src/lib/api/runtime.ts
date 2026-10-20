@@ -1,4 +1,4 @@
-import { apiClient, getBasePath } from './client'
+import { apiClient } from './client'
 import { toCamelCase } from '../utils'
 import type {
   ApiEnvironmentOverview,
@@ -34,27 +34,7 @@ export const runtimeApi = {
     environmentKey: string,
     pipelineKey: string
   ): Promise<Blob> => {
-    const url = new URL('/api/v1/runtime/static', window.location.origin)
-    url.searchParams.append('environment_key', environmentKey)
-    url.searchParams.append('pipeline_key', pipelineKey)
-    
-    // 添加基础路径
-    const basePath = getBasePath()
-    if (basePath) {
-      const pathname = url.pathname
-      // 移除 basePath 末尾的斜杠，避免与 pathname 开头的斜杠重复
-      const normalizedBasePath = basePath.replace(/\/$/, '')
-      url.pathname = normalizedBasePath + pathname
-    }
-
-    const response = await fetch(url.toString(), {
-      credentials: 'include',
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`)
-    }
-
-    return response.blob()
+    const query = new URLSearchParams({ environment_key: environmentKey, pipeline_key: pipelineKey })
+    return apiClient.download('/api/v1/runtime/static?' + query.toString())
   },
 }

@@ -65,6 +65,7 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 		&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.AuthUser{}, &model.AuthSession{},
 	); err != nil {
 		return nil, err
 	}
@@ -108,6 +109,30 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	// Create service instance
 	svc := service.NewService(db, redisClient, basePath, cfg)
 
+	// 管理员账号与会话必须在上线前就绪:缺首次密码即失败退出,已存在则不覆盖。
+	authOrigins, err := appconfig.ValidateAuthConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	idleTimeout, absoluteTimeout, err := appconfig.AuthTimeoutPair(cfg)
+	if err != nil {
+		return nil, err
+	}
+	svc.SetAuthSettings(service.AuthSettings{
+		CookieName:      cfg.Auth.CookieName,
+		CookieSecure:    appconfig.AuthCookieSecure(cfg),
+		IdleTimeout:     idleTimeout,
+		AbsoluteTimeout: absoluteTimeout,
+		TrustedOrigins:  authOrigins,
+		BasePath:        basePath,
+	})
+	if err := svc.EnsureAuthBootstrap(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := svc.EnsureAuthSessionsReady(context.Background()); err != nil {
+		return nil, err
+	}
+
 	// 冻结基础结构必须在 HTTP 开放前就绪:协调行 + 存量渠道补初始 unlocked 状态(幂等,不重置既有状态)。
 	if err := svc.EnsureFreezeBootstrap(context.Background()); err != nil {
 		return nil, err
@@ -130,8 +155,10 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	// Register middleware
 	h.Use(middleware.Recovery())
 	h.Use(middleware.Logging())
-	h.Use(middleware.CORS(&cfg.CORS))
+	h.Use(middleware.CORS(&cfg.CORS, authOrigins, basePath))
 	h.Use(middleware.Auth())
+	// 管理接口统一鉴权:默认拒绝,公开范围在中间件内按方法 + 路由精确匹配
+	h.Use(middleware.AdminSession(svc, basePath))
 
 	// Register routes
 	bizrouter.GeneratedRegister(h)

@@ -37,7 +37,6 @@ export async function lockScope(
       reason,
       expected_revision: expectedRevision,
     },
-    { Authorization: `Bearer ${token}` },
   )
   return { httpStatus: response.status, body: response.json }
 }
@@ -58,7 +57,6 @@ export async function unlockScope(
       reason,
       expected_revision: expectedRevision,
     },
-    { Authorization: `Bearer ${token}` },
   )
   return { httpStatus: response.status, body: response.json }
 }
