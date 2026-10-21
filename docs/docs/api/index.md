@@ -1,622 +1,88 @@
-# API 接口文档
+# Rainbow Bridge API（main_v1）
 
-虹桥计划提供完整的 RESTful API 接口，用于配置管理和资源分发。
+本目录描述 MalfuRisa Fork 的二次开发接口，面向接入研发。2026-10-21 按 `main_v1` 提交 `cd673dc` 的后端实现核对；后续接口改动应同步维护本目录。
 
-## 📚 接口概览
+虹桥提供读取生效配置、读取指定版本、导出版本配置与资源三种业务能力；管理员还可以维护编辑区、锁版、创建版本、切换生效和删除非生效版本。
 
-### 基础信息
+## 阅读入口
 
-**Base URL**: `http://localhost:8080/rainbow-bridge/api/v1`
+- [业务系统接入：运行时读取与静态包](runtime.md)
+- [管理员接入：登录、编辑、锁版与发布](management.md)
+- [本 Fork 源码](https://github.com/MalfuRisa/rainbow_bridge/tree/main_v1)
 
-**请求头**：
-```http
-Content-Type: application/json
-x-environment: prod      # 环境标识（部分接口需要）
-x-pipeline: main         # 渠道标识（部分接口需要）
+本入口不依赖应用前端重构。原作者文档站不代表本分支的接口合同。
+
+## 快速接入：读取默认或指定版本
+
+业务应用通常只需要以下三项接口，均无需管理员登录：
+
+| 能力 | 方法与路径 | 作用 |
+| --- | --- | --- |
+| 读取生效配置 | GET `/api/v1/runtime/release` | 跟随当前环境、渠道的生效版本 |
+| 读取指定版本 | GET `/api/v1/runtime/release?version=v1.0` | 固定读取该范围的 v1.0，后续切换不改变读取目标 |
+| 导出版本资源包 | GET `/api/v1/runtime/release/static?version=v1.0&expected_snapshot_id=<UUID>` | 下载与已读取快照对应的配置、资源 ZIP |
+
+例如读取默认范围的生效版本（Bash；Windows 可使用 curl.exe 并调整换行）：
+
+```bash
+curl --fail-with-body 'http://127.0.0.1:18080/rainbow-bridge/api/v1/runtime/release' \
+  -H 'x-environment: default' \
+  -H 'x-pipeline: default'
 ```
 
-### 响应格式
+成功响应的 `data.configs` 是配置列表，`data.version` 是配置发布版本号，`data.snapshot_id` 是快照 ID。固定导出时传入同一次读取返回的 version 与 snapshot_id。没有生效版本返回 404；不会自动读取编辑区。完整响应示例、raw 精度模式、错误码和旧接口兼容规则见 [运行时文档](runtime.md)。
 
-所有接口返回统一的 JSON 格式：
+## 地址与范围
 
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {}
-}
-```
+示例部署地址为 `http://127.0.0.1:18080/rainbow-bridge`。本文 `/api/v1/...` 路径需要在前面拼接部署地址，**不要重复添加 `/api/v1` 或 `/rainbow-bridge`**。实际域名、端口、协议与 BasePath 由部署决定；根路径部署没有 `/rainbow-bridge` 前缀。
 
-**状态码说明**：
-- `0`: 成功
-- `400`: 请求参数错误
-- `404`: 资源不存在
-- `500`: 服务器内部错误
+业务运行时按 `x-environment`、`x-pipeline` 两个请求头选择范围；旧静态导出使用查询参数；管理接口一般使用查询或 JSON 字段，按各接口说明调用。
 
-## 🔌 接口详情
+配置 `version` 是环境/渠道内人为指定的发布版本名，`snapshot_id` 是快照的唯一标识。`GET /api/v1/version` 返回虹桥程序的构建版本，与配置发布版本不同。
 
-### 环境管理 API
+## 响应兼容约定
 
-#### 获取环境列表
+不要假定所有模块的成功 code 相同。
 
-```http
-GET /api/v1/environment/list
-```
+| 模块 | 当前成功响应 |
+| --- | --- |
+| auth | HTTP 200，正文 `code: 0`、`msg: "success"` |
+| freeze、release、runtime/config、runtime/release | HTTP 200，正文 `code: 200`、`msg: "OK"` |
+| 旧环境/渠道/配置等 CRUD | 通常正文 `code: 200`；部分错误仍通过 HTTP 200 返回，需检查正文 code |
+| 静态包与下载 | 成功返回 ZIP 或文件字节，不统一使用 response.json() |
 
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "environments": [
-      {
-        "environment_key": "prod",
-        "environment_name": "生产环境",
-        "remark": "线上生产环境",
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-01-01T00:00:00Z"
-      }
-    ]
-  }
-}
-```
+运行时/发布/冻结错误使用实际 HTTP 状态和机器可读 `error_type`；认证错误主要说明放在 `msg`，发布错误可能同时含 `error`。不保证所有历史接口及空字段都有相同结构，详情见专题。
 
-#### 创建环境
+管理接口需要会话，管理写请求需要 CSRF；公开业务读取不需要管理员 Cookie。旧 Bearer 不再授予管理员权限。客户端同时检查 HTTP 状态、正文 code 及所需字段，不只检查 HTTP 200。
 
-```http
-POST /api/v1/environment/create
-Content-Type: application/json
+## 业务路由索引
 
-{
-  "environment_key": "test",
-  "environment_name": "测试环境",
-  "remark": "功能测试环境"
-}
-```
+以下覆盖当前 `idl/biz/` 声明的路由，均拼接部署前缀；细节以专题、实际 handler 和对应 IDL 为准。表格列的是导航，不代表各模块字段与错误协议相同。
 
-#### 更新环境
+| 分类 | 方法与路径 | 权限及依据 |
+| --- | --- | --- |
+| 认证 | POST `/api/v1/auth/login`、`/api/v1/auth/logout`、`/api/v1/auth/password`；GET `/api/v1/auth/me` | 自身会话规则；[管理文档](management.md) |
+| 环境 | GET `/api/v1/environment/list`、`/api/v1/environment/detail`；POST `/api/v1/environment/create`、`/api/v1/environment/update`、`/api/v1/environment/delete` | 管理会话；[environment.proto](../../../idl/biz/environment.proto) |
+| 渠道 | GET `/api/v1/pipeline/list`、`/api/v1/pipeline/detail`；POST `/api/v1/pipeline/create`、`/api/v1/pipeline/update`、`/api/v1/pipeline/delete` | 管理会话；[pipeline.proto](../../../idl/biz/pipeline.proto) |
+| 编辑配置 | GET `/api/v1/config/list`、`/api/v1/config/detail`；POST `/api/v1/config/create`、`/api/v1/config/update`、`/api/v1/config/delete` | 管理会话；[config.proto](../../../idl/biz/config.proto) |
+| 原始资源 | GET `/api/v1/asset/list`；POST `/api/v1/asset/upload`；GET `/api/v1/asset/file/{file_id}/{file_name}` | 列表/上传需会话，下载公开；[asset.proto](../../../idl/biz/asset.proto) |
+| 锁版 | GET `/api/v1/freeze/status`、`/api/v1/freeze/history`；POST `/api/v1/freeze/lock`、`/api/v1/freeze/unlock` | 管理会话；[管理文档](management.md) |
+| 发布 | GET `/api/v1/release/list`、`/api/v1/release/detail`、`/api/v1/release/active`、`/api/v1/release/history`；POST `/api/v1/release/create`、`/api/v1/release/activate`、`/api/v1/release/delete` | 管理会话；[管理文档](management.md) |
+| 业务运行时 | GET `/api/v1/runtime/overview`、`/api/v1/runtime/config`、`/api/v1/runtime/static`、`/api/v1/runtime/release`、`/api/v1/runtime/release/static` | 公开；[运行时文档](runtime.md) |
+| 快照资源 | GET `/api/v1/release/asset/{snapshot_id}/{asset_id}` | 公开，受版本删除和完整性检查约束 |
+| 迁移与归档 | GET `/api/v1/transfer/export-tree`；POST `/api/v1/transfer/import`、`/api/v1/transfer/export`、`/api/v1/transfer/import-preview`、`/api/v1/transfer/import-selective`、`/api/v1/transfer/migrate` | 管理会话；[transfer.proto](../../../idl/biz/transfer.proto) |
+| 程序版本 | GET `/api/v1/version`、`/api/v1/version/latest` | 公开；不是配置发布版本 |
 
-```http
-POST /api/v1/environment/update
-Content-Type: application/json
+健康检查 `GET /ping` 同样按部署拼接 BasePath，不在 `/api/v1` 下。
 
-{
-  "environment_key": "test",
-  "environment_name": "集成测试环境",
-  "remark": "CI/CD集成测试环境"
-}
-```
+## 维护依据与文档站
 
-#### 删除环境
+IDL 适合查请求模型和路由，但不等同于实际 HTTP 输出。例如 runtime 的 object/keyvalue content 由手写 handler 输出原生 JSON；auth/password 实际字段为 `reauth_required`；部分 IDL 注释仍描述旧 Bearer。文档以实际行为为准，不把 proto 称为已经生成的 OpenAPI。
 
-```http
-POST /api/v1/environment/delete
-Content-Type: application/json
+- [运行时 handler](../../../biz/handler/runtime/runtime_service.go)
+- [发布 handler](../../../biz/handler/release/release_service.go)
+- [认证 handler](../../../biz/handler/auth/auth_service.go)
+- [管理鉴权](../../../biz/middleware/admin_session.go)
+- [HTTP 契约测试](../../../biz/handler/release/release_http_test.go)
 
-{
-  "environment_key": "test"
-}
-```
-
-### 渠道管理 API
-
-#### 获取渠道列表
-
-```http
-GET /api/v1/pipeline/list?environment_key=prod
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "pipelines": [
-      {
-        "environment_key": "prod",
-        "pipeline_key": "main",
-        "pipeline_name": "主渠道",
-        "remark": "生产发布渠道",
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-01-01T00:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-#### 创建渠道
-
-```http
-POST /api/v1/pipeline/create
-Content-Type: application/json
-
-{
-  "environment_key": "prod",
-  "pipeline_key": "hotfix",
-  "pipeline_name": "紧急修复渠道",
-  "remark": "生产紧急修复渠道"
-}
-```
-
-### 配置管理 API
-
-#### 获取配置列表
-
-```http
-GET /api/v1/config/list?environment_key=prod&pipeline_key=main
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "configs": [
-      {
-        "resource_key": "uuid-xxx",
-        "environment_key": "prod",
-        "pipeline_key": "main",
-        "name": "api_base_url",
-        "alias": "API 地址",
-        "content": "https://api.example.com",
-        "type": "text",
-        "remark": "后端 API 基础地址",
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-01-01T00:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-#### 创建配置
-
-```http
-POST /api/v1/config/create
-Content-Type: application/json
-
-{
-  "resource_key": "uuid-xxx",
-  "environment_key": "prod",
-  "pipeline_key": "main",
-  "name": "feature_flag_new_ui",
-  "alias": "新 UI 开关",
-  "content": "true",
-  "type": "boolean",
-  "remark": "是否启用新 UI"
-}
-```
-
-#### 更新配置
-
-```http
-POST /api/v1/config/update
-Content-Type: application/json
-
-{
-  "resource_key": "uuid-xxx",
-  "environment_key": "prod",
-  "pipeline_key": "main",
-  "name": "feature_flag_new_ui",
-  "content": "false"
-}
-```
-
-#### 删除配置
-
-```http
-POST /api/v1/config/delete
-Content-Type: application/json
-
-{
-  "resource_key": "uuid-xxx",
-  "environment_key": "prod",
-  "pipeline_key": "main"
-}
-```
-
-### 静态资源 API
-
-#### 获取资源列表
-
-```http
-GET /api/v1/asset/list?environment_key=prod&pipeline_key=main
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "assets": [
-      {
-        "file_id": "uuid-xxx",
-        "business_key": "marketing",
-        "file_name": "banner.png",
-        "content_type": "image/png",
-        "file_size": 102400,
-        "path": "data/uploads/uuid-xxx/banner.png",
-        "url": "/api/v1/asset/file/uuid-xxx",
-        "remark": "营销 Banner 图",
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-01-01T00:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-#### 上传资源
-
-```http
-POST /api/v1/asset/upload
-Content-Type: multipart/form-data
-
-FormData:
-- file: <binary>
-- environment_key: prod
-- pipeline_key: main
-- business_key: marketing
-- remark: 营销 Banner 图
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "file_id": "uuid-xxx",
-    "url": "/api/v1/asset/file/uuid-xxx",
-    "asset_ref": "asset://uuid-xxx"
-  }
-}
-```
-
-#### 下载资源
-
-```http
-GET /api/v1/asset/file/{file_id}
-```
-
-**响应**：
-- Content-Type: 根据文件类型自动设置
-- Content-Disposition: attachment; filename="xxx"
-
-### 运行时配置 API
-
-#### 获取运行时配置
-
-```http
-GET /api/v1/runtime/config
-Headers:
-  x-environment: prod
-  x-pipeline: main
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "system_config": {
-      "app_name": "虹桥计划",
-      "version": "v3.1.3"
-    },
-    "business_configs": {
-      "api_base_url": "https://api.example.com",
-      "feature_flags": {
-        "new_ui": true,
-        "dark_mode": false
-      }
-    },
-    "environment": {
-      "environment_key": "prod",
-      "pipeline_key": "main"
-    }
-  }
-}
-```
-
-#### 导出静态包
-
-```http
-GET /api/v1/runtime/static?environment_key=prod&pipeline_key=main
-```
-
-**响应**：
-- Content-Type: application/zip
-- Content-Disposition: attachment; filename="static.zip"
-
-**包含内容**：
-```
-static.zip
-├── config.json          # 所有配置的 JSON
-├── assets/              # 引用的静态资源
-│   └── uuid-xxx/
-│       └── banner.png
-└── index.html          # 示例页面
-```
-
-### 配置迁移 API
-
-#### 获取导出树
-
-```http
-GET /api/v1/transfer/export-tree
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "tree": [
-      {
-        "environment_key": "prod",
-        "environment_name": "生产环境",
-        "pipelines": [
-          {
-            "pipeline_key": "main",
-            "pipeline_name": "主渠道",
-            "config_count": 15
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-#### 选择性导出
-
-```http
-POST /api/v1/transfer/export
-Content-Type: application/json
-
-{
-  "selections": [
-    {
-      "environment_key": "prod",
-      "pipeline_key": "main",
-      "resource_keys": ["uuid-1", "uuid-2"]
-    }
-  ]
-}
-```
-
-**响应**：
-- Content-Type: application/zip
-- Content-Disposition: attachment; filename="export.zip"
-
-#### 导入预览
-
-```http
-POST /api/v1/transfer/import-preview
-Content-Type: multipart/form-data
-
-FormData:
-- file: <export.zip>
-- environment_key: test
-- pipeline_key: main
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "preview": {
-      "new_configs": 5,
-      "conflict_configs": 2,
-      "same_configs": 8,
-      "details": [
-        {
-          "name": "api_base_url",
-          "status": "conflict",
-          "source_content": "https://api.test.com",
-          "target_content": "https://api.prod.com"
-        }
-      ]
-    }
-  }
-}
-```
-
-#### 选择性导入
-
-```http
-POST /api/v1/transfer/import-selective
-Content-Type: multipart/form-data
-
-FormData:
-- file: <export.zip>
-- environment_key: test
-- pipeline_key: main
-- resource_keys: ["uuid-1", "uuid-2"]
-- overwrite: false
-```
-
-#### 配置迁移
-
-```http
-POST /api/v1/transfer/migrate
-Content-Type: application/json
-
-{
-  "source_environment": "dev",
-  "source_pipeline": "main",
-  "target_environment": "test",
-  "target_pipeline": "main",
-  "resource_keys": ["uuid-1", "uuid-2"],
-  "overwrite": false
-}
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "migrated": 5,
-    "skipped": 2,
-    "failed": 0,
-    "details": [
-      {
-        "name": "api_base_url",
-        "status": "migrated",
-        "message": ""
-      }
-    ]
-  }
-}
-```
-
-### 版本管理 API
-
-#### 获取版本信息
-
-```http
-GET /api/v1/version
-```
-
-**响应示例**：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "version": "v3.1.3",
-    "git_commit": "abc123",
-    "build_time": "2026-03-07T10:00:00Z",
-    "go_version": "go1.22"
-  }
-}
-```
-
-## 🔐 认证与授权
-
-### 当前状态
-
-当前版本暂未实现强制认证，建议在生产环境中通过以下方式保护 API：
-
-1. **Nginx 认证**：使用 Nginx basic auth
-2. **API 网关**：在 API 网关层实现 Token 验证
-3. **防火墙规则**：限制访问 IP 范围
-
-### 未来规划
-
-- [ ] JWT Token 认证
-- [ ] API Key 机制
-- [ ] OAuth2 集成
-- [ ] RBAC 权限控制
-
-## 📊 限流与配额
-
-### 推荐配置
-
-生产环境建议实施限流：
-
-```yaml
-# Nginx 限流配置
-limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
-
-location /api/ {
-    limit_req zone=api_limit burst=20 nodelay;
-}
-```
-
-## 🐛 错误处理
-
-### 常见错误码
-
-| 错误码 | 说明 | 解决方案 |
-|--------|------|---------|
-| 400 | 请求参数错误 | 检查请求体和参数 |
-| 404 | 资源不存在 | 确认环境和渠道已创建 |
-| 500 | 服务器错误 | 查看服务器日志 |
-
-### 错误响应示例
-
-```json
-{
-  "code": 400,
-  "message": "invalid parameter: environment_key is required",
-  "data": null
-}
-```
-
-## 💡 最佳实践
-
-### 1. 批量操作
-
-使用批量接口减少请求次数：
-
-```javascript
-// ❌ 不推荐：多次请求
-const configs = await Promise.all([
-  fetch('/api/config/1'),
-  fetch('/api/config/2'),
-  fetch('/api/config/3'),
-]);
-
-// ✅ 推荐：一次请求
-const configs = await fetch('/api/runtime/config', {
-  headers: {
-    'x-environment': 'prod',
-    'x-pipeline': 'main'
-  }
-});
-```
-
-### 2. 缓存策略
-
-客户端应缓存运行时配置：
-
-```javascript
-// 使用 localStorage 缓存
-const cacheKey = 'runtime_config_prod_main';
-const cached = localStorage.getItem(cacheKey);
-const cachedTime = localStorage.getItem(cacheKey + '_time');
-
-if (cached && Date.now() - cachedTime < 5 * 60 * 1000) {
-  return JSON.parse(cached);
-}
-
-// 5 分钟后过期
-```
-
-### 3. 错误重试
-
-实现指数退避重试：
-
-```javascript
-async function fetchWithRetry(url, options, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const response = await fetch(url, options);
-      if (response.ok) return response;
-    } catch (error) {
-      if (i === maxRetries - 1) throw error;
-      await new Promise(resolve => 
-        setTimeout(resolve, Math.pow(2, i) * 1000)
-      );
-    }
-  }
-}
-```
-
-## 🔗 相关链接
-
-- [Postman 集合](../../tests/e2e/api-tests.json)
-- [OpenAPI 规范](../../idl/biz/*.proto)
-- [GitHub Issues](https://github.com/yi-nology/rainbow_bridge/issues)
+本入口可直接在 GitHub 阅读。现有 Pages 工作流仅监听 main；更新 main_v1 的 Markdown 不等于已发布 Fork 文档站。本次先维护这份 Fork Markdown 入口，不宣称原作者站点已随本分支更新。
