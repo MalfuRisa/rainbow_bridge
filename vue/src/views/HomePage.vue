@@ -14,7 +14,7 @@ const activeView = shallowRef<ActiveReleaseView | null>(null)
 </script>
 
 <template>
-  <SpectrumLayout>
+  <SpectrumLayout elevated>
     <div class="spectrum-home">
       <div class="spectrum-home-heading">
         <div><h1>项目概览</h1></div>
@@ -29,7 +29,7 @@ const activeView = shallowRef<ActiveReleaseView | null>(null)
       <RuntimeConfig @view-change="activeView = $event" />
       <div class="spectrum-home-docs">
         <details class="spectrum-disclosure">
-          <summary><span><Code2 :size="18" />前端对接与 API 说明</span><ChevronDown :size="18" /></summary>
+          <summary><span><Code2 :size="18" />API 对接能力</span><ChevronDown :size="18" /></summary>
           <ApiDocs />
         </details>
         <details class="spectrum-disclosure">

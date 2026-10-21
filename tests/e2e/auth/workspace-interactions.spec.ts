@@ -126,15 +126,18 @@ test('上传可用键盘触发，上传期间提供反馈并阻止保存', async
   await dialog.getByRole('combobox', { name: '配置类型' }).click()
   await page.getByRole('option', { name: '文件 文件上传', exact: true }).click()
   await expect(page.getByRole('listbox')).toBeHidden()
+  // Radix restores the trigger after its closing animation; wait for that
+  // keyboard handoff before moving focus to the upload button.
+  await expect(dialog.getByRole('combobox', { name: '配置类型' })).toBeFocused()
   let release!: () => void
   const pending = new Promise<void>(resolve => { release = resolve })
   mock.overrides.set('asset/upload', async route => {
     await pending
     await ok(route, { asset: { file_id: 'a1', file_name: 'fixture.txt', content_type: 'text/plain', file_size: 4, url: '/rainbow-bridge/api/v1/asset/file/a1' } })
   })
-  await dialog.getByRole('button', { name: '上传文件', exact: true }).focus()
+  const upload = dialog.getByRole('button', { name: '上传文件', exact: true })
   const chooser = page.waitForEvent('filechooser')
-  await page.keyboard.press('Enter')
+  await upload.press('Enter')
   await (await chooser).setFiles({ name: 'fixture.txt', mimeType: 'text/plain', buffer: Buffer.from('data') })
   await expect(dialog.getByRole('status')).toHaveText('上传中…')
   await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled()

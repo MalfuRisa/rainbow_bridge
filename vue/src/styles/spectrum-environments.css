@@ -1,4 +1,4 @@
-.spectrum-env-columns { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 48px; border-top: 1px solid var(--border); }
+.spectrum-env-columns { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); align-items: start; gap: 24px; }
 .spectrum-env-row { display: flex; align-items: center; gap: 12px; padding: 16px 12px; border-bottom: 1px solid var(--border); border-radius: 8px; }
 .spectrum-env-row.is-selected { background: var(--secondary); border-color: transparent; }
 .spectrum-env-select { display: flex; align-items: center; gap: 16px; text-align: left; flex: 1; min-width: 0; padding: 4px 0; color: var(--foreground); border: 0; background: transparent; }

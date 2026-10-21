@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { ArrowRight, ArrowUpRight, LockKeyhole } from 'lucide-vue-next'
-import bridgeArtwork from '@/assets/spectrum-bridge.webp'
+import BridgeArtwork from './BridgeArtwork.vue'
 import type { ActiveReleaseView } from '@/composables/useActiveRelease'
 defineProps<{ activeView: ActiveReleaseView | null }>()
-const artworkFailed = ref(false)
 </script>
 
 <template>
@@ -22,7 +20,7 @@ const artworkFailed = ref(false)
       </div>
     </div>
     <div class="spectrum-release-art" role="img" :aria-label="activeView ? `当前选中范围的生效版本为 ${activeView.version}，编辑区修改不会立即生效` : '编辑内容经冻结创建快照，再显式切换为业务生效版本'">
-      <img v-if="!artworkFailed" class="spectrum-bridge-artwork" :src="bridgeArtwork" alt="" aria-hidden="true" fetchpriority="high" width="1774" height="887" @error="artworkFailed = true" />
+      <BridgeArtwork />
       <div class="spectrum-bridge-flow">
         <div class="spectrum-origin">
           <span>编辑区</span>

@@ -73,15 +73,26 @@ test('桌面工作区保持可操作布局', async ({ page }) => {
   ]) {
     await page.goto(path)
     await expect(page.locator('h1')).toHaveText(title)
+    await expect(page.getByRole('navigation', { name: '主要导航' }).getByRole('link', { name: title, exact: true })).toHaveAttribute('aria-current', 'page')
+    if (path === 'environments') await page.locator('.spectrum-env-select').click()
     for (const width of [1280, 1440]) {
       await page.setViewportSize({ width, height: 900 })
-      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), width === 1280)
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-      await capture(page, path.split('?')[0] + '-' + width + (width === 1280 ? '-dark' : '-light'))
+      for (const dark of [false, true]) {
+        await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+        await capture(page, path.split('?')[0] + '-' + width + (dark ? '-dark' : '-light'))
+      }
     }
   }
   mock.authenticated = false
   await page.goto('login')
   await expect(page.getByRole('heading', { name: '登录工作台', exact: true })).toBeVisible()
-  await capture(page, 'login-1440-light')
+  for (const width of [1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await capture(page, 'login-' + width + (dark ? '-dark' : '-light'))
+    }
+  }
 })

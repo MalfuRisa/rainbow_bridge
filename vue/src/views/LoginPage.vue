@@ -8,9 +8,12 @@ import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api/error'
 import { safeReturnTo } from '@/lib/auth/redirect'
+import { getBasePath } from '@/lib/utils'
+import TopologyBackground from '@/components/spectrum/TopologyBackground.vue'
 import '@/styles/spectrum.css'
 
 const auth = useAuthStore()
+const brandIconUrl = `${getBasePath().replace(/\/$/, '')}/icon.svg`
 const router = useRouter()
 const route = useRoute()
 const username = ref('admin')
@@ -43,10 +46,11 @@ async function restore() {
 <template>
   <!-- Primary: account/password and submit. Secondary: return and recovery.
        Approved spectrum tokens; 48px controls, 24/32/48px group spacing. -->
-  <div class="spectrum-shell spectrum-login-shell">
+  <div class="spectrum-shell spectrum-shell--elevated spectrum-login-shell">
+    <TopologyBackground />
     <header class="spectrum-login-header">
       <RouterLink to="/" class="spectrum-brand" aria-label="虹桥计划首页">
-        <span class="spectrum-mark" aria-hidden="true" />
+        <span class="spectrum-mark" aria-hidden="true"><img :src="brandIconUrl" alt="" width="48" height="48" /></span>
         <span><strong>虹桥计划</strong><small>RAINBOW BRIDGE</small></span>
       </RouterLink>
       <RouterLink to="/" class="spectrum-login-back"><ArrowLeft :size="16" />返回项目概览</RouterLink>

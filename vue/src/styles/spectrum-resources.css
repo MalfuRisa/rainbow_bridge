@@ -4,7 +4,7 @@
 .spectrum-resource-search { position: relative; }
 .spectrum-resource-search input { height: 44px; width: 256px; max-width: 100%; box-shadow: none; background: var(--card); }
 .spectrum-uploader > button { min-height: 44px; }
-.spectrum-resource-freeze { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px 24px; margin-top: 24px; border-radius: 8px; background: var(--spectrum-warning-bg); color: var(--spectrum-warning); font-size: 12px; overflow-wrap: anywhere; }
+.spectrum-resource-freeze { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px 24px; margin-top: 24px; border: 1px solid var(--spectrum-surface-line); border-radius: 8px; background: var(--spectrum-caution-bg); color: var(--spectrum-caution); font-size: 12px; overflow-wrap: anywhere; }
 .spectrum-resources-page .resource-preview-button { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 8px; background: var(--secondary); color: var(--spectrum-secondary-text); overflow: hidden; }
 .spectrum-resources-page .resource-preview-button img { width: 100%; height: 100%; object-fit: cover; }
 .spectrum-resources-page .resource-filename { overflow-wrap: anywhere; min-width: 160px; }

@@ -6,9 +6,13 @@ import { useVersionStore } from '@/stores/version'
 import '@/styles/spectrum.css'
 import WorkspaceAccount from '@/components/auth/WorkspaceAccount.vue'
 import SessionNotice from '@/components/auth/SessionNotice.vue'
+import { getBasePath } from '@/lib/utils'
+import TopologyBackground from './TopologyBackground.vue'
 
 // Shared workspace shell; semantic tokens also reach Radix portals.
+withDefaults(defineProps<{ elevated?: boolean }>(), { elevated: true })
 const route = useRoute()
+const brandIconUrl = `${getBasePath().replace(/\/$/, '')}/icon.svg`
 const versionStore = useVersionStore()
 const menuOpen = ref(false)
 const navigation = [
@@ -27,11 +31,12 @@ onMounted(() => { void versionStore.init() })
 </script>
 
 <template>
-  <div class="spectrum-shell">
+  <div class="spectrum-shell" :class="{ 'spectrum-shell--elevated': elevated }">
+    <TopologyBackground />
     <a class="spectrum-skip" href="#spectrum-main">跳转到主要内容</a>
     <header class="spectrum-header">
       <RouterLink to="/" class="spectrum-brand" aria-label="虹桥计划首页">
-        <span class="spectrum-mark" aria-hidden="true" />
+        <span class="spectrum-mark" aria-hidden="true"><img :src="brandIconUrl" alt="" width="48" height="48" /></span>
         <span><strong>虹桥计划</strong><small>RAINBOW BRIDGE</small></span>
       </RouterLink>
       <button class="spectrum-menu-button" :aria-expanded="menuOpen" aria-controls="spectrum-navigation" :aria-label="menuOpen ? '收起导航' : '展开导航'" @click="menuOpen = !menuOpen">

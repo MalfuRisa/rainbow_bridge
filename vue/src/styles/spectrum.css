@@ -7,6 +7,7 @@
 @import './spectrum-release.css';
 @import './spectrum-auth.css';
 @import './spectrum-interactions.css';
+@import './spectrum-surfaces.css';
 
 /* Shared workspace theme (§1.5 / §5.6): the existing variable contract also
    reaches Radix portals. Tokens apply while the spectrum shell is mounted.
@@ -26,7 +27,8 @@
   --muted-foreground: #726a63;
   --accent: #fffceb;
   --accent-foreground: #902900;
-  --destructive: #aa181b;
+  --spectrum-danger: #aa181b;
+  --destructive: var(--spectrum-danger);
   --destructive-foreground: #fefefb;
   --border: #e0dfd7;
   --input: #c2c0b7;
@@ -54,8 +56,11 @@
   --muted: #463e3b; --muted-foreground: #c2c0b7;
   --border: #463e3b; --input: #726a63;
   --spectrum-link: #ffda75; --spectrum-secondary-text: #c2c0b7;
+  /* §5.6: visible danger text/icons on dark panels, ink text on danger buttons. */
+  --destructive: color-mix(in srgb, var(--spectrum-danger), var(--spectrum-inverse));
+  --destructive-foreground: var(--spectrum-ink);
 }
-.spectrum-shell { min-height: 100vh; background: var(--background); color: var(--foreground); font-size: 14px; line-height: 1.5; }
+.spectrum-shell { position: relative; isolation: isolate; min-height: 100vh; background: var(--background); color: var(--foreground); font-size: 14px; line-height: 1.5; }
 .spectrum-shell *, .spectrum-dialog * { box-sizing: border-box; }
 :where(.spectrum-shell) h1, :where(.spectrum-shell) h2, :where(.spectrum-shell) h3, :where(.spectrum-shell) p { margin: 0; }
 :where(.spectrum-shell) h1, :where(.spectrum-shell) h2, :where(.spectrum-shell) h3, :where(.spectrum-shell) strong, :where(.spectrum-shell) b { font-weight: 600; }
@@ -74,8 +79,11 @@
 .spectrum-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; color: var(--foreground); }
 .spectrum-brand strong { display: block; font-size: 20px; letter-spacing: 1px; }
 .spectrum-brand small { display: block; color: var(--muted-foreground); font: 12px/1.5 Consolas, monospace; letter-spacing: 1px; }
-.spectrum-mark { display: block; position: relative; width: 32px; height: 24px; margin-bottom: 8px; border: 4px solid var(--spectrum-orange); border-bottom: 0; border-radius: 32px 32px 0 0; }
-.spectrum-mark::after { content: ''; position: absolute; left: -4px; right: -4px; bottom: -8px; height: 4px; background: var(--foreground); }
+.spectrum-mark { display: block; width: 48px; height: 48px; flex-shrink: 0; overflow: hidden; }
+/* Optical centering: the original SVG's bridge occupies y=36–93 of its 100px canvas. */
+.spectrum-mark img { display: block; width: 100%; height: 100%; object-fit: contain; transform: translateY(-6px); }
+/* Preserve the original dark bridge deck against the dark navigation surface. */
+.dark .spectrum-mark { background: var(--spectrum-inverse); border-radius: 8px; }
 .spectrum-navigation { display: flex; align-items: center; flex: 1; gap: 4px; }
 .spectrum-navigation a { position: relative; display: flex; align-items: center; min-height: 48px; padding: 12px; color: var(--muted-foreground); white-space: nowrap; }
 .spectrum-navigation a:hover { color: var(--foreground); background: var(--accent); border-radius: 8px; }
