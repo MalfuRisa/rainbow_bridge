@@ -33,6 +33,9 @@ const deleteTarget = ref<ConfigItem | null>(null)
 const deleting = ref(false)
 const deleteError = ref('')
 let editTrigger: HTMLElement | null = null
+let editReturnId = ''
+let editFromDetail = false
+const catalogElement = ref<HTMLElement | null>(null)
 const hasScope = computed(() => Boolean(props.selectedEnvKey && props.selectedPipelineKey))
 const filteredConfigs = computed(() => {
   const term = searchTerm.value.toLowerCase().trim()
@@ -51,13 +54,29 @@ async function selectConfig(id: string) {
 
 function openEdit(config: ConfigItem, event?: MouseEvent) {
   editTrigger = (event?.currentTarget as HTMLElement | null) || document.activeElement as HTMLElement | null
+  editReturnId = config.id
+  editFromDetail = Boolean(editTrigger && detailRegion.value?.contains(editTrigger))
   editingConfig.value = config
 }
 function closeForm(open: boolean) {
   isAddDialogOpen.value = open
   if (open) return
   editingConfig.value = null
-  void nextTick(() => { if (editTrigger?.isConnected) editTrigger.focus(); editTrigger = null })
+  const trigger = editTrigger
+  const id = editReturnId
+  const fromDetail = editFromDetail
+  editTrigger = null; editReturnId = ''
+  if (!trigger && !id) return
+  void nextTick(() => {
+    // A successful save refreshes the list and replaces its buttons. Restore
+    // the same action by stable config ID instead of focusing a detached node.
+    const replacement = fromDetail
+      ? detailRegion.value?.querySelector<HTMLButtonElement>('.config-detail-bottom button')
+      : Array.from(catalogElement.value?.querySelectorAll<HTMLButtonElement>('[data-edit-config]') || [])
+        .find(button => button.dataset.editConfig === id)
+    const target = trigger?.isConnected ? trigger : replacement
+    if (target && !target.hasAttribute('disabled')) target.focus({ preventScroll: true })
+  })
 }
 function resetForm() { closeForm(false) }
 function createConfig(config: ConfigPayload, done: SaveDone) {
@@ -84,7 +103,7 @@ function confirmDelete() {
   <section class="config-workspace-section" aria-label="配置列表">
     <div class="config-list-heading"><div><h2>配置列表</h2><span v-if="hasScope">{{ configs.length }} 项配置<span v-if="searchTerm"> · 匹配 {{ filteredConfigs.length }} 项</span></span></div><span v-if="frozen" class="config-readonly-label">已冻结 · 只读</span></div>
     <div class="config-workspace" :class="{ 'has-content': hasScope && !loading && !error && selectedConfig }">
-      <div class="config-catalog">
+      <div ref="catalogElement" class="config-catalog">
         <div class="config-catalog-tools">
           <label class="config-search"><Search :size="16" aria-hidden="true" /><Input v-model="searchTerm" placeholder="搜索配置..." aria-label="搜索配置名称或别名" :disabled="!hasScope" @update:model-value="emit('search', String($event))" /></label>
           <ConfigDialog :key="editingConfig?.id || 'create'" :open="isAddDialogOpen || Boolean(editingConfig)" :editing-config="editingConfig" :selected-env-key="selectedEnvKey" :selected-pipeline-key="selectedPipelineKey" :selected-environment-name="selectedEnvironmentName" :selected-pipeline-name="selectedPipelineName" :frozen="frozen" :frozen-reason="frozenReason" @update:open="closeForm" @update:editing-config="editingConfig = $event" @create="createConfig" @update="(config, done) => emit('update', config, done)" @reset="resetForm" />
@@ -98,7 +117,7 @@ function confirmDelete() {
           <tbody><tr v-for="config in filteredConfigs" :key="config.id" :class="{ 'is-selected': selectedConfig?.id === config.id }">
             <td><button class="config-select" :aria-pressed="selectedConfig?.id === config.id" @click="selectConfig(config.id)"><span class="config-item-mark"><ConfigTypeIcon :type="config.type" /></span><span><strong>{{ config.name }}</strong><code>{{ config.alias }}</code></span><ArrowRight :size="14" class="config-selected-arrow" aria-hidden="true" /></button></td>
             <td><span class="config-type-label">{{ CONFIG_TYPE_META[config.type]?.label || config.type }}</span></td>
-            <td><div class="config-row-actions"><Button variant="ghost" size="icon" :disabled="frozen" :aria-label="`编辑 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可编辑配置'}` : '编辑配置'" @click="openEdit(config, $event)"><Pencil :size="15" /></Button><Button variant="ghost" size="icon" :disabled="loading || frozen" :aria-label="`删除 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可删除配置'}` : '删除配置'" @click="requestDelete(config)"><Trash2 :size="15" /></Button></div></td>
+            <td><div class="config-row-actions"><Button variant="ghost" size="icon" :disabled="frozen" :data-edit-config="config.id" :aria-label="`编辑 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可编辑配置'}` : '编辑配置'" @click="openEdit(config, $event)"><Pencil :size="15" /></Button><Button variant="ghost" size="icon" :disabled="loading || frozen" :aria-label="`删除 ${config.name}`" :title="frozen ? `已冻结：${frozenReason || '不可删除配置'}` : '删除配置'" @click="requestDelete(config)"><Trash2 :size="15" /></Button></div></td>
           </tr></tbody>
         </table>
         <div v-if="hasScope && !loading && !error" class="config-catalog-footer"><span>{{ selectedEnvironmentName }} / {{ selectedPipelineName }}</span><span>编辑区</span></div>

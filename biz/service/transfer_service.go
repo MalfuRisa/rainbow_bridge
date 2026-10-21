@@ -9,13 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/transfer"
@@ -412,9 +409,12 @@ func (s *Service) MigrateConfigs(ctx context.Context, req *transfer.MigrateReque
 				Name:        srcCfg.Name,
 				Alias:       srcCfg.Alias,
 			}
-			// 检查目标是否存在同别名配置
-			existing, _ := txLogic.configDAO.GetByAlias(gateCtx, txLogic.db,
+			// 检查目标是否存在同别名配置;非 not-found 错误不能忽略或当成不存在
+			existing, err := txLogic.configDAO.GetByAlias(gateCtx, txLogic.db,
 				req.TargetEnvironmentKey, req.TargetPipelineKey, srcCfg.Alias)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("query target config alias=%s: %w", srcCfg.Alias, err)
+			}
 
 			if existing != nil && !req.Overwrite {
 				item.Status = "skipped"
@@ -423,126 +423,31 @@ func (s *Service) MigrateConfigs(ctx context.Context, req *transfer.MigrateReque
 				summary.Items = append(summary.Items, item)
 				continue
 			}
-			// 复制配置
-			newCfg := srcCfg
-			newCfg.ID = 0
-			newCfg.EnvironmentKey = req.TargetEnvironmentKey
-			newCfg.PipelineKey = req.TargetPipelineKey
-			newCfg.ResourceKey = uuid.NewString() // 生成新的 resource_key
 
-			// 复制关联的资源文件(协调存续期内;新建文件登记供回滚清理)
-			if err := s.copyConfigAssets(gateCtx, txLogic, &newCfg, req.TargetEnvironmentKey, req.TargetPipelineKey, &createdFiles); err != nil {
+			// 每项在独立保存点内完成:复制资源→重写引用→创建/更新→回读验证。
+			// 失败项回滚本项配置与资源行,并清理本项新建文件;其他项继续。
+			writtenCfg, itemFiles, err := s.migrateOneConfig(gateCtx, txLogic, srcCfg, existing, req)
+			if err != nil {
 				item.Status = "failed"
-				item.Message = err.Error()
+				item.Message = migrationItemMessage(err, s.cleanupMigratedItemFiles(gateCtx, itemFiles))
 				summary.Failed++
 				summary.Items = append(summary.Items, item)
 				continue
 			}
-
-			// 保存配置
-			if existing != nil {
-				// 更新现有配置
-				newCfg.ResourceKey = existing.ResourceKey
-				if err := txLogic.UpdateConfig(gateCtx, &newCfg); err != nil {
-					item.Status = "failed"
-					item.Message = err.Error()
-					summary.Failed++
-				} else {
-					item.Status = "succeeded"
-					summary.Succeeded++
-					written = append(written, newCfg)
-				}
-			} else {
-				// 创建新配置
-				if err := txLogic.AddConfig(gateCtx, &newCfg); err != nil {
-					item.Status = "failed"
-					item.Message = err.Error()
-					summary.Failed++
-				} else {
-					item.Status = "succeeded"
-					summary.Succeeded++
-					written = append(written, newCfg)
-				}
-			}
-
+			createdFiles = append(createdFiles, itemFiles...)
+			item.Status = "succeeded"
+			summary.Succeeded++
+			written = append(written, *writtenCfg)
 			summary.Items = append(summary.Items, item)
 		}
 		return nil
 	})
 	if err != nil {
-		s.cleanupCreatedResourceFiles(ctx, createdFiles)
+		logResidualCleanupFailures(s.cleanupMigratedItemFiles(ctx, createdFiles))
 		return nil, err
 	}
 	s.logic.invalidateConfigCaches(context.WithoutCancel(ctx), written)
 	return summary, nil
-}
-
-// copyConfigAssets copies assets referenced in the config content.
-// 在写协调事务内执行:资源元数据用事务连接,新建文件登记进 created 供提交失败清理。
-func (s *Service) copyConfigAssets(ctx context.Context, l *Logic, cfg *model.Config, targetEnv, targetPipeline string, created *[]createdResourceFile) error {
-	// 提取资源引用
-	assetIDs := extractAssetIDsFromContent(cfg.Content)
-	if len(assetIDs) == 0 {
-		return nil
-	}
-
-	// 记录旧 ID 到新 ID 的映射
-	idMapping := make(map[string]string)
-	var createdFiles []createdResourceFile
-	cleanupNewFiles := func() { s.cleanupCreatedResourceFiles(ctx, createdFiles) }
-
-	for _, oldID := range assetIDs {
-		// 获取原资源
-		oldAsset, err := l.GetAsset(ctx, oldID)
-		if err != nil {
-			continue // 跳过不存在的资源(既有语义)
-		}
-
-		// 读取原文件(本地与对象存储统一走受管读取)
-		data, err := s.readManagedAssetFileBytes(ctx, oldAsset)
-		if err != nil {
-			continue
-		}
-
-		// 生成新 ID 并写入文件
-		newID := uuid.NewString()
-		if err := ensureUploadDir(newID); err != nil {
-			cleanupNewFiles()
-			return err
-		}
-
-		newRelPath := filepath.Join(uploadDirectory, newID, oldAsset.FileName)
-		newFullPath := filepath.Join(dataDirectory, newRelPath)
-		if err := os.WriteFile(newFullPath, data, 0o644); err != nil {
-			cleanupNewFiles()
-			return err
-		}
-		createdFiles = append(createdFiles, createdResourceFile{kind: "local", path: newFullPath})
-
-		// 创建新资源记录(同一协调事务连接)
-		newAsset := &model.Asset{
-			FileID:         newID,
-			EnvironmentKey: targetEnv,
-			PipelineKey:    targetPipeline,
-			FileName:       oldAsset.FileName,
-			FileSize:       oldAsset.FileSize,
-			ContentType:    oldAsset.ContentType,
-			Path:           newRelPath,
-		}
-		if err := l.CreateAsset(ctx, newAsset); err != nil {
-			cleanupNewFiles()
-			return err
-		}
-
-		idMapping[oldID] = newID
-	}
-
-	// 更新配置中的资源引用
-	for oldID, newID := range idMapping {
-		cfg.Content = strings.ReplaceAll(cfg.Content, "asset://"+oldID, "asset://"+newID)
-	}
-	*created = append(*created, createdFiles...)
-	return nil
 }
 
 // extractAssetIDsFromContent extracts asset IDs from config content.

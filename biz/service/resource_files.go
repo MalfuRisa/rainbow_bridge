@@ -18,24 +18,56 @@ var resourceRestoreHookForTest func(stage string)
 
 // createdResourceFile 记录本轮写操作新建的资源落点,用于回滚后的清理。
 // 只清理本次新建的文件;绝不触碰既有共享资源。
+// fileID/alias 是定位信息,供清理失败时报告残留(允许为空)。
 type createdResourceFile struct {
-	kind string // local | minio
-	path string // 本地绝对路径或对象名
+	kind   string // local | minio
+	path   string // 本地绝对路径或对象名
+	fileID string
+	alias  string
 }
 
 // cleanupCreatedResourceFiles 尽力清理本次新建的文件并忽略单个失败。
 func (s *Service) cleanupCreatedResourceFiles(ctx context.Context, files []createdResourceFile) {
+	_ = s.cleanupCreatedResourceFilesReport(ctx, files)
+}
+
+// cleanupCreatedResourceFilesReport 清理本次新建文件并返回可定位的失败说明:
+// 清理失败不掩盖原始失败,但必须让调用方知道可能有残留(PRD RB-MIGRATE-01 §3.4)。
+func (s *Service) cleanupCreatedResourceFilesReport(ctx context.Context, files []createdResourceFile) []string {
+	notes := make([]string, 0)
+	seen := make(map[string]bool)
 	for _, file := range files {
-		switch file.kind {
-		case "minio":
-			client, err := s.getMinioClient()
-			if err != nil {
-				continue
+		if err := s.removeCreatedResourceFile(ctx, file); err != nil {
+			note := "清理失败需检查残留: file_id=" + file.fileID + " 类别=" + migrationFailureCleanupResidue
+			if file.alias != "" {
+				note += " alias=" + file.alias
 			}
-			_ = client.RemoveObject(ctx, s.config.Storage.Minio.Bucket, file.path, minio.RemoveObjectOptions{})
-		default:
-			_ = os.Remove(file.path)
+			if !seen[note] {
+				seen[note] = true
+				notes = append(notes, note)
+			}
 		}
+	}
+	return notes
+}
+
+// removeCreatedResourceFile 删除单个本次新建文件;文件已不存在视为清理完成。
+func (s *Service) removeCreatedResourceFile(ctx context.Context, file createdResourceFile) error {
+	if file.path == "" {
+		return nil
+	}
+	switch file.kind {
+	case "minio":
+		client, err := s.getMinioClient()
+		if err != nil {
+			return err
+		}
+		return client.RemoveObject(ctx, s.config.Storage.Minio.Bucket, file.path, minio.RemoveObjectOptions{})
+	default:
+		if err := os.Remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
 	}
 }
 

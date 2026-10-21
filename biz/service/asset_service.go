@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -149,6 +150,32 @@ type assetPayload struct {
 }
 
 // writeAssetPayload 依据存储配置写入资源字节;本地与对象存储都保持有界单次写入。
+// managedObjectName 是 MinIO 模式下受管资源的对象名(含目标范围)。
+func managedObjectName(environmentKey, pipelineKey, fileID, fileName string) string {
+	return filepath.Join(environmentKey, pipelineKey, fileID, fileName)
+}
+
+// writeManagedFileExclusive 以排他方式写入本地受管资源文件:
+// 资源 ID 每次新建,不允许覆盖既有共享文件;失败时清理本次半成品。
+func writeManagedFileExclusive(fullPath string, data []byte) error {
+	handle, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := handle.Write(data); err != nil {
+		_ = handle.Close()
+		_ = os.Remove(fullPath)
+		return err
+	}
+	if err := handle.Close(); err != nil {
+		_ = os.Remove(fullPath)
+		return err
+	}
+	return nil
+}
+
+// writeAssetPayload 写入受管资源文件;落点与当前 storage 模式一致。
+// 排他写入:file_id 由调用方持有且每次新建,既有一致命名对象会被拒绝而不是被覆盖。
 func (s *Service) writeAssetPayload(ctx context.Context, fileID, fileName string, input *FileUploadInput) (assetPayload, error) {
 	contentType := detectContentType(input.ContentType, input.Data)
 	fileSize := int64(len(input.Data))
@@ -157,8 +184,15 @@ func (s *Service) writeAssetPayload(ctx context.Context, fileID, fileName string
 		if err != nil {
 			return assetPayload{}, err
 		}
-		objectName := filepath.Join(input.EnvironmentKey, input.PipelineKey, fileID, fileName)
-		if _, err := client.PutObject(ctx, s.config.Storage.Minio.Bucket, objectName, strings.NewReader(string(input.Data)), fileSize, minio.PutObjectOptions{
+		objectName := managedObjectName(input.EnvironmentKey, input.PipelineKey, fileID, fileName)
+		exists, err := s.minioObjectExists(ctx, objectName)
+		if err != nil {
+			return assetPayload{}, err
+		}
+		if exists {
+			return assetPayload{}, errors.New("managed object already exists")
+		}
+		if _, err := client.PutObject(ctx, s.config.Storage.Minio.Bucket, objectName, bytes.NewReader(input.Data), fileSize, minio.PutObjectOptions{
 			ContentType: contentType,
 		}); err != nil {
 			return assetPayload{}, err
@@ -170,7 +204,7 @@ func (s *Service) writeAssetPayload(ctx context.Context, fileID, fileName string
 	}
 	relativePath := filepath.Join(uploadDirectory, fileID, fileName)
 	fullPath := filepath.Join(dataDirectory, relativePath)
-	if err := os.WriteFile(fullPath, input.Data, 0o644); err != nil {
+	if err := writeManagedFileExclusive(fullPath, input.Data); err != nil {
 		return assetPayload{}, err
 	}
 	return assetPayload{relativePath: relativePath, contentType: contentType, fileSize: fileSize}, nil

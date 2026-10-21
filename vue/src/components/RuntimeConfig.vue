@@ -119,7 +119,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Card class="runtime-panel">
+  <Card class="runtime-panel" :data-state="state">
     <CardHeader class="runtime-header">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -133,8 +133,8 @@ onUnmounted(() => {
     </CardHeader>
     <CardContent class="runtime-content space-y-4">
       <div class="runtime-toolbar flex flex-wrap items-end gap-4">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-foreground">环境:</label>
+        <div class="runtime-scope-field">
+          <label class="text-sm font-medium text-foreground">环境</label>
           <Select
             :model-value="selectedEnv"
             @update:model-value="handleEnvChange"
@@ -151,8 +151,8 @@ onUnmounted(() => {
           </Select>
         </div>
 
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-foreground">渠道:</label>
+        <div class="runtime-scope-field">
+          <label class="text-sm font-medium text-foreground">渠道</label>
           <Select
             :model-value="selectedPipeline"
             @update:model-value="handlePipelineChange"
@@ -169,34 +169,38 @@ onUnmounted(() => {
           </Select>
         </div>
 
-        <Button variant="outline" @click="handleRefresh" :disabled="!hasScope || state === 'loading'">
-          <RefreshCw :class="['w-4 h-4 mr-2', { 'animate-spin': state === 'loading' }]" />
-          刷新
-        </Button>
+        <div class="runtime-toolbar-actions">
+          <Button variant="outline" @click="handleRefresh" :disabled="!hasScope || state === 'loading'">
+            <RefreshCw :class="['w-4 h-4 mr-2', { 'animate-spin': state === 'loading' }]" />
+            刷新
+          </Button>
 
-        <Button variant="outline" @click="handleExport" :disabled="!canExport || exporting">
-          <Loader2 v-if="exporting" class="w-4 h-4 mr-2 animate-spin" />
-          <Download v-else class="w-4 h-4 mr-2" />
-          导出此版本静态包<span v-if="view" class="ml-1 font-mono">{{ view.version }}</span>
-        </Button>
+          <Button variant="outline" @click="handleExport" :disabled="!canExport || exporting">
+            <Loader2 v-if="exporting" class="w-4 h-4 mr-2 animate-spin" />
+            <Download v-else class="w-4 h-4 mr-2" />
+            导出此版本静态包<span v-if="view" class="ml-1 font-mono">{{ view.version }}</span>
+          </Button>
+        </div>
       </div>
 
       <!-- §2.1/§2.4: version first; only count, scope and real activation time support it. -->
-      <div v-if="view" class="runtime-summary rounded-md border bg-muted/40 px-3 py-2 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span class="runtime-summary-version flex items-center gap-2">
-          <span class="text-muted-foreground">当前生效版本</span>
-          <strong class="font-mono">{{ view.version }}</strong>
-        </span>
-        <span class="text-muted-foreground">配置 {{ configs.length }} 项</span>
-        <span class="text-muted-foreground">范围：{{ scopeLabel }}</span>
-        <span class="text-muted-foreground">生效时间：<time v-if="view.activatedAt && activatedAtText !== '—'" :datetime="view.activatedAt">{{ activatedAtText }}</time><span v-else>—</span></span>
-      </div>
+      <Transition name="home-status">
+        <div v-if="view" class="runtime-summary rounded-md border bg-muted/40 px-3 py-2 text-sm flex flex-wrap items-center gap-x-4 gap-y-1" role="status">
+          <span class="runtime-summary-version flex items-center gap-2">
+            <span class="text-muted-foreground">当前生效版本</span>
+            <strong class="font-mono">{{ view.version }}</strong>
+          </span>
+          <span class="text-muted-foreground">配置 {{ configs.length }} 项</span>
+          <span class="text-muted-foreground">范围：{{ scopeLabel }}</span>
+          <span class="text-muted-foreground">生效时间：<time v-if="view.activatedAt && activatedAtText !== '—'" :datetime="view.activatedAt">{{ activatedAtText }}</time><span v-else>—</span></span>
+        </div>
+      </Transition>
 
       <div v-if="exportError" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" data-testid="export-error">
         导出失败:{{ exportError }}
       </div>
 
-      <div class="runtime-table-wrap border rounded-lg overflow-hidden">
+      <div class="runtime-table-wrap border rounded-lg overflow-hidden" :aria-busy="state === 'loading'">
         <Table>
           <TableHeader>
             <TableRow>
@@ -247,7 +251,7 @@ onUnmounted(() => {
                 本版本没有配置(版本 {{ view?.version }},仍可导出空版本静态包)
               </TableCell>
             </TableRow>
-            <TableRow v-else v-for="config in configs" :key="config.resource_key">
+            <TableRow v-else v-for="config in configs" :key="config.resource_key" class="runtime-config-row">
               <TableCell class="font-mono text-sm">{{ config.name || config.alias }}</TableCell>
               <TableCell class="text-muted-foreground">{{ config.alias }}</TableCell>
               <TableCell>

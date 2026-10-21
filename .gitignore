@@ -119,3 +119,5 @@ config.yaml.demo
 *.lnk
 
 .smoke-active/
+.smoke-migrate/
+.smoke-repair/

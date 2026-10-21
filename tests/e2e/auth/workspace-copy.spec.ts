@@ -30,6 +30,7 @@ test('发布接入与校验信息按需展开，版本内容和操作仍可访�
   await dialog.getByText('技术信息', { exact: true }).click()
   await expect(dialog.getByText('content-checksum', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(row(page).getByRole('button', { name: '查看', exact: true })).toBeFocused()
   await help.locator('summary').click()
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.evaluate(() => document.documentElement.classList.add('dark'))
