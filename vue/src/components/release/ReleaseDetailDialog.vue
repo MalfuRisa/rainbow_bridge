@@ -4,7 +4,11 @@ import { displayNote } from '@/lib/operation-note'
 import { sessionIdentity, sessionGeneration } from '@/lib/auth/session'
 import { ApiError } from '@/lib/api/error'
 import { Button } from '@/components/ui/button'
-import { FileArchive, Loader2, ShieldCheck } from 'lucide-vue-next'
+import { Check, Copy, FileArchive, Loader2, ShieldCheck } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
+import ConfigContentPreview from '@/components/Config/ConfigContentPreview.vue'
+import SpectrumImagePreview from '@/components/spectrum/SpectrumImagePreview.vue'
+import { CONFIG_TYPE_META, type ConfigType } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useReleaseStore } from '@/stores/release'
@@ -27,6 +31,22 @@ const releaseStore = useReleaseStore()
 const detail = ref<ReleaseDetailData | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
+const imagePreview = ref<{ url: string; name: string } | null>(null)
+const copiedKey = ref<string | null>(null)
+
+function previewImage(url: string, name: string) {
+  imagePreview.value = { url, name }
+}
+
+async function copyContent(content: string, key: string) {
+  const currentDetail = detail.value
+  try {
+    await navigator.clipboard.writeText(content)
+    if (detail.value !== currentDetail) return
+    copiedKey.value = key
+    toast.success('已复制配置原文')
+  } catch { toast.error('复制失败，请选择原文后手动复制') }
+}
 
 let epoch = 0
 async function load() {
@@ -34,6 +54,7 @@ async function load() {
   const identity = sessionGeneration()
   const { environmentKey, pipelineKey, version, open } = props
   detail.value = null; errorMessage.value = ''; loading.value = false
+  imagePreview.value = null; copiedKey.value = null
   if (!open || !version) return
   loading.value = true
   const current = () => batch === epoch && identity === sessionGeneration()
@@ -54,9 +75,9 @@ onUnmounted(() => { epoch++ })
   <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
     <DialogContent class="spectrum-release-detail max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
       <DialogHeader>
-        <DialogTitle class="text-xl font-semibold font-mono">{{ version }}</DialogTitle>
+        <DialogTitle class="text-xl font-semibold font-mono">版本 {{ version }}</DialogTitle>
         <DialogDescription class="text-muted-foreground">
-          只读快照:内容与资源保存在创建时刻,不随编辑区变化。
+          此版本内容只读，不随编辑区修改。
         </DialogDescription>
       </DialogHeader><Button variant="outline" size="sm" :disabled="loading" @click="load">刷新详情</Button>
 
@@ -68,11 +89,9 @@ onUnmounted(() => { epoch++ })
 
         <template v-else-if="detail">
           <div class="spectrum-release-detail-meta rounded-md border p-3 text-sm grid grid-cols-2 gap-2">
-            <div><span class="text-muted-foreground">来源冻结 revision:</span><span class="font-mono">{{ detail.meta.source_freeze_revision }}</span></div>
             <div><span class="text-muted-foreground">创建时间:</span>{{ new Date(detail.meta.created_at).toLocaleString() }}</div>
             <div><span class="text-muted-foreground">配置:</span>{{ detail.meta.config_count ?? 0 }} 项</div>
             <div><span class="text-muted-foreground">资源:</span>{{ detail.meta.asset_count ?? 0 }} 项 / {{ detail.meta.asset_bytes ?? 0 }} 字节</div>
-            <div class="col-span-2 break-all"><span class="text-muted-foreground">payload 摘要:</span><span class="font-mono text-xs">{{ detail.meta.payload_sha256 }}</span></div>
             <div class="col-span-2"><span class="text-muted-foreground">备注：</span>{{ displayNote(detail.meta.reason) }}</div>
             <div v-if="(detail.meta.external_references ?? []).length" class="col-span-2">
               <span class="text-muted-foreground">外部地址(内容不受冻结控制):</span>
@@ -82,20 +101,34 @@ onUnmounted(() => { epoch++ })
             </div>
           </div>
 
+          <details class="rounded-md border p-3 text-xs text-muted-foreground">
+            <summary class="cursor-pointer">技术信息</summary>
+            <div class="mt-2 space-y-1 break-all">
+              <div>来源冻结 revision：<span class="font-mono">{{ detail.meta.source_freeze_revision }}</span></div>
+              <div>内容校验值：<span class="font-mono">{{ detail.meta.payload_sha256 }}</span></div>
+              <div v-for="asset in detail.assets ?? []" :key="asset.asset_id">
+                {{ asset.file_name }}：<span class="font-mono">{{ asset.sha256 }}</span>
+              </div>
+            </div>
+          </details>
+
           <div>
             <div class="font-medium text-sm mb-2 flex items-center gap-2">
               <ShieldCheck class="w-4 h-4" />
               配置({{ (detail.configs ?? []).length }})
             </div>
             <div class="space-y-2">
-              <div v-for="cfg in detail.configs ?? []" :key="cfg.resource_key" class="rounded-md border p-3 text-sm space-y-1">
-                <div class="flex items-center gap-2 flex-wrap">
+              <div v-for="cfg in detail.configs ?? []" :key="cfg.resource_key" class="spectrum-release-config rounded-md border text-sm">
+                <div class="spectrum-release-config-header">
+                  <div class="flex items-center gap-2 flex-wrap min-w-0">
                   <span class="font-medium">{{ cfg.name }}</span>
-                  <Badge variant="secondary" class="text-xs px-2 py-0.5">{{ cfg.type }}</Badge>
+                  <Badge variant="secondary" class="text-xs px-2 py-0.5">{{ CONFIG_TYPE_META[cfg.type as ConfigType]?.label || cfg.type }}</Badge>
                   <span class="text-xs text-muted-foreground font-mono">{{ cfg.alias }}</span>
                   <Badge v-if="cfg.is_perm" variant="outline" class="text-xs">私有</Badge>
+                  </div>
+                  <Button variant="ghost" size="sm" :aria-label="`复制 ${cfg.alias} 原文`" @click="copyContent(cfg.content, cfg.resource_key)"><Check v-if="copiedKey === cfg.resource_key" :size="14" class="mr-2" /><Copy v-else :size="14" class="mr-2" />{{ copiedKey === cfg.resource_key ? '已复制' : '复制' }}</Button>
                 </div>
-                <pre class="text-xs bg-muted/60 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{{ cfg.content }}</pre>
+                <ConfigContentPreview :config="cfg" @image-preview="previewImage" />
                 <p v-if="cfg.description" class="text-xs text-muted-foreground">{{ cfg.description }}</p>
               </div>
             </div>
@@ -110,12 +143,12 @@ onUnmounted(() => { epoch++ })
               <div v-for="asset in detail.assets ?? []" :key="asset.asset_id" class="rounded border px-3 py-2 flex items-center gap-3">
                 <span class="font-mono">{{ asset.file_name }}</span>
                 <span class="text-muted-foreground">{{ asset.content_type }} · {{ asset.size }} 字节</span>
-                <span class="font-mono text-muted-foreground ml-auto">{{ (asset.sha256 ?? '').slice(0, 12) }}…</span>
               </div>
             </div>
           </div>
         </template>
       </div>
+      <SpectrumImagePreview :url="imagePreview?.url ?? null" :name="imagePreview?.name ?? ''" @close="imagePreview = null" />
     </DialogContent>
   </Dialog>
 </template>

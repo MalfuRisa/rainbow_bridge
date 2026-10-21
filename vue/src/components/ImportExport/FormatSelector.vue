@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileArchive } from 'lucide-vue-next'
 
 type ExportFormat = 'zip' | 'tar.gz'
@@ -21,7 +21,6 @@ const handleFormatChange = (newFormat: ExportFormat) => {
   <Card class="spectrum-panel spectrum-section">
     <CardHeader class="spectrum-panel-header">
       <CardTitle class="text-lg">导出格式</CardTitle>
-      <CardDescription>选择导出文件的格式</CardDescription>
     </CardHeader>
     <CardContent class="spectrum-panel-content">
       <div class="spectrum-format-options" role="group" aria-label="导出格式">
@@ -46,7 +45,6 @@ const handleFormatChange = (newFormat: ExportFormat) => {
           <FileArchive class="w-8 h-8" />
           <div>
             <div class="font-medium">TAR.GZ</div>
-            <div class="text-sm text-muted-foreground">通用压缩格式</div>
           </div>
         </button>
       </div>

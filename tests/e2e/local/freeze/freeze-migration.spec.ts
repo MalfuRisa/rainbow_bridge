@@ -68,7 +68,7 @@ test.describe('冻结与迁移页面 @freeze', () => {
     await combos.nth(3).click()
     await page.getByRole('option', { name: 'QA main' }).click()
     await expect(page.getByText('源范围已冻结')).toBeVisible()
-    await expect(page.getByText('从冻结源复制到未冻结目标是允许的')).toBeVisible()
+    await expect(page.getByText('仍可复制到未冻结的目标。')).toBeVisible()
 
     const srcStatus = await scopeStatus(target, scopeDevMain)
     const prodRows = await listConfigs(target, scopeProdMain)

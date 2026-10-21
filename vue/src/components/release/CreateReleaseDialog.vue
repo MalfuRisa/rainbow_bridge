@@ -66,7 +66,6 @@ const retryMatchesPending = computed(() => {
 })
 /** 只有未改动原请求时才提供“确认结果”;改了字段即视为新操作。 */
 const showRetry = computed(() => retryAvailable.value && retryMatchesPending.value)
-const pendingFreezeRevision = computed(() => pendingPayload.value?.expected_freeze_revision ?? '')
 
 const resetAttempt = () => {
   version.value = ''
@@ -158,7 +157,7 @@ const submit = async (reuseRequestId: boolean) => {
   try {
     const result = await releaseStore.create(payload)
     if (!current()) return
-    toast.success(result.replayed ? '该请求已提交过:返回原已保存版本' : '版本已保存,尚未切换生效')
+    toast.success(result.replayed ? '已确认：版本已创建' : '版本已创建，尚未生效')
     emit('created', payload.version)
     emit('update:open', false)
   } catch (error) {
@@ -176,7 +175,7 @@ const submit = async (reuseRequestId: boolean) => {
           await freezeStore.loadStatus(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_SOURCE_REVISION_CONFLICT':
-          errorMessage.value = `冻结 revision 已变化:${error.message};已刷新最新状态,请确认后重试`
+          errorMessage.value = '锁版状态已变化，请核对后重试'
           pendingPayload.value = null
           await freezeStore.loadStatus(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
@@ -192,12 +191,12 @@ const submit = async (reuseRequestId: boolean) => {
           await releaseStore.refreshScope(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_REQUEST_CONFLICT':
-          errorMessage.value = '该请求标识已用于不同内容;已生成新的请求标识,请确认后重试'
+          errorMessage.value = '提交内容冲突，请重新发起操作'
           pendingPayload.value = null
           break
         case 'RELEASE_RESOURCE_INVALID':
           issues.value = payload.resource_issues || []
-          errorMessage.value = '引用预检未通过,请先处理下列资源'
+          errorMessage.value = '请先处理以下资源问题'
           break
         case 'RELEASE_LIMIT_EXCEEDED':
           limitInfo.value = payload.limits || null
@@ -232,17 +231,17 @@ const submit = async (reuseRequestId: boolean) => {
           创建版本
         </DialogTitle>
         <DialogDescription class="text-muted-foreground">
-          从已冻结范围保存一份不可变快照;创建不会自动切换生效版本,也不改变编辑区锁版。
+          保存当前冻结内容，创建后需切换生效。
         </DialogDescription>
       </DialogHeader>
 
       <div class="space-y-4 py-2">
         <div class="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-          <div class="text-xs text-muted-foreground">目标范围(打开时固定)</div>
+          <div class="text-xs text-muted-foreground">目标范围</div>
           <div class="font-mono">{{ scopeLine }}</div>
           <div class="text-xs text-muted-foreground mt-1 flex items-center gap-1">
             <Lock v-if="frozen" class="w-3 h-3" />
-            {{ frozen ? `编辑区已冻结,来源 revision:${freezeRevision}` : '编辑区未冻结:请先在配置页锁版' }}
+            {{ frozen ? '编辑区已冻结' : '编辑区未冻结：请先在配置页锁版' }}
           </div>
         </div>
 
@@ -267,11 +266,11 @@ const submit = async (reuseRequestId: boolean) => {
         </div>
 
         <div v-if="showRetry" class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid="restore-pending">
-          确认结果会原样重发首次提交的请求(版本 {{ pendingPayload?.version }},来源 revision {{ pendingFreezeRevision }},备注：{{ displayNote(pendingPayload?.reason) }}),不要求当前仍处于锁定状态;再次点击主按钮则按当前输入提交为新请求。
+          创建结果尚未确认。点击“确认结果”核对首次提交；重新创建将视为新操作。版本：{{ pendingPayload?.version }}；备注：{{ displayNote(pendingPayload?.reason) }}。
         </div>
 
         <div class="space-y-2">
-          <Label for="release-version" class="text-sm font-medium">版本号(不可修改、不可覆盖)</Label>
+          <Label for="release-version" class="text-sm font-medium">版本号</Label>
           <Input id="release-version" class="h-10 font-mono" v-model="version" placeholder="例如 v1.0" />
         </div>
 
@@ -285,10 +284,10 @@ const submit = async (reuseRequestId: boolean) => {
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="emit('update:open', false)">取消</Button>
         <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated" @click="submit(true)">
-          确认结果(同一请求标识)
+          确认结果
         </Button>
         <Button class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated || (!frozen && !showRetry)" @click="submit(false)">
-          {{ submitting ? '提交中...' : showRetry ? '按当前输入提交新请求' : '保存版本' }}
+          {{ submitting ? '提交中...' : showRetry ? '按当前输入重新创建' : '保存版本' }}
         </Button>
       </DialogFooter>
     </DialogContent>

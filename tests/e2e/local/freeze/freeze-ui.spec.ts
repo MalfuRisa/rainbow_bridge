@@ -45,7 +45,7 @@ test.describe('冻结控制页面交互 @freeze', () => {
     await page.getByRole('button', { name: '锁版' }).click()
     const dialog = page.getByRole('dialog').filter({ has: page.locator('#freeze-reason') })
     await expect(dialog.getByText('QA qa_dev(qa_dev) / QA main(main)')).toBeVisible()
-    await expect(dialog.getByText(/当前 revision/)).toBeVisible()
+    await expect(dialog.getByText('目标范围', { exact: true })).toBeVisible()
 
     await dialog.locator('#freeze-reason').fill('QA 上线前验收完成')
     await dialog.getByRole('button', { name: '确认锁定' }).click()
@@ -61,7 +61,7 @@ test.describe('冻结控制页面交互 @freeze', () => {
     // 操作记录:包含 lock 事件
     await page.getByRole('button', { name: '操作记录' }).click()
     const history = page.getByRole('dialog').filter({ hasText: '冻结操作记录' })
-    await expect(history.getByText('锁定', { exact: true }).first()).toBeVisible()
+    await expect(history.getByText('锁定配置', { exact: true }).first()).toBeVisible()
     await expect(history.getByText(/QA 上线前验收完成/).first()).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(history).not.toBeVisible()

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { targetA, writeEvidence } from './support/env'
 import { runtimeConfig } from './support/imports'
+import { publishRuntimeSnapshot } from './support/runtime'
 import {
   createConfigViaPage,
   expectConfigRow,
@@ -95,6 +96,8 @@ test.describe('T03 十一种类型页面创建与运行时读取 @t03 @smoke', (
       await expectConfigRow(page, item.alias)
     }
 
+    // Explicitly publish before checking the default runtime; editor changes alone do not serve.
+    await publishRuntimeSnapshot(target, scopeDevMain)
     // runtime/config 读取并逐项核对类型与内容
     const runtime = await runtimeConfig(target, scopeDevMain)
     expect(runtime.json?.code).toBe(200)

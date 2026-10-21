@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import type { ImportSummary } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -222,9 +222,6 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
       <Card class="spectrum-panel">
         <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">上传文件</CardTitle>
-          <CardDescription>
-            支持 ZIP 和 TAR.GZ 格式的配置备份文件
-          </CardDescription>
         </CardHeader>
         <CardContent class="spectrum-panel-content">
           <Alert v-if="importError && !importFile" variant="destructive" class="mb-4"><AlertCircle :size="16" /><AlertTitle>无法选择文件</AlertTitle><AlertDescription>{{ importError }}</AlertDescription></Alert>
@@ -292,14 +289,11 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
       <Card v-if="importPreview" class="spectrum-panel spectrum-section">
         <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">选择导入内容</CardTitle>
-          <CardDescription>
-            选择要导入的环境、渠道或配置项
-          </CardDescription>
         </CardHeader>
         <CardContent class="spectrum-panel-content space-y-4">
           <Alert v-if="lockedTargets.length" variant="destructive">
             <Lock class="h-4 w-4" />
-            <AlertTitle>以下目标已冻结，导入将在写入前被整体拒绝</AlertTitle>
+            <AlertTitle>部分目标已冻结</AlertTitle>
             <AlertDescription>
               <ul class="mt-1 space-y-0.5">
                 <li v-for="target in lockedTargets" :key="target.label">
@@ -307,7 +301,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
                   <span v-if="target.reason">(原因:{{ target.reason }})</span>
                 </li>
               </ul>
-              请先解除冻结,或取消选择这些目标。
+              导入这些目标会取消整次导入。请先解除冻结，或取消选择这些目标。
             </AlertDescription>
           </Alert>
 
@@ -377,7 +371,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
                 <Badge variant="outline">{{ importPreview.format }}</Badge>
               </div>
               <div class="flex items-center justify-between text-sm">
-                <span class="text-muted-foreground">待导入总数</span>
+                <span class="text-muted-foreground">文件内配置</span>
                 <span class="font-medium">
                   {{ importPreview.summary.total_configs }} 项
                 </span>
@@ -392,9 +386,9 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               </div>
               <div class="flex items-center justify-between text-sm">
                 <span class="text-muted-foreground">处理方式</span>
-                <Badge :variant="overwriteConflicts ? 'destructive' : 'secondary'">
+                <span class="font-medium">
                   {{ overwriteConflicts ? '覆盖' : '跳过' }}冲突
-                </Badge>
+                </span>
               </div>
             </div>
 
@@ -447,9 +441,8 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
         <AlertCircle class="h-4 w-4" />
         <AlertTitle>注意事项</AlertTitle>
         <AlertDescription class="space-y-1">
-          <p>1. 导入前请确保已备份现有数据</p>
-          <p>2. 冲突数据默认跳过；选择覆盖仅更新输入中的冲突项，其他配置保留</p>
-          <p>3. 导入操作不可撤销</p>
+          <p>导入不可撤销，建议先备份现有数据。</p>
+          <p>冲突项默认跳过；勾选覆盖后替换冲突项，其他配置保留。</p>
         </AlertDescription>
       </Alert>
     </div>
@@ -463,8 +456,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
           确认导入
         </DialogTitle>
         <DialogDescription>
-          检测到 {{ importPreview?.summary.conflict_count }} 个冲突项，是否继续导入？
-          未选择"覆盖冲突数据"时，冲突项将被跳过。
+          文件中有 {{ importPreview?.summary.conflict_count }} 项冲突。本次将{{ overwriteConflicts ? '覆盖' : '跳过' }}所选冲突项，是否继续？
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>

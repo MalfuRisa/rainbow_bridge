@@ -6,10 +6,9 @@
 .spectrum-login-statement .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
 .spectrum-login-line { display: block; width: 64px; height: 4px; background: var(--spectrum-orange); margin-bottom: 32px; }
 .spectrum-login-motto { font-size: 56px; font-weight: 600; line-height: 1.5; letter-spacing: -1px; }
-.spectrum-login-caption { color: var(--spectrum-inverse-muted); font-size: 14px; line-height: 2; }
 .spectrum-login-form { align-self: center; width: 100%; max-width: 464px; padding: 48px; margin: auto; }
 .spectrum-login-form h1 { margin-top: 16px; }
-.spectrum-login-description { color: var(--muted-foreground); font-size: 14px; line-height: 2; margin: 16px 0 32px; }
+.spectrum-login-form form { margin-top: 32px; }
 .spectrum-login-field { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
 .spectrum-login-field input { min-height: 48px; background: var(--card); }
 .spectrum-login-submit { width: 100%; min-height: 48px; margin-top: 8px; gap: 12px; }

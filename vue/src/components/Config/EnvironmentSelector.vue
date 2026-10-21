@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { Layers, GitBranch } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 
@@ -83,9 +82,6 @@ const handlePipelineChange = (pipelineKey: string) => {
           </Select>
         </div>
 
-        <Badge v-if="selectedEnvKey && selectedPipelineKey" variant="secondary" class="config-scope-summary ml-auto px-3 py-1 text-sm">
-          已选择: {{ selectedEnvironment?.name }} / {{ pipelines.find(p => p.key === selectedPipelineKey)?.name }}
-        </Badge>
       </div>
       <div v-if="environmentStore.error" class="config-environment-error" role="alert">{{ environmentStore.error }}<button class="spectrum-text-button" @click="environmentStore.fetchOverview()">重新加载环境</button></div>
     </CardContent>

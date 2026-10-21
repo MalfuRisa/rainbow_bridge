@@ -22,7 +22,7 @@ export interface ActiveReleaseView {
   payloadSha256: string
   activeRevision: string
   configs: RuntimeReleaseRawConfig[]
-  loadedAt: Date
+  activatedAt: string
 }
 
 export function useActiveRelease() {
@@ -91,7 +91,7 @@ export function useActiveRelease() {
         payloadSha256: data.payload_sha256,
         activeRevision: data.active_revision,
         configs: data.configs,
-        loadedAt: new Date(),
+        activatedAt: data.activated_at || '',
       }
       state.value = 'ready'
     } catch (error) {

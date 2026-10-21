@@ -53,13 +53,10 @@ const eventLabel = (kind: string) => eventLabels.get(kind) || '未知操作'
               {{ eventLabel(item.event_type) }}
             </Badge>
             <span class="font-mono">{{ item.version }}</span>
-            <span v-if="item.event_type === 'activate'" class="text-xs text-muted-foreground font-mono">
-              revision {{ item.from_head_revision }} → {{ item.to_head_revision }}
-            </span>
             <span class="text-xs text-muted-foreground ml-auto">{{ formatTime(item.created_at) }}</span>
           </div>
           <div class="text-muted-foreground">备注：{{ displayNote(item.reason) }}</div>
-          <div class="text-xs text-muted-foreground">操作者:{{ item.actor }} · request {{ (item.request_id || '').slice(0, 8) }}</div>
+          <div class="text-xs text-muted-foreground">操作者：{{ item.actor }}</div>
         </div>
 
         <div v-if="hasMore" class="text-center pt-2">

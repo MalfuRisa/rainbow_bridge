@@ -97,7 +97,7 @@ const handleSearchChange = (value: string) => {
 <template>
   <SpectrumLayout>
     <div class="spectrum-operations spectrum-resources-page">
-    <SpectrumPageHeader eyebrow="ASSETS / CONTENT LIBRARY" title="资源管理" description="把图片与文件集中收好，在配置中引用同一份资源。" />
+    <SpectrumPageHeader eyebrow="ASSETS / CONTENT LIBRARY" title="资源管理" />
     <!-- 环境和渠道选择组件 -->
     <Card class="spectrum-panel spectrum-scope-panel">
       <CardHeader class="spectrum-panel-header">
@@ -133,9 +133,6 @@ const handleSearchChange = (value: string) => {
             <Layers class="w-8 h-8 text-muted-foreground" />
           </div>
           <h3 class="text-lg font-medium mb-2">请先选择环境和渠道</h3>
-          <p class="text-muted-foreground text-sm max-w-sm">
-            资源与环境和渠道关联，请在上方选择要管理的环境和渠道后查看对应的资源列表
-          </p>
         </div>
         <div v-else-if="assetStore.loading" class="flex items-center justify-center py-16">
           <Loader2 class="w-8 h-8 animate-spin text-muted-foreground" />
@@ -154,7 +151,6 @@ const handleSearchChange = (value: string) => {
         </div>
       </CardContent>
     </Card>
-    <p class="spectrum-resource-note">资源按环境与渠道归档。上传后可复制访问链接，或在图片、文件类配置中使用资源引用。</p>
 
     <!-- 图片预览组件 -->
     <ImagePreview

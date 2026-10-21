@@ -23,6 +23,7 @@ $token = 'qa-release-recovery-' + ([guid]::NewGuid().ToString('N') + [guid]::New
 $portA = 11920
 $portB = 11921
 $records = @()
+$script:AdminSessions = @{}
 $exitCode = 0
 $basePath = '/rainbow-bridge'
 
@@ -58,6 +59,12 @@ redis:
   enabled: false
 storage:
   type: "local"
+auth:
+  cookie_name: rb_release_recovery
+  cookie_secure: false
+  allow_insecure_localhost: true
+  trusted_origins:
+    - "http://127.0.0.1:$Port"
 intranet:
   enabled: true
 log:
@@ -80,6 +87,9 @@ function Start-Instance {
     $ErrorActionPreference = 'Continue'
     try {
         $env:RAINBOW_FREEZE_ADMIN_TOKEN = $token
+        $env:RAINBOW_ADMIN_USERNAME = 'admin'
+        $env:RAINBOW_ADMIN_INITIAL_PASSWORD = $token
+        $script:AdminSessions.Remove($Port)
         Remove-Item Env:RAINBOW_RELEASE_CRASH_POINT -ErrorAction SilentlyContinue
         Remove-Item Env:RAINBOW_RELEASE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:BASE_PATH -ErrorAction SilentlyContinue
@@ -118,14 +128,32 @@ function Stop-Instance {
     } catch { }
 }
 
+function Get-AdminSession {
+    param([int]$Port)
+    if (-not $script:AdminSessions.ContainsKey($Port)) {
+        $origin = "http://127.0.0.1:$Port"
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $body = @{ username = 'admin'; password = $token } | ConvertTo-Json -Compress
+        $login = Invoke-RestMethod -Method Post -Uri "$origin$basePath/api/v1/auth/login" -ContentType 'application/json' -Body $body -Headers @{ Origin = $origin } -WebSession $session
+        $script:AdminSessions[$Port] = @{ Session = $session; CSRF = $login.data.csrf_token; Origin = $origin }
+    }
+    return $script:AdminSessions[$Port]
+}
+
 function Invoke-Json {
     param([int]$Port, [string]$Method, [string]$Path, [string]$Body = '', [string]$Bearer = '', [string]$ScopeEnvironment = '', [string]$ScopePipeline = '')
     $headers = @{ 'Content-Type' = 'application/json' }
-    if ($Bearer) { $headers.Authorization = "Bearer $Bearer" }
+    $admin = $null
+    if (-not $Path.StartsWith('/api/v1/runtime/')) {
+        $admin = Get-AdminSession -Port $Port
+        $headers.Origin = $admin.Origin
+        if ($Method -ne 'GET') { $headers['X-CSRF-Token'] = $admin.CSRF }
+    }
     if ($ScopeEnvironment) { $headers['x-environment'] = $ScopeEnvironment }
     if ($ScopePipeline) { $headers['x-pipeline'] = $ScopePipeline }
     try {
         $params = @{ UseBasicParsing = $true; TimeoutSec = 30; Method = $Method; Uri = "http://127.0.0.1:$Port$basePath$Path"; Headers = $headers }
+        if ($admin) { $params.WebSession = $admin.Session }
         if ($Body) { $params.Body = $Body }
         $response = Invoke-WebRequest @params
         return [ordered]@{ status = $response.StatusCode; json = ($response.Content | ConvertFrom-Json); text = $response.Content; ok = $true }
@@ -256,7 +284,9 @@ try {
     Set-Content -Path (Join-Path $instDir 'asset.txt') -Value 'recovery-asset-bytes-0123456789'
     $uploadLog = Join-Path $artifacts 'upload.log'
     $upload = Invoke-NativeCapture -LogPath $uploadLog -Command {
-        & curl.exe -s -X POST "http://127.0.0.1:$portA$basePath/api/v1/asset/upload" -F ("file=@" + (Join-Path $instDir 'asset.txt')) -F "environment_key=qa_prod" -F "pipeline_key=main"
+        $admin = Get-AdminSession -Port $portA
+        $cookie = $admin.Session.Cookies.GetCookieHeader([uri]"http://127.0.0.1:$portA$basePath/")
+        & curl.exe -s -X POST "http://127.0.0.1:$portA$basePath/api/v1/asset/upload" -H "Cookie: $cookie" -H "Origin: $($admin.Origin)" -H "X-CSRF-Token: $($admin.CSRF)" -F ("file=@" + (Join-Path $instDir 'asset.txt')) -F "environment_key=qa_prod" -F "pipeline_key=main"
     }
     $uploadJSON = $upload.Output | ConvertFrom-Json
     $fileID = [string](Field (Field (Field $uploadJSON 'data') 'asset') 'file_id')
@@ -337,7 +367,7 @@ try {
         fixedRuntime503 = ($missingFixed.status -eq 503)
         assetDownload503 = ($missingAsset.status -eq 503)
         didNotFallbackToEditor = ($missingRuntime.status -eq 503)
-        oldRuntimeStill200 = ($missingOldRuntime.status -eq 200)
+        oldRuntimeAlso503 = ($missingOldRuntime.status -eq 503 -and [string](Field $missingOldRuntime.json 'error_type') -eq 'RELEASE_INCOMPLETE')
         restoredWithoutRestart = ($restoredRuntime.status -eq 200)
     }
 

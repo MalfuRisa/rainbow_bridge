@@ -49,8 +49,7 @@
 .spectrum-shell .runtime-toolbar [role=combobox] { min-height: 44px; width: 224px; max-width: 100%; }
 .spectrum-shell .runtime-summary { padding: 24px; border: 0; background: var(--card); gap: 12px 24px; border-radius: 8px; }
 .spectrum-shell .runtime-summary-version { display: flex; align-items: center; gap: 12px; }
-.spectrum-shell .runtime-summary-version > span:last-child { font: 600 36px/1.25 Consolas, monospace; max-width: 100%; overflow-wrap: anywhere; }
-.spectrum-shell .runtime-active-badge { background: var(--spectrum-success-bg); color: var(--spectrum-success); box-shadow: none; }
+.spectrum-shell .runtime-summary-version > strong { font: 600 36px/1.25 Consolas, monospace; max-width: 100%; overflow-wrap: anywhere; }
 .spectrum-shell .runtime-type { color: var(--spectrum-secondary-text); background: var(--secondary); border: 0; font-size: 12px; box-shadow: none; }
 .spectrum-shell .runtime-table-wrap { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .spectrum-shell .runtime-table-wrap th { padding: 16px 12px; font-size: 12px; color: var(--muted-foreground); }

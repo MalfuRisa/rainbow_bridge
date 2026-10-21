@@ -117,3 +117,5 @@ config.yaml.demo
 .local-qa/
 /data/release-snapshots/
 *.lnk
+
+.smoke-active/

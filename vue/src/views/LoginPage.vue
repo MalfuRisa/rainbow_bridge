@@ -55,15 +55,13 @@ async function restore() {
       <section class="spectrum-login-statement" aria-label="光谱工作台">
         <p class="spectrum-eyebrow">RAINBOW BRIDGE / 光谱工作台</p>
         <div><span class="spectrum-login-line" aria-hidden="true" /><p class="spectrum-login-motto">配置有序，<br>发布有据。</p></div>
-        <p class="spectrum-login-caption">从配置到生效，<br>每一步都清晰可见。</p>
       </section>
       <section class="spectrum-login-form">
         <p class="spectrum-eyebrow">WORKSPACE ACCESS / 管理入口</p>
         <h1>登录工作台</h1>
-        <p class="spectrum-login-description">登录后，继续管理环境、配置与发布。</p>
         <div v-if="auth.status === 'failed'" class="spectrum-auth-notice" role="alert">
           <p>暂时无法确认登录状态。{{ auth.error }}</p>
-          <Button variant="outline" :disabled="auth.restoring" @click="restore">{{ auth.restoring ? '确认中…' : '重试会话恢复' }}</Button>
+          <Button variant="outline" :disabled="auth.restoring" @click="restore">{{ auth.restoring ? '确认中…' : '重新确认登录状态' }}</Button>
         </div>
         <form @submit.prevent="enter">
           <div class="spectrum-login-field"><Label for="login-username">账号</Label><Input id="login-username" v-model="username" autocomplete="username" required :disabled="auth.submitting" /></div>
@@ -76,6 +74,6 @@ async function restore() {
         </form>
       </section>
     </main>
-    <footer class="spectrum-login-footer">RAINBOW BRIDGE<span>让内容有序，让发布清晰。</span></footer>
+    <footer class="spectrum-login-footer">RAINBOW BRIDGE</footer>
   </div>
 </template>

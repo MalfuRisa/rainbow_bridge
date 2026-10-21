@@ -378,6 +378,18 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	}
 
 	paused := make(chan string, 1)
+	// Use a distinct historical timestamp so a later switch within the same
+	// second cannot hide an accidental second head lookup.
+	oldActivatedAt := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := svc.logic.db.Model(&model.ConfigReleaseHead{}).
+		Where("environment_key = ? AND pipeline_key = ?", "qa_prod", "main").
+		Update("changed_at", oldActivatedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	activeBefore, err := svc.ReleaseActive(ctx, "qa_prod", "main")
+	if err != nil || activeBefore == nil {
+		t.Fatalf("active before read: %v", err)
+	}
 	resume := make(chan struct{})
 	releaseReadPauseHookForTest = func(snapshotID string) {
 		paused <- snapshotID
@@ -415,6 +427,9 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	if inFlight.data.ActiveRevision == nil || *inFlight.data.ActiveRevision != 1 {
 		t.Fatalf("in-flight read must report the revision it resolved: %+v", inFlight.data.ActiveRevision)
 	}
+	if inFlight.data.ActivatedAt != activeBefore.ChangedAt {
+		t.Fatalf("in-flight timestamp must belong to old head: %s != %s", inFlight.data.ActivatedAt, activeBefore.ChangedAt)
+	}
 	oldAsset := findRuntimeConfig(t, inFlight.data, "REL_IMAGE")
 	oldURL := strings.TrimSpace(oldAsset.Content)
 	if !strings.Contains(oldURL, "/api/v1/release/asset/"+oldSnapshot+"/") {
@@ -435,6 +450,9 @@ func TestReleaseActiveReadDuringSwitchKeepsOldSnapshot(t *testing.T) {
 	}
 	if after.Version != "v1.1" || after.SnapshotID == oldSnapshot {
 		t.Fatalf("new request must read the new snapshot: %+v", after)
+	}
+	if after.ActivatedAt == "" || after.ActivatedAt == inFlight.data.ActivatedAt {
+		t.Fatalf("new request must carry the new activation time: %+v", after)
 	}
 }
 

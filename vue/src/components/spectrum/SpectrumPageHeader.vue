@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ eyebrow: string; title: string; description: string }>()
+defineProps<{ eyebrow: string; title: string; description?: string }>()
 </script>
 
 <template>
@@ -9,7 +9,7 @@ defineProps<{ eyebrow: string; title: string; description: string }>()
     <div>
       <p class="spectrum-eyebrow">{{ eyebrow }}</p>
       <h1>{{ title }}</h1>
-      <p class="spectrum-page-description">{{ description }}</p>
+      <p v-if="description" class="spectrum-page-description">{{ description }}</p>
     </div>
     <div v-if="$slots.default" class="spectrum-page-heading-aside"><slot /></div>
   </div>

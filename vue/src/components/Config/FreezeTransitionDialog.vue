@@ -169,10 +169,10 @@ const handleSubmit = async () => {
         </DialogTitle>
         <DialogDescription class="text-muted-foreground">
           <template v-if="isLock">
-            锁定后该范围的配置增删改、资源上传与渠道编辑会被拒绝;读取、预览与导出保持可用。
+            锁定后不可修改配置、上传资源或编辑渠道；读取和导出不受影响。
           </template>
           <template v-else>
-            解除冻结后该范围恢复可编辑;操作会记录审计事件。
+            解除后可继续修改此范围的配置和资源。
           </template>
         </DialogDescription>
       </DialogHeader>
@@ -181,7 +181,6 @@ const handleSubmit = async () => {
         <div class="rounded-md border bg-muted/40 px-3 py-2 text-sm">
           <div class="text-xs text-muted-foreground">目标范围</div>
           <div class="font-mono">{{ scopeLine }}</div>
-          <div class="text-xs text-muted-foreground mt-1">当前 revision:{{ expectedRevision }}</div>
         </div>
 
         <div v-if="errorMessage" class="p-3 rounded-md bg-destructive/10 border border-destructive/20">
@@ -200,7 +199,7 @@ const handleSubmit = async () => {
           </ul>
         </div>
         <p v-if="externalReferences.length" class="text-xs text-muted-foreground">
-          外部内容不受冻结控制({{ externalReferences.length }} 条外部 URL 不会下载或校验)。
+          包含 {{ externalReferences.length }} 条外部链接，锁版不会保存或校验其内容。
         </p>
 
         <div class="space-y-2">

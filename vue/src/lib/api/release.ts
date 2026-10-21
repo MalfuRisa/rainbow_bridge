@@ -253,6 +253,7 @@ export interface RuntimeReleaseRawEnvironment {
 }
 
 export interface RuntimeReleaseRawData {
+  activated_at?: string
   snapshot_id: string
   version: string
   source_freeze_revision: string
@@ -327,6 +328,7 @@ function parseRuntimeReleaseRaw(
     payload_sha256: typeof data.payload_sha256 === 'string' ? data.payload_sha256 : '',
     selection_mode: 'active',
     active_revision: typeof data.active_revision === 'string' ? data.active_revision : '',
+    activated_at: typeof data.activated_at === 'string' ? data.activated_at : '',
     environment: {
       environment_key: environment.environment_key as string,
       environment_name: typeof environment.environment_name === 'string' ? environment.environment_name : '',

@@ -31,7 +31,7 @@ const handleReset = () => {
           {{ status === 'success' ? '迁移完成' : '迁移未完成，请核对结果' }}
         </h3>
         <p class="text-muted-foreground mb-6">
-          <template v-if="status === 'success'">已成功迁移 {{ selectedConfigs.length }} 个配置项</template>
+          <template v-if="status === 'success'">已处理所选配置，请在目标范围核对结果。</template>
           <template v-else>请根据错误提示检查范围、冻结状态或网络连接；部分成功时请先核对目标内容。</template>
         </p>
         <Button @click="handleReset">开始新的迁移</Button>

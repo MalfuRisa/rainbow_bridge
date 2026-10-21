@@ -61,7 +61,6 @@ const retryMatchesPending = computed(() => {
 })
 /** 只有未改动原请求时才提供“确认结果”;改了字段即视为新操作。 */
 const showRetry = computed(() => retryAvailable.value && retryMatchesPending.value)
-const pendingRevision = computed(() => pendingPayload.value?.expected_active_revision ?? '')
 
 watch(
   () => props.open,
@@ -112,7 +111,7 @@ const submit = async (reuseRequestId: boolean) => {
     if (!current()) return
     toast.success(
       result.operation.replayed
-        ? `该请求已提交过:原生效 revision ${result.operation.applied_revision},当前生效 ${result.active?.version || '未设置'}`
+        ? `已确认此前切换，当前生效版本：${result.active?.version || '未设置'}`
         : `已切换生效版本:${result.active?.version || props.targetVersion}`,
     )
     emit('activated', props.targetVersion)
@@ -125,7 +124,7 @@ const submit = async (reuseRequestId: boolean) => {
         case 'RELEASE_ACTIVE_REVISION_CONFLICT': {
           const latest = payload.latest_active
           latestActive.value = latest ? { version: latest.version, revision: latest.revision } : null
-          errorMessage.value = `生效指针已变化:当前生效 ${latest?.version || '未知'} (revision ${latest?.revision || '?'});请确认后重试`
+          errorMessage.value = `生效版本已变化，当前为 ${latest?.version || '未知'}，请核对后重试`
           // 原请求未提交:下次提交按最新 revision 组成新请求
           pendingPayload.value = null
           await releaseStore.refreshActive(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
@@ -137,7 +136,7 @@ const submit = async (reuseRequestId: boolean) => {
           await releaseStore.refreshActive(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_VERSION_NOT_FOUND':
-          errorMessage.value = '目标版本不存在(可能已被并发变更)'
+          errorMessage.value = '目标版本不存在，请刷新列表'
           break
         case 'RELEASE_INCOMPLETE':
           errorMessage.value = `目标版本完整性校验失败:${error.message}`
@@ -150,7 +149,7 @@ const submit = async (reuseRequestId: boolean) => {
           await releaseStore.refreshScope(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_REQUEST_CONFLICT':
-          errorMessage.value = '该请求标识已用于不同内容;已生成新的请求标识,请确认后重试'
+          errorMessage.value = '提交内容冲突，请重新发起操作'
           pendingPayload.value = null
           break
         default:
@@ -178,22 +177,21 @@ const submit = async (reuseRequestId: boolean) => {
           {{ isSwitchBack ? '切回此版本' : '切换生效版本' }}
         </DialogTitle>
         <DialogDescription class="text-muted-foreground">
-          只修改生效指针,不改编辑区内容与冻结状态;接入新接口的业务应用会跟随切换。
+          跟随生效版本的读取将改用目标版本；编辑区和冻结状态不变。
         </DialogDescription>
       </DialogHeader>
 
       <div class="space-y-4 py-2">
         <div class="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
-          <div class="text-xs text-muted-foreground">切换路径(打开时固定范围)</div>
+          <div class="text-xs text-muted-foreground">生效版本切换</div>
           <div class="font-mono">{{ currentVersion }} → {{ targetVersion }}</div>
           <div class="text-xs text-muted-foreground">
-            当前 head revision:{{ expectedRevision }}
-            <span v-if="latestActive">(已刷新到 {{ latestActive.revision }})</span>
+            {{ scopeSnapshot.environmentKey }} / {{ scopeSnapshot.pipelineKey }}
           </div>
         </div>
 
         <div v-if="showRetry" class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid="restore-pending">
-          确认结果会原样重发首次提交的请求(revision {{ pendingRevision }},备注：{{ displayNote(pendingPayload?.reason) }}),不采用页面刷新后的最新数值;再次点击主按钮则按当前输入提交为新请求。
+          切换结果尚未确认。点击“确认结果”核对首次提交；重新切换将视为新操作。备注：{{ displayNote(pendingPayload?.reason) }}。
         </div>
 
         <div v-if="errorMessage" class="p-3 rounded-md bg-destructive/10 border border-destructive/20">
@@ -213,10 +211,10 @@ const submit = async (reuseRequestId: boolean) => {
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="emit('update:open', false)">取消</Button>
         <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated" @click="submit(true)">
-          确认结果(同一请求标识)
+          确认结果
         </Button>
         <Button class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated" @click="submit(false)">
-          {{ submitting ? '提交中...' : showRetry ? '按当前输入提交新请求' : isSwitchBack ? '切回此版本' : '切换生效版本' }}
+          {{ submitting ? '提交中...' : showRetry ? '按当前输入重新切换' : isSwitchBack ? '切回此版本' : '切换生效版本' }}
         </Button>
       </DialogFooter>
     </DialogContent>

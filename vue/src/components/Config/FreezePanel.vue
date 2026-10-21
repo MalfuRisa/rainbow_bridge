@@ -73,7 +73,7 @@ const lastChangeText = computed(() => {
           最近操作:{{ lastChangeText }}
         </p>
         <p v-else-if="!locked && hasScope" class="text-xs mt-0.5 config-freeze-reason">
-          冻结后本范围的配置增删改、资源上传与渠道编辑将被拒绝;读取、预览与导出不受影响。
+          锁版后不可修改；读取和导出不受影响。
         </p>
       </div>
     </div>

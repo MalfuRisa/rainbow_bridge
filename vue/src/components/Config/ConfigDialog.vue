@@ -337,7 +337,7 @@ if (isEditing.value && props.editingConfig) {
       <DialogHeader>
         <DialogTitle class="text-xl font-semibold">{{ isEditing ? '编辑配置' : '新增配置' }}</DialogTitle>
         <DialogDescription class="text-muted-foreground">
-          {{ isEditing ? '修改配置项信息' : `为 ${selectedEnvironmentName} - ${selectedPipelineName} 添加配置项` }}
+          {{ selectedEnvironmentName }} / {{ selectedPipelineName }}
         </DialogDescription>
       </DialogHeader>
       <div class="space-y-5 py-4">
@@ -513,7 +513,7 @@ if (isEditing.value && props.editingConfig) {
           <Label for="description" class="text-sm font-medium">描述</Label>
           <Textarea
             id="description"
-            placeholder="可选，为此配置项添加备注或说明..."
+            placeholder="选填"
             :rows="2"
             v-model="formData.description"
             class="resize-none"

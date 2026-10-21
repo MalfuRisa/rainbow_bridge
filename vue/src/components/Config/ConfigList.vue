@@ -89,10 +89,10 @@ function confirmDelete() {
           <label class="config-search"><Search :size="16" aria-hidden="true" /><Input v-model="searchTerm" placeholder="搜索配置..." aria-label="搜索配置名称或别名" :disabled="!hasScope" @update:model-value="emit('search', String($event))" /></label>
           <ConfigDialog :key="editingConfig?.id || 'create'" :open="isAddDialogOpen || Boolean(editingConfig)" :editing-config="editingConfig" :selected-env-key="selectedEnvKey" :selected-pipeline-key="selectedPipelineKey" :selected-environment-name="selectedEnvironmentName" :selected-pipeline-name="selectedPipelineName" :frozen="frozen" :frozen-reason="frozenReason" @update:open="closeForm" @update:editing-config="editingConfig = $event" @create="createConfig" @update="(config, done) => emit('update', config, done)" @reset="resetForm" />
         </div>
-        <div v-if="!hasScope" class="config-empty-state"><Layers :size="32" /><h3>请先选择环境和渠道</h3><p>配置按环境和渠道管理。选择工作范围，查看和维护对应内容。</p></div>
+        <div v-if="!hasScope" class="config-empty-state"><Layers :size="32" /><h3>请先选择环境和渠道</h3></div>
         <div v-else-if="loading" class="config-empty-state" role="status"><Loader2 :size="28" class="animate-spin" /><p>正在加载配置…</p></div>
         <div v-else-if="error" class="config-empty-state" role="alert"><FileText :size="28" /><h3>配置加载失败</h3><p>{{ error }}</p><Button variant="outline" @click="emit('retry')">重试</Button></div>
-        <div v-else-if="filteredConfigs.length === 0" class="config-empty-state"><Search v-if="searchTerm" :size="28" /><FileText v-else :size="28" /><h3>{{ searchTerm ? '未找到匹配的配置' : '当前环境和渠道下暂无配置' }}</h3><p>{{ searchTerm ? '尝试其他名称或别名，或清空搜索。' : '从第一条配置开始，选择适合内容的配置类型。' }}</p><Button v-if="searchTerm" variant="outline" @click="searchTerm = ''">清空搜索</Button></div>
+        <div v-else-if="filteredConfigs.length === 0" class="config-empty-state"><Search v-if="searchTerm" :size="28" /><FileText v-else :size="28" /><h3>{{ searchTerm ? '未找到匹配的配置' : '当前环境和渠道下暂无配置' }}</h3><Button v-if="searchTerm" variant="outline" @click="searchTerm = ''">清空搜索</Button></div>
         <table v-else class="config-catalog-table">
           <thead><tr><th>名称 / 别名</th><th>类型</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody><tr v-for="config in filteredConfigs" :key="config.id" :class="{ 'is-selected': selectedConfig?.id === config.id }">

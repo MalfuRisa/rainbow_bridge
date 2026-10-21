@@ -143,7 +143,7 @@ const confirmDelete = async () => {
     <div class="spectrum-operations spectrum-environments-page">
     <!-- §2.1 / §3.6: environment catalog → selected channels → scoped configuration.
          Scale and semantic states reuse the approved spectrum tokens. -->
-    <SpectrumPageHeader eyebrow="ENVIRONMENTS / WORKSPACE MAP" title="环境管理" description="把环境与渠道分清，让每一份配置各有归属。">
+    <SpectrumPageHeader eyebrow="ENVIRONMENTS / WORKSPACE MAP" title="环境管理">
       <span><strong>{{ environmentStore.environments.length }}</strong>环境</span>
       <span><strong>{{ channelCount }}</strong>渠道</span>
     </SpectrumPageHeader>
@@ -162,7 +162,7 @@ const confirmDelete = async () => {
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>新增环境</DialogTitle>
-                  <DialogDescription>添加一个新的部署环境</DialogDescription>
+                  <DialogDescription>填写环境标识和名称。</DialogDescription>
                 </DialogHeader>
                 <div class="space-y-4">
                   <div class="space-y-2">
@@ -343,7 +343,7 @@ const confirmDelete = async () => {
               暂无渠道，请添加
             </p>
           </div>
-          <div v-else class="spectrum-empty"><GitBranch :size="32" /><h3>请先选择一个环境</h3><p>在左侧选择环境，查看渠道并进入对应的配置工作区。</p></div>
+          <div v-else class="spectrum-empty"><GitBranch :size="32" /><h3>请选择左侧环境，查看渠道</h3></div>
         </CardContent>
       </Card>
     </div>

@@ -43,7 +43,7 @@ test.describe('冻结与导入页面 @freeze', () => {
     await page.getByRole('tab', { name: '数据导入' }).click()
     await page.locator('#import-file').setInputFiles({ name: 'freeze-import.zip', mimeType: 'application/zip', buffer: archive })
     await expect(page.getByText('选择导入内容')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText('以下目标已冻结，导入将在写入前被整体拒绝')).toBeVisible()
+    await expect(page.getByText('部分目标已冻结')).toBeVisible()
     await expect(page.getByText(`${scopeDevMain.env}/${scopeDevMain.pipeline}`).first()).toBeVisible()
 
     // 点击导入:409 提示展示实际目标;选择不丢失(仍显示待导入统计)

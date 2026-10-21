@@ -241,7 +241,7 @@ const handleReset = () => {
 <template>
   <SpectrumLayout>
     <div class="spectrum-operations spectrum-migration-page">
-    <SpectrumPageHeader eyebrow="MIGRATION / BETWEEN WORKSPACES" title="配置迁移" description="从一处复制到另一处，先看清差异，再决定如何写入。" />
+    <SpectrumPageHeader eyebrow="MIGRATION / BETWEEN WORKSPACES" title="配置迁移" description="复制配置到目标范围，源配置不变。" />
     <ol class="spectrum-workflow-steps" aria-label="迁移步骤">
       <li :class="{ 'is-current': !previewed && status !== 'success' }"><span>01</span>选择源与目标</li>
       <li :class="{ 'is-current': previewed && status !== 'success' }"><span>02</span>核对变更与冲突</li>
@@ -268,7 +268,7 @@ const handleReset = () => {
         <Lock class="h-4 w-4" />
         <AlertTitle>源范围已冻结</AlertTitle>
         <AlertDescription>
-          从冻结源复制到未冻结目标是允许的;源范围本身不会被修改。
+          仍可复制到未冻结的目标。
         </AlertDescription>
       </Alert>
 
@@ -291,7 +291,7 @@ const handleReset = () => {
         @reset="handleReset"
         @migrate="handleMigrate"
       />
-      <div v-if="previewed && previewData.length === 0" class="spectrum-empty mt-8"><GitBranch :size="32" /><h3>源范围暂无配置</h3><p>当前没有可迁移的配置。请选择其他源环境和渠道。</p></div>
+      <div v-if="previewed && previewData.length === 0" class="spectrum-empty mt-8"><GitBranch :size="32" /><h3>源范围暂无配置</h3><p>请选择其他源环境和渠道。</p></div>
     </template>
     </div>
   </SpectrumLayout>

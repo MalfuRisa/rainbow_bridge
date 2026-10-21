@@ -160,7 +160,7 @@ const handleCloseImagePreview = () => {
 
 <template>
   <SpectrumLayout>
-    <div class="config-page-heading"><p class="spectrum-eyebrow">CONFIGURATION / EDITING AREA</p><h1>配置管理</h1><p>一处维护内容，按版本决定何时生效。</p></div>
+    <div class="config-page-heading"><p class="spectrum-eyebrow">CONFIGURATION / EDITING AREA</p><h1>配置管理</h1><p>修改后需创建版本并切换生效。</p></div>
     <EnvironmentSelector
       v-model:selected-env-key="selectedEnvKey"
       v-model:selected-pipeline-key="selectedPipelineKey"

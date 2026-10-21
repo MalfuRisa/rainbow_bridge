@@ -130,6 +130,12 @@ func (s *Service) buildReleaseStaticPlan(ctx context.Context, environmentKey, pi
 	if row.DeletedAt != nil {
 		return nil, releaseVersionDeletedError()
 	}
+	return s.buildReleaseStaticPlanFromVersion(ctx, row)
+}
+
+// buildReleaseStaticPlanFromVersion works from an already selected immutable version.
+// It never reselects active or reloads lifecycle state during an in-flight export.
+func (s *Service) buildReleaseStaticPlanFromVersion(ctx context.Context, row *model.ConfigReleaseVersion) (*releaseStaticExportPlan, error) {
 	if payloadDigest(row.Payload) != row.PayloadSha256 {
 		return nil, releaseIncompleteError("release payload digest mismatch")
 	}
@@ -447,4 +453,66 @@ func releaseStaticFileName(snapshotID, version string) string {
 		name = "version"
 	}
 	return fmt.Sprintf("release-%s-%s.zip", snapshotID, name)
+}
+
+// ExportActiveReleasePackage 供旧 runtime 静态导出使用:本次请求内解析一次生效版本,
+// 按该快照捕获导出计划并复用发布构包器;不做第二次 active 解析,也不读编辑区。
+func (s *Service) ExportActiveReleasePackage(ctx context.Context, environmentKey, pipelineKey string) (result *ReleaseStaticExportResult, err error) {
+	environmentKey = strings.TrimSpace(environmentKey)
+	pipelineKey = strings.TrimSpace(pipelineKey)
+	if environmentKey == "" || pipelineKey == "" {
+		return nil, releaseInvalidRequestError("environment_key and pipeline_key are required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, releaseExportTotalTimeout)
+	defer cancel()
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = releaseExportContextError(ctx.Err())
+		}
+	}()
+	if err := s.assertReleaseScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
+		return nil, err
+	}
+	head, err := s.logic.releaseDAO.GetHead(ctx, s.logic.db, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, releaseInternalError(err)
+	}
+	if head == nil || head.ActiveSnapshotID == "" {
+		return nil, releaseNotActiveError(environmentKey, pipelineKey)
+	}
+	row, err := s.logic.releaseDAO.GetVersionBySnapshotID(ctx, s.logic.db, head.ActiveSnapshotID)
+	if err != nil {
+		if db.IsReleaseNotFound(err) {
+			return nil, releaseIncompleteError("active snapshot row is missing")
+		}
+		return nil, releaseInternalError(err)
+	}
+	if row.DeletedAt != nil {
+		return nil, releaseIncompleteError("active snapshot has been deleted")
+	}
+	plan, err := s.buildReleaseStaticPlanFromVersion(ctx, row)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, releaseExportContextError(ctx.Err())
+		}
+		return nil, err
+	}
+	storage, err := s.releaseStorage()
+	if err != nil {
+		return nil, err
+	}
+	if hook := releaseExportPauseHookForTest; hook != nil {
+		hook(row.SnapshotID)
+	}
+	tempPath, size, err := writeReleaseStaticArchive(ctx, storage, plan)
+	if err != nil {
+		return nil, err
+	}
+	return &ReleaseStaticExportResult{
+		SnapshotID: row.SnapshotID,
+		Version:    row.Version,
+		FileName:   releaseStaticFileName(row.SnapshotID, row.Version),
+		TempPath:   tempPath,
+		Size:       size,
+	}, nil
 }

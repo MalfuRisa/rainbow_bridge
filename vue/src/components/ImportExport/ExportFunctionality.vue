@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Download, Loader2, Check, Info, AlertCircle } from 'lucide-vue-next'
 import ExportTreeSelect from './ExportTreeSelect.vue'
@@ -107,9 +107,6 @@ const handleFormatChange = (format: ExportFormat) => {
       <Card class="spectrum-panel">
         <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">选择导出内容</CardTitle>
-          <CardDescription>
-            选择要导出的环境、渠道或配置项
-          </CardDescription>
         </CardHeader>
         <CardContent class="spectrum-panel-content">
           <Alert v-if="exportError" variant="destructive" class="mb-4">
@@ -153,7 +150,7 @@ const handleFormatChange = (format: ExportFormat) => {
             <Check class="h-4 w-4" />
             <AlertTitle>导出成功</AlertTitle>
             <AlertDescription>
-              文件已开始下载
+              已发起下载
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -163,7 +160,7 @@ const handleFormatChange = (format: ExportFormat) => {
         <Info class="h-4 w-4" />
         <AlertTitle>提示</AlertTitle>
         <AlertDescription>
-          导出的数据包含完整的配置信息，请妥善保管，避免泄露敏感数据。
+          导出文件可能包含敏感配置，请妥善保管。
         </AlertDescription>
       </Alert>
     </div>

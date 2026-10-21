@@ -132,7 +132,7 @@ const handleMigrate = () => {
             @update:model-value="(v: boolean) => emit('update:overwriteConflicts', v)"
           />
           <label for="overwrite" class="text-sm text-foreground cursor-pointer">
-            覆盖目标环境中已存在的不同值
+            覆盖目标中的冲突配置
           </label>
         </div>
       </div>
@@ -141,8 +141,8 @@ const handleMigrate = () => {
         <AlertCircle class="h-4 w-4" />
         <AlertTitle>存在冲突</AlertTitle>
         <AlertDescription>
-          {{ conflictCount }} 个配置项在目标环境中已存在不同的值。
-          请勾选"覆盖"以继续，或取消选择这些配置项。
+          {{ conflictCount }} 项已选配置与目标值不同。
+          勾选“覆盖目标中的冲突配置”，或取消选择冲突项。
         </AlertDescription>
       </Alert>
 

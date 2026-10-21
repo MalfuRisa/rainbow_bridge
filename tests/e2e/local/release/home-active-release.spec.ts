@@ -137,7 +137,8 @@ test.describe('首页生效配置与静态导出 @release', () => {
     await expect(page.getByText('配置 2 项')).toBeVisible()
     await expect(page.getByRole('cell', { name: 'HOME_A', exact: true })).toBeVisible()
     await expect(page.getByText('home-v1')).toBeVisible()
-    await expect(page.getByText('本次加载:')).toBeVisible()
+    await expect(page.locator('.runtime-summary time')).toHaveAttribute('datetime', /.+/)
+    await expect(page.locator('.runtime-summary')).toContainText('生效时间')
 
     // H02:编辑区新增未发布项、修改已发布项 → 首页刷新仍为 v1.0 与旧内容
     await unlockScopeFromCurrentRevision(target, scopeHome, token)
@@ -170,8 +171,8 @@ test.describe('首页生效配置与静态导出 @release', () => {
     })
     expect(legacyRead.status, legacyRead.text.slice(0, 200)).toBe(200)
     const legacyConfigs = (JSON.parse(legacyRead.text).data.configs ?? []) as { alias: string; content: string }[]
-    expect(legacyConfigs.some((item) => item.alias === 'EDITOR_ONLY'), '旧接口应读编辑区').toBe(true)
-    expect(legacyConfigs.find((item) => item.alias === 'HOME_A')?.content).toBe('home-v2')
+    expect(legacyConfigs.some((item) => item.alias === 'EDITOR_ONLY'), '旧接口不得读取未发布编辑内容').toBe(false)
+    expect(legacyConfigs.find((item) => item.alias === 'HOME_A')?.content).toBe('home-v1')
 
     // H03:切换生效到 v1.1 → 刷新后版本、快照与正文一起变化
     await activateVersion(target, token, scopeHome, 'v1.1', '切换到 v1.1')

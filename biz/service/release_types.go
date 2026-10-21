@@ -140,6 +140,7 @@ type releasePayload struct {
 
 // ReleaseRuntimeConfig 是版本 runtime 的组装结果。
 type ReleaseRuntimeConfig struct {
+	ActivatedAt          string // RFC3339 UTC; only for the active selection resolved by this read
 	SnapshotID           string
 	Version              string
 	SourceFreezeRevision int64
@@ -164,3 +165,6 @@ type releaseRuntimeConfig struct {
 	IsPerm      bool
 	Description string
 }
+
+// ReleaseRuntimeConfigView 是发布运行时的单项配置视图,供 handler 适配旧 runtime 字段。
+type ReleaseRuntimeConfigView = releaseRuntimeConfig

@@ -2,6 +2,8 @@
 
 > **当前开发入口（2026-10-21）**：前后端统一在 `main_v1` 分支，Vue 3 光谱工作台、管理员会话登录、锁版、发布快照与非生效版本清理均在同一仓库。Windows 本地启动请双击 `start-rainbow.cmd`，详见 [一键启动说明](script/start-local.README.md)。历史 PRD 中分散工作树的路径仅作验收记录，后续修改以当前仓库为准。
 
+> **运行时接口约定**：`GET /api/v1/runtime/config` 与 `GET /api/v1/runtime/static` 均读取所选范围的当前生效快照，不再读取编辑区；未发布时返回HTTP404，错误使用真实HTTP状态。配置读取仍传 `x-environment` / `x-pipeline` 请求头，静态导出仍传 `environment_key` / `pipeline_key` query。ZIP统一包含 `config.json`、`manifest.json` 和 `assets/<asset_id>.bin`。固定版本仍使用 `/api/v1/runtime/release?version=...`，固定导出使用 `/api/v1/runtime/release/static?version=...&expected_snapshot_id=...`。编辑区预览与鉴权保持现状。完整说明见 [后端接口收敛PRD](docs/prd/runtime-active-unification-backend-v1.md)。
+
 > **版本信息**  
 > 版本：v3.1.3+  
 > 最后更新：2026-03-07

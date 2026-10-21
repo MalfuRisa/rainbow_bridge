@@ -34,7 +34,7 @@ const loadExportTree = async () => {
 <template>
   <SpectrumLayout>
     <div class="spectrum-operations spectrum-transfer-page">
-    <SpectrumPageHeader eyebrow="ARCHIVE / IMPORT & EXPORT" title="导入导出" description="把配置打包带走，或从备份中有选择地恢复。" />
+    <SpectrumPageHeader eyebrow="ARCHIVE / IMPORT & EXPORT" title="导入导出" />
     <div v-if="treeError" class="spectrum-error" role="alert">{{ treeError }}<Button variant="outline" @click="loadExportTree">重新加载导出内容</Button></div>
     <Tabs default-value="export" class="space-y-6">
       <TabsList class="spectrum-transfer-tabs">

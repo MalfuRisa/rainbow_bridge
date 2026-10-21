@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { Layers, GitBranch } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 
@@ -72,8 +71,5 @@ const handleEnvChange = (envKey: string) => {
       </Select>
     </div>
 
-    <Badge v-if="selectedEnvKey && selectedPipelineKey" variant="secondary" class="spectrum-scope-summary ml-auto">
-      已选择: {{ selectedEnvironment?.name }} / {{ pipelines.find(p => p.key === selectedPipelineKey)?.name }}
-    </Badge>
   </div>
 </template>

@@ -110,16 +110,16 @@ test.describe('发布流程韧性复核回归 @release', () => {
     await dialog.locator('#release-reason').fill('韧性创建')
     await dialog.getByRole('button', { name: '保存版本' }).click()
 
-    const retry = dialog.getByRole('button', { name: '确认结果(同一请求标识)' })
+    const retry = dialog.getByRole('button', { name: '确认结果' })
     await expect(retry).toBeVisible({ timeout: 15_000 })
-    await expect(dialog.getByTestId('restore-pending')).toContainText('来源 revision')
+    await expect(dialog.getByTestId('restore-pending')).toContainText('创建结果尚未确认')
 
     // 后台改变来源状态:解锁后"确认已提交结果"不得被冻结状态挡住
     await unlockScopeFromCurrentRevision(target, scopeResilience, token)
 
     await retry.click()
     await expect(
-      page.locator('[data-sonner-toast]').filter({ hasText: '该请求已提交过:返回原已保存版本' }).first(),
+      page.locator('[data-sonner-toast]').filter({ hasText: '已确认：版本已创建' }).first(),
     ).toBeVisible({ timeout: 15_000 })
 
     expect(bodies.length, '应恰好发送两次(首次 + 确认)').toBe(2)
@@ -200,7 +200,7 @@ test.describe('发布流程韧性复核回归 @release', () => {
     await dialog.locator('#activate-reason').fill('韧性切换')
     await dialog.getByRole('button', { name: /切换生效版本|切回此版本/ }).click()
 
-    const retry = dialog.getByRole('button', { name: '确认结果(同一请求标识)' })
+    const retry = dialog.getByRole('button', { name: '确认结果' })
     await expect(retry).toBeVisible({ timeout: 15_000 })
     expect(bodies.length).toBe(1)
     expect(bodies[0].expected_active_revision).toBe(baseRevision)
@@ -217,7 +217,7 @@ test.describe('发布流程韧性复核回归 @release', () => {
 
     await retry.click()
     await expect(
-      page.locator('[data-sonner-toast]').filter({ hasText: /该请求已提交过:原生效 revision/ }).first(),
+      page.locator('[data-sonner-toast]').filter({ hasText: /已确认此前切换，当前生效版本：/ }).first(),
     ).toBeVisible({ timeout: 15_000 })
 
     expect(bodies.length, '应恰好发送两次(首次 + 确认)').toBe(2)

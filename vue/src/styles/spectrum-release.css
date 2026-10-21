@@ -27,6 +27,10 @@
 :root:has(.spectrum-shell) [role=dialog].spectrum-release-detail { max-width: min(960px, calc(100vw - 32px)); }
 .spectrum-release-detail .grid > div { min-width: 0; overflow-wrap: anywhere; }
 .spectrum-release-detail .flex { flex-wrap: wrap; }
+.spectrum-release-config { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 16px; }
+.spectrum-release-config-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.spectrum-release-config-header > button { flex-shrink: 0; }
+.spectrum-release-config-header > div { overflow-wrap: anywhere; }
 @media (max-width: 900px) {
   .spectrum-release-status { grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 24px; }
   .spectrum-release-editing { border: 0; border-top: 1px solid var(--spectrum-ink-line); padding: 24px 0 0; }
@@ -37,13 +41,12 @@
   .spectrum-release-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding: 24px 12px; }
   .spectrum-operations .spectrum-release-table td { padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
   .spectrum-release-table td:nth-child(1) { grid-column: 1; grid-row: 1; }
-  .spectrum-release-table td:nth-child(6) { grid-column: 2; grid-row: 1; text-align: right; }
-  .spectrum-release-table td:nth-child(2) { grid-column: 1; grid-row: 2; }
-  .spectrum-release-table td:nth-child(3) { grid-column: 2; grid-row: 2; }
-  .spectrum-release-table td:nth-child(4) { grid-column: 1 / -1; grid-row: 3; max-width: none; }
-  .spectrum-release-table td:nth-child(5) { grid-column: 1 / -1; grid-row: 4; }
-  .spectrum-release-table td:nth-child(7) { grid-column: 1 / -1; grid-row: 5; }
-  .spectrum-release-table td:nth-child(7) > div { justify-content: flex-start; flex-wrap: wrap; }
+  .spectrum-release-table td:nth-child(5) { grid-column: 2; grid-row: 1; text-align: right; }
+  .spectrum-release-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .spectrum-release-table td:nth-child(3) { grid-column: 1 / -1; grid-row: 3; max-width: none; }
+  .spectrum-release-table td:nth-child(4) { grid-column: 1 / -1; grid-row: 4; }
+  .spectrum-release-table td:nth-child(6) { grid-column: 1 / -1; grid-row: 5; }
+  .spectrum-release-table td:nth-child(6) > div { justify-content: flex-start; flex-wrap: wrap; }
   .spectrum-release-table td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; }
   .spectrum-release-table td button { min-height: 44px; }
   .spectrum-release-status { padding: 24px 16px; }

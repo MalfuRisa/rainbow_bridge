@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { publishRuntimeSnapshot } from './support/runtime'
 import * as fs from 'fs'
 import * as path from 'path'
 import { targetA, uploadsDir, writeEvidence } from './support/env'
@@ -28,6 +29,7 @@ test.describe('T16 源文件消失 @t16', () => {
     const downloadBefore = await request(target, resolveUrl(target, contentUrl), { method: 'GET' })
     expect(downloadBefore.status, '删除前资源应可下载').toBe(200)
 
+    await publishRuntimeSnapshot(target, scopeDevMain)
     try {
     // 删除本轮实例内的资源文件(仅限本实例)
     fs.rmSync(path.join(diskDir, fileName), { force: true })
@@ -35,7 +37,7 @@ test.describe('T16 源文件消失 @t16', () => {
     const downloadAfter = await request(target, resolveUrl(target, contentUrl), { method: 'GET' })
     const staticExport = await runtimeStatic(target, scopeDevMain)
     const staticEntries = staticExport.status === 200 ? await readZipEntries(staticExport.bytes) : new Map()
-    const staticHasAsset = [...staticEntries.keys()].some((name) => name.includes(fileId))
+    const staticHasAsset = [...staticEntries.entries()].some(([name, bytes]) => name.startsWith('assets/') && bytes.equals(TINY_PNG))
 
     const transferExport = await exportSelective(target, [
       { environment_key: scopeDevMain.env, pipeline_key: scopeDevMain.pipeline, resource_keys: [resourceKey] },
@@ -64,8 +66,9 @@ test.describe('T16 源文件消失 @t16', () => {
       test.info().annotations.push({ type: 'observed', description: `资源缺失返回 HTTP 200 + code=${downloadAfter.json?.code}(需检查响应体才能识别失败)` })
     }
     expect(downloadAfter.status).toBe(404)
-    expect(staticExport.status).toBe(409)
-    expect(staticExport.json?.code).toBe(409)
+    // The published snapshot owns its resource copy; transfer still detects missing editor files.
+    expect(staticExport.status).toBe(200)
+    expect(staticHasAsset).toBe(true)
     expect(transferExport.status).toBe(409)
     expect(transferExport.json?.code).toBe(409)
     } finally { fs.writeFileSync(path.join(diskDir,fileName),TINY_PNG) }

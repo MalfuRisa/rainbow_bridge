@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { publishRuntimeSnapshot } from './support/runtime'
 import * as http from 'http'
 import { readZipEntries, findEntry } from './support/archives'
 import { exportSelective, importSelective, runtimeConfig, runtimeStatic } from './support/imports'
@@ -81,6 +82,7 @@ test.describe('根路径前缀重跑 @root', () => {
       await createConfig(target, scopeDevMain, { alias: imageAlias, name: '根路径图片', type: 'image', content: upload.reference })
     }
 
+    await publishRuntimeSnapshot(target, scopeDevMain)
     const runtime = await runtimeConfig(target, scopeDevMain)
     const imageRuntime = (runtime.json?.data?.configs ?? []).find((item: any) => item.alias === imageAlias)
     const detail = await getConfigDetail(target, scopeDevMain, String(imageRuntime?.resource_key ?? ''))
@@ -157,12 +159,13 @@ test.describe('根路径前缀重跑 @root', () => {
     const bSha = bDownload && bDownload.status === 200 ? sha256Hex(bDownload.bytes) : null
 
     // 静态包:根路径下本地 URL 无前缀,静态托管可逐条取回
+    await publishRuntimeSnapshot(a, scopeDevMain)
     const staticExport = await runtimeStatic(a, scopeDevMain)
     const staticEntries = staticExport.status === 200 ? await readZipEntries(staticExport.bytes) : new Map<string, Buffer>()
     const configJson = staticEntries.get('config.json') ? JSON.parse(staticEntries.get('config.json')!.toString('utf8')) : null
     const localUrls: string[] = (configJson?.data?.configs as any[] ?? [])
       .map((item) => item.content)
-      .filter((content) => typeof content === 'string' && content.includes('/api/v1/asset/file/'))
+      .filter((content) => typeof content === 'string' && content.startsWith('./assets/'))
     const fileMap = new Map<string, Buffer>()
     for (const [name, payload] of staticEntries) fileMap.set(name.replace(/\\/g, '/'), payload)
     const server = http.createServer((request_, response) => {
@@ -177,7 +180,7 @@ test.describe('根路径前缀重跑 @root', () => {
     const checks: { url: string; status: number; sha: string | null }[] = []
     try {
       for (const localUrl of localUrls) {
-        const response = await fetch(`http://127.0.0.1:${port}${localUrl}`)
+        const response = await fetch(new URL(localUrl, `http://127.0.0.1:${port}/`))
         const bytes = Buffer.from(await response.arrayBuffer())
         checks.push({ url: localUrl, status: response.status, sha: response.status === 200 ? sha256Hex(bytes) : null })
       }

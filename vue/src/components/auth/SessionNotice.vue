@@ -7,6 +7,6 @@ const auth = useAuthStore()
 <template>
   <div v-if="sessionProblem" class="spectrum-auth-notice" role="alert">
     <p>{{ sessionProblem.message }}</p>
-    <Button v-if="sessionProblem.refreshable" variant="outline" :disabled="auth.restoring" @click="auth.restore(true)">{{ auth.restoring ? '刷新中…' : '刷新会话' }}</Button>
+    <Button v-if="sessionProblem.refreshable" variant="outline" :disabled="auth.restoring" @click="auth.restore(true)">{{ auth.restoring ? '刷新中…' : '刷新登录状态' }}</Button>
   </div>
 </template>

@@ -166,7 +166,7 @@ func TestReleaseSnapshotPayloadAndFixedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fixed runtime: %v", err)
 	}
-	if runtimeData.SelectionMode != model.ReleaseSelectionFixed || runtimeData.ActiveRevision != nil {
+	if runtimeData.SelectionMode != model.ReleaseSelectionFixed || runtimeData.ActiveRevision != nil || runtimeData.ActivatedAt != "" {
 		t.Fatalf("fixed mode must not carry active revision: %+v", runtimeData)
 	}
 	bigConfig := findRuntimeConfig(t, runtimeData, "REL_BIG")

@@ -71,7 +71,7 @@ const handlePreview = () => {
     <CardHeader class="spectrum-panel-header">
       <CardTitle class="text-base">选择源和目标</CardTitle>
       <CardDescription>
-        选择要迁移配置的源环境/渠道和目标环境/渠道
+        源和目标均需选择环境与渠道。
       </CardDescription>
     </CardHeader>
     <CardContent class="spectrum-panel-content">

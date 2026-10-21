@@ -45,11 +45,8 @@ const formatTime = (value: string) => value ? new Date(value).toLocaleString() :
         <div v-for="item in items" :key="item.event_id" class="rounded-md border p-3 text-sm space-y-1">
           <div class="flex items-center gap-2 flex-wrap">
             <Badge :variant="item.event_type === 'lock' ? 'destructive' : 'secondary'" class="px-2 py-0.5 text-xs">
-              {{ item.event_type === 'lock' ? '锁定' : '解除' }}
+              {{ item.event_type === 'lock' ? '锁定配置' : item.event_type === 'unlock' ? '解除冻结' : '未知操作' }}
             </Badge>
-            <span class="text-xs text-muted-foreground font-mono">
-              {{ item.from_state }} → {{ item.to_state }} · revision {{ item.revision }}
-            </span>
             <span class="text-xs text-muted-foreground ml-auto">{{ formatTime(item.created_at) }}</span>
           </div>
           <div class="text-muted-foreground">备注：{{ displayNote(item.reason) }}</div>

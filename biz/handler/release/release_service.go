@@ -624,6 +624,7 @@ type runtimeReleaseEnvironmentJSON struct {
 }
 
 type runtimeReleaseDataJSON struct {
+	ActivatedAt          string                        `json:"activated_at,omitempty"`
 	SnapshotID           string                        `json:"snapshot_id"`
 	Version              string                        `json:"version"`
 	SourceFreezeRevision string                        `json:"source_freeze_revision"`
@@ -642,6 +643,7 @@ type runtimeReleaseResponseJSON struct {
 
 func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtimeReleaseDataJSON {
 	result := runtimeReleaseDataJSON{
+		ActivatedAt:          data.ActivatedAt,
 		SnapshotID:           data.SnapshotID,
 		Version:              data.Version,
 		SourceFreezeRevision: strconv.FormatInt(data.SourceFreezeRevision, 10),

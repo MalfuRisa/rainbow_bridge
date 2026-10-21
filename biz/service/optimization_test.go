@@ -4,14 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
-	"github.com/yi-nology/rainbow_bridge/biz/model/runtime"
 )
 
 func TestMigrationIdempotentAndResponseCopy(t *testing.T) {
@@ -127,20 +125,8 @@ func TestPrecisionArchiveAndStaticRoundTrips(t *testing.T) {
 					}
 				}
 				assertNumbers(result[0].Content)
-				static, err := source.writeRuntimeConfigArchive(context.Background(), &runtime.RuntimeConfigData{Configs: configSliceToPB(rows)})
-				if err != nil {
-					t.Fatal(err)
-				}
-				// UseNumber also applies to the assertion parser, otherwise it would hide the bug.
-				metadata := archiveJSON(t, static, "zip", "config.json")
-				_ = metadata
-				var canonical any
-				raw := archiveJSONBytes(t, static, "config.json")
-				if err := DecodeConfigJSON(raw, &canonical); err != nil {
-					t.Fatal(err)
-				}
-				encoded, _ := json.Marshal(canonical)
-				assertNumbers(string(encoded))
+				// 静态包精度与描述断言由快照构包用例覆盖(TestReleaseStaticExportPackageContents、
+				// TestStaticArchiveDescriptionAndContent);旧编辑区构包器已移除,这里只保留在线读取断言。
 			})
 		}
 	}

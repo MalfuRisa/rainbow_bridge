@@ -36,7 +36,7 @@ async function copyContent() {
     <div class="config-detail-content">
       <button v-if="config.type === 'image' && !showSource" class="config-image-button" aria-label="查看配置图片大图" @click="emit('imagePreview', config.content, config.name)">
         <img v-if="!imageFailed" :src="resolveAssetUrl(config.content)" :alt="config.name" @error="imageFailed = true">
-        <span v-else class="config-media-error"><FileImage :size="24" />图片无法显示，点击重试大图预览</span>
+        <span v-else class="config-media-error"><FileImage :size="24" />图片加载失败，点击重试</span>
         <span class="config-media-caption">点击查看大图</span>
       </button>
       <div v-else-if="config.type === 'color' && !showSource" class="config-color-preview"><span :style="{ backgroundColor: config.content }" /><code>{{ config.content }}</code></div>
@@ -44,7 +44,7 @@ async function copyContent() {
       <iframe v-else-if="config.type === 'richtext' && !showSource" class="config-richtext-preview" :srcdoc="config.content" sandbox="" referrerpolicy="no-referrer" :title="`${config.name} 富文本预览`" />
       <pre v-else tabindex="0">{{ config.content }}</pre>
     </div>
-    <div class="config-detail-description"><span>描述</span><p>{{ config.description || '暂无描述' }}</p></div>
-    <div class="config-detail-bottom"><span v-if="frozen"><LockKeyhole :size="14" />已冻结 · 内容只读</span><span v-else>编辑区 · 修改后需发布才生效</span><Button variant="outline" size="sm" :disabled="frozen" @click="emit('edit', config)"><Pencil :size="14" class="mr-2" />编辑配置</Button></div>
+    <div v-if="config.description" class="config-detail-description"><span>描述</span><p>{{ config.description }}</p></div>
+    <div class="config-detail-bottom"><span v-if="frozen"><LockKeyhole :size="14" />已冻结 · 内容只读</span><Button variant="outline" size="sm" class="ml-auto" :disabled="frozen" @click="emit('edit', config)"><Pencil :size="14" class="mr-2" />编辑配置</Button></div>
   </section>
 </template>

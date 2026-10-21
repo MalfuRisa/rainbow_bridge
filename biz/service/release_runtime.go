@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
@@ -26,6 +27,7 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 	}
 	selection := model.ReleaseSelectionActive
 	var activeRevision *int64
+	var activatedAt string
 	var versionRow *model.ConfigReleaseVersion
 	var err error
 	if versionParam == nil {
@@ -46,6 +48,9 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 		}
 		revision := head.Revision
 		activeRevision = &revision
+		if head.ChangedAt != nil {
+			activatedAt = head.ChangedAt.UTC().Format(time.RFC3339)
+		}
 	} else {
 		versionName := strings.TrimSpace(*versionParam)
 		if versionName == "" {
@@ -93,6 +98,7 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 		})
 	}
 	return &ReleaseRuntimeConfig{
+		ActivatedAt:          activatedAt,
 		SnapshotID:           versionRow.SnapshotID,
 		Version:              versionRow.Version,
 		SourceFreezeRevision: versionRow.SourceFreezeRevision,

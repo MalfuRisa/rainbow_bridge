@@ -37,29 +37,30 @@ test.describe('版本发布页面流程 @release', () => {
 
     // 双状态条:编辑区已冻结 + 生效版本未设置,且两类地址文案存在
     await expect(page.getByText('已冻结', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('未设置', { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('跟随生效版本(推荐,配合切换/切回)')).toBeVisible()
+    await expect(page.getByText('尚无生效版本', { exact: true })).toBeVisible()
+    await page.getByText('业务接入说明', { exact: true }).click()
+    await expect(page.getByText('跟随生效版本', { exact: true })).toBeVisible()
     await expect(page.getByText('固定某版本(不跟随切换)')).toBeVisible()
-    await expect(page.getByText(/旧接口/).first()).toBeVisible()
     // 页面不提供版本修改/删除按钮
     await expect(page.getByRole('button', { name: /删除版本|修改版本|覆盖版本/ })).toHaveCount(0)
 
     // 创建 v1.0:必须提示“尚未切换生效”
     await page.getByRole('button', { name: '创建版本' }).click()
     const createDialog = page.getByRole('dialog').filter({ has: page.locator('#release-version') })
-    await expect(createDialog.getByText(/来源 revision/)).toBeVisible()
+    await expect(createDialog.getByText('编辑区已冻结', { exact: true })).toBeVisible()
     await createDialog.locator('#release-version').fill('v1.0')
     await createDialog.locator('#release-reason').fill('浏览器创建 v1.0')
     await createDialog.getByRole('button', { name: '保存版本' }).click()
-    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已保存,尚未切换生效' }).first()).toBeVisible()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已创建，尚未生效' }).first()).toBeVisible()
     await expect(page.getByText('v1.0', { exact: true }).first()).toBeVisible()
     // 创建后仍未生效
-    await expect(page.getByText('未设置', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('尚无生效版本', { exact: true })).toBeVisible()
 
     // 查看详情:只读,包含来源冻结 revision 与资源清单区域
     await page.getByRole('button', { name: '查看' }).first().click()
-    const detailDialog = page.getByRole('dialog').filter({ hasText: '只读快照' })
-    await expect(detailDialog.getByText('来源冻结 revision:')).toBeVisible()
+    const detailDialog = page.getByRole('dialog').filter({ hasText: '此版本内容只读' })
+    await detailDialog.getByText('技术信息', { exact: true }).click()
+    await expect(detailDialog.getByText(/来源冻结 revision：/)).toBeVisible()
     await expect(detailDialog.getByText('资源清单(')).toBeVisible()
     await page.keyboard.press('Escape')
 
@@ -100,7 +101,7 @@ test.describe('版本发布页面流程 @release', () => {
     await createDialog2.locator('#release-version').fill('v1.1')
     await createDialog2.locator('#release-reason').fill('浏览器创建 v1.1')
     await createDialog2.getByRole('button', { name: '保存版本' }).click()
-    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已保存,尚未切换生效' }).first()).toBeVisible()
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '版本已创建，尚未生效' }).first()).toBeVisible()
 
     // 切换 v1.1(此时按钮文案为“切换生效版本”)
     const v11Row = page.locator('tr').filter({ hasText: 'v1.1' }).first()
@@ -147,12 +148,13 @@ test.describe('版本发布页面流程 @release', () => {
       fixedV11Version: fixedV11.data?.version,
       activeMode: runtimeAfterBack.data?.selection_mode,
       fixedMode: fixedV11.data?.selection_mode,
-      oldRuntimeReadsEditor: oldRuntime.data?.configs?.some((c: any) => c.alias === 'REL_UI_TEXT' && c.content === 'ui-v2'),
+      oldRuntimeReadsActive: oldRuntime.data?.version === runtimeAfterBack.data?.version,
     })
     expect(runtimeAfterBack.data.version).toBe('v1.0')
     expect(fixedV11.data.selection_mode).toBe('fixed')
     expect(fixedV11.data.version).toBe('v1.1')
-    expect(oldRuntime.data?.configs?.some((c: any) => c.alias === 'REL_UI_TEXT' && c.content === 'ui-v2'), '旧接口仍读编辑区').toBe(true)
+    expect(oldRuntime.data?.snapshot_id, '旧接口跟随生效快照').toBe(runtimeAfterBack.data?.snapshot_id)
+    expect(oldRuntime.data?.configs?.some((c: any) => c.alias === 'REL_UI_TEXT' && c.content === 'ui-v2'), '未生效编辑内容不能泄漏').toBe(false)
 
     // 清理:解锁并删除样本配置(保留版本,版本不可删由设计决定)
     await unlockScopeFromCurrentRevision(target, scopeDevMain, token)

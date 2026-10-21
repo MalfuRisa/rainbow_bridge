@@ -16,7 +16,7 @@ test.describe('光谱工作台 @spectrum @smoke', () => {
     await expect(page.getByRole('button', { name: '展开产品介绍' })).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('heading', { name: '当前生效配置', exact: true })).toBeVisible()
     await page.getByText('前端对接与 API 说明', { exact: true }).click()
-    await expect(page.getByText('/rainbow-bridge/api/v1/runtime/config', { exact: true })).toBeVisible()
+    await expect(page.getByText('/rainbow-bridge/api/v1/runtime/release', { exact: true })).toBeVisible()
   })
 
   test('目录搜索、原文详情和单层编辑对话框保留配置精度', async ({ page }) => {

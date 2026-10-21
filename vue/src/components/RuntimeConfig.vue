@@ -20,6 +20,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Copy, Check, RefreshCw, Download, Loader2, AlertTriangle, PackageOpen } from 'lucide-vue-next'
+import SpectrumImagePreview from '@/components/spectrum/SpectrumImagePreview.vue'
+import ConfigContentPreview from '@/components/Config/ConfigContentPreview.vue'
 import { useRuntimeOverview } from '@/composables/useRuntimeOverview'
 import { useActiveRelease } from '@/composables/useActiveRelease'
 import { CONFIG_TYPE_META, type ConfigType } from '@/lib/types'
@@ -34,6 +36,7 @@ const { state, view, errorMessage, exporting, exportError, load, reset, exportSh
 const selectedEnv = ref<string>('')
 const selectedPipeline = ref<string>('')
 const copiedId = ref<string | null>(null)
+const imagePreview = ref<{ url: string; name: string } | null>(null)
 
 const environments = computed(() => environmentStore.environments)
 const selectedEnvData = computed(() => environments.value.find((env) => env.key === selectedEnv.value))
@@ -49,10 +52,17 @@ const scopeLabel = computed(() => {
 
 const configs = computed(() => view.value?.configs ?? [])
 const canExport = computed(() => state.value === 'ready' && Boolean(view.value))
-watch(view, (value) => emit('viewChange', value), { immediate: true })
-const loadedAtText = computed(() =>
-  view.value ? view.value.loadedAt.toLocaleString() : '',
-)
+watch(view, (value) => {
+  imagePreview.value = null
+  emit('viewChange', value)
+}, { immediate: true })
+const activatedAtText = computed(() => {
+  const value = view.value?.activatedAt
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('zh-CN', { hour12: false })
+})
 
 /** 范围变化(含清空)都开启新批次;未选齐范围不发请求。 */
 watch([selectedEnv, selectedPipeline], ([environmentKey, pipelineKey]) => {
@@ -95,7 +105,9 @@ const handleCopy = async (content: string, id: string) => {
   }, 2000)
 }
 
-const displayContent = (content: string) => content
+const previewImage = (url: string, name: string) => {
+  imagePreview.value = { url, name }
+}
 
 onMounted(() => {
   environmentStore.fetchOverview()
@@ -111,11 +123,7 @@ onUnmounted(() => {
     <CardHeader class="runtime-header">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p class="spectrum-eyebrow">CURRENTLY SERVING</p>
           <CardTitle class="runtime-title text-lg">当前生效配置</CardTitle>
-          <p class="text-sm text-muted-foreground mt-1">
-            展示所选环境和渠道已发布的版本,编辑区修改需发布后才生效
-          </p>
         </div>
           <RouterLink v-if="view" class="spectrum-runtime-release-link" :to="{ path: '/releases', query: { env: view.environmentKey, pipeline: view.pipelineKey } }">
             <PackageOpen class="w-4 h-4 mr-1" />
@@ -173,20 +181,15 @@ onUnmounted(() => {
         </Button>
       </div>
 
-      <!-- 状态条:一次成功响应的元数据 -->
+      <!-- §2.1/§2.4: version first; only count, scope and real activation time support it. -->
       <div v-if="view" class="runtime-summary rounded-md border bg-muted/40 px-3 py-2 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
         <span class="runtime-summary-version flex items-center gap-2">
-          <Badge class="runtime-active-badge px-2 py-0.5">生效中</Badge>
-          <span class="font-mono">{{ view.version }}</span>
+          <span class="text-muted-foreground">当前生效版本</span>
+          <strong class="font-mono">{{ view.version }}</strong>
         </span>
         <span class="text-muted-foreground">配置 {{ configs.length }} 项</span>
-        <span class="text-muted-foreground">来源冻结 revision {{ view.sourceFreezeRevision || '-' }}</span>
-        <span class="text-muted-foreground">head revision {{ view.activeRevision || '-' }}</span>
-        <span class="text-muted-foreground">本次加载:{{ loadedAtText }}</span>
-        <span class="text-muted-foreground">范围:{{ scopeLabel }}</span>
-        <span class="text-xs text-muted-foreground">
-          按本次加载结果展示,切换后请刷新(其他管理员的切换不会自动推送)
-        </span>
+        <span class="text-muted-foreground">范围：{{ scopeLabel }}</span>
+        <span class="text-muted-foreground">生效时间：<time v-if="view.activatedAt && activatedAtText !== '—'" :datetime="view.activatedAt">{{ activatedAtText }}</time><span v-else>—</span></span>
       </div>
 
       <div v-if="exportError" class="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" data-testid="export-error">
@@ -255,7 +258,9 @@ onUnmounted(() => {
                   {{ CONFIG_TYPE_META[config.type as ConfigType]?.label || config.type }}
                 </Badge>
               </TableCell>
-              <TableCell class="runtime-raw-content font-mono text-sm max-w-xs truncate" :title="config.content">{{ displayContent(config.content) }}</TableCell>
+              <TableCell class="runtime-raw-content font-mono text-sm max-w-xs">
+                <ConfigContentPreview :config="config" @image-preview="previewImage" />
+              </TableCell>
               <TableCell>
                 <Button variant="ghost" size="icon" :aria-label="`复制 ${config.alias} 原文`" @click="handleCopy(config.content, config.resource_key)">
                   <Check v-if="copiedId === config.resource_key" class="w-4 h-4 text-green-600" />
@@ -267,13 +272,7 @@ onUnmounted(() => {
         </Table>
       </div>
 
-      <p class="text-xs text-muted-foreground">
-        编辑区内容请前往
-        <RouterLink :to="{ path: '/config', query: hasScope ? { env: selectedEnv, pipeline: selectedPipeline } : {} }" class="text-primary hover:underline">配置管理</RouterLink>
-        查看;旧接口
-        <span class="font-mono">/api/v1/runtime/config</span>
-        仍读取编辑区,不受发布切换控制。
-      </p>
     </CardContent>
   </Card>
+  <SpectrumImagePreview :url="imagePreview?.url ?? null" :name="imagePreview?.name ?? ''" @close="imagePreview = null" />
 </template>

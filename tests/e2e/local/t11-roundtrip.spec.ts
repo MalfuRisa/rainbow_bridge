@@ -1,5 +1,6 @@
 import { gotoPage } from './support/pages'
 import { expect, test } from '@playwright/test'
+import { publishRuntimeSnapshot } from './support/runtime'
 import * as http from 'http'
 import { targetA, targetB, writeEvidence } from './support/env'
 import {
@@ -98,13 +99,15 @@ test.describe('T11 导出往返与静态托管 @t11 @smoke', () => {
     const unrelatedAssetEntries = exportAssetEntries.filter((name) => !name.replace(/\\/g, '/').includes(upload.fileId))
 
     // ---- 静态包(config.json 内每条本地 URL 都要能取回原字节)
+    await publishRuntimeSnapshot(a, scopeDevMain)
     const staticExport = await runtimeStatic(a, scopeDevMain)
     expect(staticExport.status).toBe(200)
     const staticEntries = await readZipEntries(staticExport.bytes)
     const configJson = JSON.parse(staticEntries.get('config.json')!.toString('utf8'))
+    const manifest = JSON.parse(staticEntries.get('manifest.json')!.toString('utf8'))
     const localUrls: string[] = []
     for (const config of configJson.data.configs) {
-      if (typeof config.content === 'string' && config.content.includes('/api/v1/asset/file/')) {
+      if (typeof config.content === 'string' && config.content.startsWith('./assets/')) {
         localUrls.push(config.content)
       }
     }
@@ -122,7 +125,7 @@ test.describe('T11 导出往返与静态托管 @t11 @smoke', () => {
     const staticChecks: { url: string; status: number; sha: string | null }[] = []
     try {
       for (const localUrl of localUrls) {
-        const response = await fetch(`http://127.0.0.1:${port}${localUrl}`)
+        const response = await fetch(new URL(localUrl, `http://127.0.0.1:${port}/`))
         const bytes = Buffer.from(await response.arrayBuffer())
         staticChecks.push({ url: localUrl, status: response.status, sha: response.status === 200 ? sha256Hex(bytes) : null })
       }
@@ -189,7 +192,10 @@ test.describe('T11 导出往返与静态托管 @t11 @smoke', () => {
 
     for (const check of staticChecks) {
       // 静态包会包含该范围全部资源;逐条 URL 对齐各自资源的 SHA
-      const expectedSha = check.url.includes('qa-page-file.txt') ? sha256Hex(TINY_TXT) : upload.sha256
+      const asset = manifest.assets.find((entry: { path: string }) => './' + entry.path === check.url)
+      expect(asset, '每个静态URL都在快照清单中').toBeTruthy()
+      const expectedSha = asset.file_name === 'qa-page-file.txt' ? sha256Hex(TINY_TXT) : upload.sha256
+      expect(asset.sha256, '清单摘要与原始上传字节一致').toBe(expectedSha)
       expect.soft(check.status, `静态托管取回失败: ${check.url}`).toBe(200)
       expect.soft(check.sha, `静态托管字节不一致: ${check.url}`).toBe(expectedSha)
     }

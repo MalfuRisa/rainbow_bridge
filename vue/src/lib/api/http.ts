@@ -26,7 +26,7 @@ export async function responseError(response: Response): Promise<ApiError> {
     AUTH_INVALID_CREDENTIALS: '账号或密码错误',
     AUTH_REQUIRED: '请重新登录',
     AUTH_FORBIDDEN: '账号不可用，请联系管理员',
-    AUTH_CSRF_INVALID: '会话校验失败，请刷新会话后重试',
+    AUTH_CSRF_INVALID: '登录状态校验失败，请刷新登录状态后重试',
     AUTH_ORIGIN_DENIED: '来源配置错误，请联系管理员',
     AUTH_RATE_LIMITED: '请求过于频繁，请稍后重试',
   }

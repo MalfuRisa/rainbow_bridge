@@ -7,12 +7,13 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"io"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
-	"github.com/yi-nology/rainbow_bridge/biz/model/runtime"
 	"github.com/yi-nology/rainbow_bridge/biz/model/transfer"
 )
 
@@ -144,28 +145,55 @@ func TestArchiveDescriptionAndContentRoundTrip(t *testing.T) {
 }
 
 func TestStaticArchiveDescriptionAndContent(t *testing.T) {
-	s := testService(t)
-	object := textConfig("a", `{"nested":[1,true]}`)
-	object.Type = "object"
+	// 旧编辑区构包器已移除:快照静态包必须同样保留描述、空值与布尔字符串形态
+	svc := newFreezeService(t)
+	seedFreezeScope(t, svc, "qa_prod", "main")
+	ctx := adminTestContext()
+	object := buildConfig("qa_prod", "main", "REL_OBJ", "object", `{"nested":[1,true]}`)
 	object.Description = "description"
-	empty := textConfig("b", "false")
-	empty.Type = "boolean"
-	data, err := s.writeRuntimeConfigArchive(context.Background(), &runtime.RuntimeConfigData{Configs: configSliceToPB([]model.Config{object, empty})})
+	if _, err := svc.AddConfig(ctx, object); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddConfig(ctx, buildConfig("qa_prod", "main", "REL_BOOL", "boolean", "false")); err != nil {
+		t.Fatal(err)
+	}
+	mustLock(t, svc, "qa_prod", "main", "静态包描述与空值")
+	created, err := svc.CreateRelease(ctx, ReleaseCreateInput{
+		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
+		ExpectedFreezeRevisionRaw: "1", RequestID: uuid.NewString(), Reason: "静态包验收",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := svc.ReleaseStaticExport(ctx, ReleaseStaticExportInput{
+		EnvironmentKey: "qa_prod", PipelineKey: "main", Version: "v1.0",
+		ExpectedSnapshotID: created.Meta.SnapshotID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(exported.TempPath)
+	data, err := os.ReadFile(exported.TempPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	meta := archiveJSON(t, data, "zip", "config.json")
 	configs := meta["data"].(map[string]any)["configs"].([]any)
-	if configs[0].(map[string]any)["description"] != "description" {
+	titles := map[string]map[string]any{}
+	for _, item := range configs {
+		entry := item.(map[string]any)
+		titles[entry["alias"].(string)] = entry
+	}
+	if titles["REL_OBJ"]["description"] != "description" {
 		t.Fatal("static description missing")
 	}
-	if _, ok := configs[0].(map[string]any)["content"].(map[string]any); !ok {
+	if _, ok := titles["REL_OBJ"]["content"].(map[string]any); !ok {
 		t.Fatal("static object shape changed")
 	}
-	if value, ok := configs[1].(map[string]any)["description"]; !ok || value != "" {
+	if value, ok := titles["REL_BOOL"]["description"]; !ok || value != "" {
 		t.Fatal("static empty description missing")
 	}
-	if configs[1].(map[string]any)["content"] != "false" {
+	if titles["REL_BOOL"]["content"] != "false" {
 		t.Fatal("boolean must remain string")
 	}
 }

@@ -119,6 +119,10 @@ func TestRuntimeReleaseEmptyConfigsArray(t *testing.T) {
 		t.Fatalf("add empty pipeline: %v", err)
 	}
 	lockAndPublish(t, fixture.svc, emptyEnv, handlerPipeline, "v1.0")
+	active, err := fixture.svc.ReleaseActive(ctx, emptyEnv, handlerPipeline)
+	if err != nil || active == nil || active.ChangedAt == "" {
+		t.Fatalf("active timestamp missing: %+v %v", active, err)
+	}
 
 	headers := []ut.Header{
 		{Key: "x-environment", Value: emptyEnv},
@@ -131,6 +135,14 @@ func TestRuntimeReleaseEmptyConfigsArray(t *testing.T) {
 		}
 		if !strings.Contains(response.Body.String(), `"configs":[]`) {
 			t.Fatalf("empty release must keep configs as []: %s", response.Body.String())
+		}
+		var body struct {
+			Data struct {
+				ActivatedAt string `json:"activated_at"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Data.ActivatedAt != active.ChangedAt {
+			t.Fatalf("activation time must match resolved head: %s, %v", response.Body.String(), err)
 		}
 	}
 }

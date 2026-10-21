@@ -21,15 +21,15 @@ const { format, stats } = defineProps<{
     </div>
     <div class="flex items-center justify-between text-sm">
       <span class="text-muted-foreground">环境</span>
-      <span>{{ stats.envCount || '-' }}</span>
+      <span>{{ stats.envCount }}</span>
     </div>
     <div class="flex items-center justify-between text-sm">
       <span class="text-muted-foreground">渠道</span>
-      <span>{{ stats.pipeCount || '-' }}</span>
+      <span>{{ stats.pipeCount }}</span>
     </div>
     <div class="flex items-center justify-between text-sm">
       <span class="text-muted-foreground">配置项</span>
-      <span>{{ stats.configCount || '-' }}</span>
+      <span>{{ stats.configCount }}</span>
     </div>
   </div>
 </template>

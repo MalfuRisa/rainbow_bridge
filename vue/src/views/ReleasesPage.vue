@@ -120,7 +120,7 @@ const formatTime = (value: string) => {
     <div class="spectrum-operations spectrum-release-page">
     <!-- §2.1: active business version first; editable/frozen source second; immutable
          version catalog third. Create is primary; switch and history stay secondary. -->
-    <SpectrumPageHeader eyebrow="RELEASES / FROM SNAPSHOT TO LIVE" title="版本发布" description="留下不可变的快照，由你决定哪一个版本正式生效。">
+    <SpectrumPageHeader eyebrow="RELEASES / FROM SNAPSHOT TO LIVE" title="版本发布" description="创建版本后，需切换生效。">
       <div v-if="hasScope" class="spectrum-release-actions">
         <Button size="sm" variant="ghost" @click="releaseStore.refreshScope(selectedEnvKey, selectedPipelineKey)"><RefreshCw class="w-4 h-4 mr-1" />刷新</Button>
         <Button size="sm" variant="outline" @click="historyOpen = true"><History class="w-4 h-4 mr-1" />操作记录</Button>
@@ -130,7 +130,6 @@ const formatTime = (value: string) => {
     <Card class="spectrum-panel spectrum-scope-panel">
       <CardHeader class="spectrum-panel-header">
         <CardTitle class="text-lg">工作范围</CardTitle>
-        <CardDescription>版本属于一个具体范围;同范围内版本号唯一,不同范围可同名</CardDescription>
       </CardHeader>
       <CardContent class="spectrum-panel-content">
         <EnvironmentChannelSelector v-model="envPipelineModel" />
@@ -139,27 +138,24 @@ const formatTime = (value: string) => {
 
     <section v-if="hasScope" class="spectrum-release-status" aria-label="当前发布状态">
           <div class="spectrum-release-current">
-            <p class="spectrum-eyebrow">CURRENTLY SERVING / 生效版本</p>
-            <strong>{{ releaseStore.active ? releaseStore.activeVersion : releaseStore.loading ? '加载中…' : '未设置' }}</strong>
-            <span v-if="releaseStore.active" class="spectrum-state-pill is-active">生效中</span>
+            <p class="spectrum-eyebrow">当前生效版本</p>
+            <strong>{{ releaseStore.active ? releaseStore.activeVersion : releaseStore.loading ? '加载中…' : releaseStore.activeError ? '读取失败' : '尚无生效版本' }}</strong>
             <p v-if="releaseStore.active" class="spectrum-release-change">
-              最近切换：{{ formatTime(releaseStore.active.changed_at) || '时间待确认' }} · {{ releaseStore.active.changed_by || '操作者待确认' }}<br>
+              生效时间：{{ formatTime(releaseStore.active.changed_at) || '—' }} · {{ releaseStore.active.changed_by || '—' }}<br>
               {{ displayNote(releaseStore.active.changed_reason) }}
             </p>
-            <p v-else class="spectrum-release-change">创建版本后不会自动生效，需显式切换。</p>
-            <code>head revision {{ releaseStore.active?.revision ?? '0' }}</code>
           </div>
           <div class="spectrum-release-editing">
-            <p class="spectrum-eyebrow">EDITING AREA / 快照来源</p>
-            <div class="spectrum-release-source-status"><span>编辑区</span><span class="spectrum-state-pill" :class="frozen ? 'is-frozen' : 'is-idle'">{{ frozen ? '已冻结' : freezeStatus ? '可编辑' : '状态待确认' }}</span><code>revision {{ freezeStatus?.revision ?? '—' }}</code></div>
-            <p>{{ frozen ? '已锁定当前内容，可以保存为新版本。' : '先在配置管理中锁版，再从冻结内容创建快照。' }}</p>
+            <p class="spectrum-eyebrow">编辑区</p>
+            <div class="spectrum-release-source-status"><span class="spectrum-state-pill" :class="frozen ? 'is-frozen' : 'is-idle'">{{ frozen ? '已冻结' : freezeStatus ? '可编辑' : '状态待确认' }}</span></div>
+            <p>{{ frozen ? '可创建版本。' : freezeStatus ? '先前往配置管理锁版，再创建版本。' : '请刷新冻结状态后再创建版本。' }}</p>
           </div>
     </section>
 
     <Card v-if="hasScope" class="spectrum-panel spectrum-section">
       <CardHeader class="spectrum-panel-header">
         <CardTitle class="text-lg">版本列表</CardTitle>
-        <CardDescription>版本内容不可修改、不可覆盖；非生效版本可以删除，版本号不能重复使用。</CardDescription>
+        <CardDescription>版本内容不可修改；删除后版本号也不能复用。</CardDescription>
       </CardHeader>
       <CardContent class="spectrum-panel-content">
         <p v-if="releaseStore.error" class="text-sm text-destructive mb-3">{{ releaseStore.error }}</p>
@@ -176,7 +172,6 @@ const formatTime = (value: string) => {
               <TableHeader>
                 <TableRow>
                   <TableHead class="py-3 px-4 text-left text-sm">版本</TableHead>
-                  <TableHead class="py-3 px-4 text-left text-sm">来源冻结</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">创建时间</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">备注</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">内容</TableHead>
@@ -187,7 +182,6 @@ const formatTime = (value: string) => {
               <TableBody>
                 <TableRow v-for="item in releaseStore.items" :key="item.meta.snapshot_id" :class="item.is_active ? 'is-active-version' : ''">
                   <TableCell class="spectrum-release-version font-mono"><span aria-hidden="true" />{{ item.meta.version }}</TableCell>
-                  <TableCell data-label="来源冻结" class="text-sm font-mono">rev {{ item.meta.source_freeze_revision }}</TableCell>
                   <TableCell data-label="创建时间" class="text-xs text-muted-foreground">{{ formatTime(item.meta.created_at) }}</TableCell>
                   <TableCell class="spectrum-release-reason" :title="displayNote(item.meta.reason)">{{ displayNote(item.meta.reason) }}</TableCell>
                   <TableCell class="py-3 px-4 text-xs text-muted-foreground">
@@ -225,36 +219,32 @@ const formatTime = (value: string) => {
 
     <Card v-else class="spectrum-panel">
       <CardContent class="spectrum-panel-content">
-        <div class="spectrum-empty"><PackagePlus :size="32" /><h3>先确定发布范围</h3><p>
-        请先选择环境和渠道以查看发布版本
-        </p></div>
+        <div class="spectrum-empty"><PackagePlus :size="32" /><h3>请选择环境和渠道，查看版本</h3></div>
       </CardContent>
     </Card>
 
-    <details class="spectrum-help" open>
+    <details class="spectrum-help">
       <summary><span>业务接入说明</span><ChevronDown :size="18" /></summary>
     <Card class="spectrum-panel">
       <CardHeader class="spectrum-panel-header">
         <CardTitle class="text-lg">运行时读取</CardTitle>
-        <CardDescription>两类读取地址,选择一种接入方式</CardDescription>
       </CardHeader>
       <CardContent class="spectrum-panel-content space-y-3 text-sm">
         <div class="rounded-md border p-3 space-y-1">
-          <div class="font-medium">跟随生效版本(推荐,配合切换/切回)</div>
+          <div class="font-medium">跟随生效版本</div>
           <pre class="text-xs bg-muted/60 rounded p-2 overflow-x-auto">GET {{ followingURL }}
 Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
-          <p class="text-muted-foreground text-xs">切换生效版本后,随后开始的新请求读取新版本;已在途请求与业务本地缓存不会被服务端撤回。</p>
+          <p class="text-muted-foreground text-xs">切换后，新请求读取新版本；已在途请求和应用缓存不变。</p>
         </div>
         <div class="rounded-md border p-3 space-y-1">
           <div class="font-medium">固定某版本(不跟随切换)</div>
           <pre class="text-xs bg-muted/60 rounded p-2 overflow-x-auto">GET {{ fixedExampleURL }}</pre>
         </div>
         <ul class="list-disc list-inside text-muted-foreground text-xs space-y-1">
-          <li>旧接口 <span class="font-mono">/api/v1/runtime/config</span> 仍读取编辑区,默认语义不变;需要版本化请改接上面的新地址。</li>
-          <li>建议业务每 30 秒左右完整重读一次并整体替换本地一套值,不要只合并新字段;失败时由应用决定是否沿用上次成功值。</li>
+          <li>拉取成功后应整体替换配置，避免保留已删除字段；失败时由应用决定是否使用上次成功值。</li>
           <li>响应保留 JSON 数字原文;JavaScript 原生 <span class="font-mono">JSON.parse</span> 仍可能损失大整数,相关客户端请使用无损解析。</li>
           <li>单范围最多 5000 条配置、快照 payload ≤64 MiB、去重资源 ≤500 份且单份 ≤32 MiB、资源合计 ≤100 MiB；删除版本暂不释放底层文件空间。</li>
-          <li>切换目标会校验该版本全部资源可读且 SHA-256 一致;已提交版本数据缺失时读取返回 503,不会回退编辑区。</li>
+          <li>资源缺失或损坏时读取失败，不会改读编辑区内容。</li>
         </ul>
       </CardContent>
     </Card>

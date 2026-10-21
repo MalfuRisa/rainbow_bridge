@@ -331,6 +331,7 @@ message RuntimeReleaseData {
   string active_revision = 6;        // present in active mode only
   RuntimeReleaseEnvironment environment = 7;
   repeated RuntimeReleaseConfig configs = 8;
+  string activated_at = 9; // RFC3339 UTC; resolved with active_revision, absent in fixed mode
 }
 
 // RuntimeReleaseResponse is the unified response for version runtime reads.

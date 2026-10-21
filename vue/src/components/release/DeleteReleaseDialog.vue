@@ -112,7 +112,7 @@ async function submit(confirm = false) {
         <Label for="delete-reason">备注（选填）</Label>
         <Textarea id="delete-reason" v-model="reason" :disabled="submitting || stopped" :rows="2" placeholder="可补充删除说明，最多500字" />
       </div>
-      <p v-if="canConfirm" class="text-xs text-muted-foreground" data-testid="delete-pending">首次请求的结果尚未确认。确认结果将使用相同范围、版本和请求标识，备注：{{ displayNote(pending?.reason) }}。</p>
+      <p v-if="canConfirm" class="text-xs text-muted-foreground" data-testid="delete-pending">删除结果尚未确认。点击“确认结果”核对首次提交；再次删除将视为新操作。备注：{{ displayNote(pending?.reason) }}。</p>
       <DialogFooter>
         <Button variant="outline" @click="close">取消</Button>
         <Button v-if="canConfirm" variant="secondary" :disabled="submitting || !auth.authenticated" @click="submit(true)">确认结果</Button>
