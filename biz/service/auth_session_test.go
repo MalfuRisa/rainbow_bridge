@@ -23,8 +23,8 @@ const (
 )
 
 type sessionFixture struct {
-	svc   *Service
-	clock *time.Time
+	svc     *Service
+	clock   *time.Time
 	origins []string
 }
 
@@ -258,13 +258,32 @@ func TestAuthConcurrentPasswordChange(t *testing.T) {
 }
 
 // TestAuthPasswordAndUsernameRules:长度与字符规则先校验,不启动昂贵计算。
+func TestAuthDemoAdminPassword(t *testing.T) {
+	fixture := newSessionFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.svc.ResetAdminPassword(ctx, "admin"); err != nil {
+		t.Fatalf("set fixed demo password: %v", err)
+	}
+	login, err := fixture.svc.Login(ctx, AuthLoginInput{
+		Username: "admin", Password: "admin", ClientIP: "127.0.0.1",
+		HasOrigin: true, Origin: "http://127.0.0.1:18081",
+	})
+	if err != nil {
+		t.Fatalf("demo login: %v", err)
+	}
+	if _, err := fixture.me(t, login.Token); err != nil {
+		t.Fatalf("demo session: %v", err)
+	}
+}
+
 func TestAuthPasswordAndUsernameRules(t *testing.T) {
 	cases := []struct {
 		username string
 		password string
 		valid    bool
 	}{
-		{"admin", strings.Repeat("a", 14), false},
+		{"admin", strings.Repeat("a", 4), false},
+		{"admin", "admin", true},
 		{"admin", strings.Repeat("a", 15), true},
 		{"admin", strings.Repeat("汉", 15), true},
 		{"admin", strings.Repeat("x", 129), false},

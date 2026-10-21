@@ -157,7 +157,7 @@ func TestAuthBootstrapRequiresInitialPassword(t *testing.T) {
 	} else if !strings.Contains(err.Error(), service.AdminInitialPasswordEnv) {
 		t.Fatalf("error must name the missing setting, got: %v", err)
 	}
-	t.Setenv(service.AdminInitialPasswordEnv, "short")
+	t.Setenv(service.AdminInitialPasswordEnv, "abcd")
 	if err := fixture.svc.EnsureAuthBootstrap(ctx); err == nil {
 		t.Fatal("bootstrap with invalid password must fail")
 	}
@@ -289,7 +289,7 @@ func TestAuthPasswordChangeRevokesEverything(t *testing.T) {
 	_, firstToken, first := login(t, fixture, authTestPassword)
 	_, secondToken, second := login(t, fixture, authTestPassword)
 
-	shortBody, _ := json.Marshal(map[string]string{"current_password": authTestPassword, "new_password": "too short"})
+	shortBody, _ := json.Marshal(map[string]string{"current_password": authTestPassword, "new_password": "abcd"})
 	short := ut.PerformRequest(fixture.engine.Engine, "POST", "/api/v1/auth/password", &ut.Body{Body: bytes.NewReader(shortBody), Len: len(shortBody)}, jsonHeader(), originHeader(), cookieHeader(firstToken), csrfHeader(first.Data.CSRFToken))
 	if short.Code != 400 || errorOf(t, short).ErrorType != service.ErrTypeAuthInvalidRequest {
 		t.Fatalf("short password must be 400 AUTH_INVALID_REQUEST: %d %s", short.Code, short.Body.String())

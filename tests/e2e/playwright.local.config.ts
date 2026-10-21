@@ -26,6 +26,9 @@ export default defineConfig({
   outputDir,
   use: {
     browserName: 'chromium',
+    // Windows hosts may restrict the system temporary downloads directory.
+    // Keep the override per run; never change the user's browser preferences.
+    launchOptions: { downloadsPath: process.env.RB_QA_DOWNLOADS_DIR || undefined },
     /* 第一次失败即保留现场 */
     // 登录请求包含凭据,本地鉴权回归不归档网络 trace。
     trace: 'off',

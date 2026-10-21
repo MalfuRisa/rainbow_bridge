@@ -62,7 +62,7 @@ test.describe('版本发布 API 契约 @release', () => {
       { ...createPayload, version: 'latest', request_id: crypto.randomUUID() },
       { ...createPayload, request_id: 'not-a-uuid' },
       { ...createPayload, expected_freeze_revision: 'abc', request_id: crypto.randomUUID() },
-      { ...createPayload, reason: '   ', request_id: crypto.randomUUID() },
+      { ...createPayload, reason: '中'.repeat(501), request_id: crypto.randomUUID() },
     ]) {
       const response = await postJson(target, '/api/v1/release/create', bad, auth)
       expect(response.status, `bad payload must be 400: ${JSON.stringify(bad).slice(0, 120)}`).toBe(400)

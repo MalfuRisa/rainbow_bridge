@@ -13,6 +13,9 @@ import CreateReleaseDialog from '@/components/release/CreateReleaseDialog.vue'
 import ActivateReleaseDialog from '@/components/release/ActivateReleaseDialog.vue'
 import ReleaseHistoryDialog from '@/components/release/ReleaseHistoryDialog.vue'
 import ReleaseDetailDialog from '@/components/release/ReleaseDetailDialog.vue'
+import DeleteReleaseDialog, { type DeleteTarget } from '@/components/release/DeleteReleaseDialog.vue'
+import { useAuthStore } from '@/stores/auth'
+import { displayNote } from '@/lib/operation-note'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
@@ -23,6 +26,22 @@ const router = useRouter()
 const environmentStore = useEnvironmentStore()
 const freezeStore = useFreezeStore()
 const releaseStore = useReleaseStore()
+const auth = useAuthStore()
+const deleteOpen = ref(false)
+const deleteTarget = ref<DeleteTarget | null>(null)
+let targetEpoch = 0
+async function openDelete(version: string, snapshotId: string) {
+  const epoch = ++targetEpoch
+  const scope = { environmentKey: selectedEnvKey.value, pipelineKey: selectedPipelineKey.value }
+  const target = { ...scope, version, snapshotId, environmentName: selectedEnvironment.value?.name, pipelineName: selectedPipeline.value?.name }
+  // Reopening an abandoned operation always rechecks list/active first.
+  await releaseStore.refreshScope(scope.environmentKey, scope.pipelineKey)
+  if (epoch !== targetEpoch || selectedEnvKey.value !== scope.environmentKey || selectedPipelineKey.value !== scope.pipelineKey) return
+  const row = releaseStore.items.find(item => item.meta.snapshot_id === snapshotId)
+  if (!row || !releaseStore.canDelete(row)) return
+  deleteTarget.value = target
+  deleteOpen.value = true
+}
 
 const envPipelineModel = ref({ envKey: '', pipelineKey: '' })
 const createOpen = ref(false)
@@ -54,16 +73,24 @@ const frozen = computed(() => freezeStatus.value?.state === 'locked')
 watch(
   [selectedEnvKey, selectedPipelineKey],
   ([envKey, pipelineKey]) => {
+    targetEpoch++
+    createOpen.value = false; activateOpen.value = false; detailOpen.value = false
+    historyOpen.value = false; deleteOpen.value = false; deleteTarget.value = null
     if (envKey && pipelineKey) {
       freezeStore.loadStatus(envKey, pipelineKey)
       releaseStore.switchScope(envKey, pipelineKey)
       router.replace({ query: { env: envKey, pipeline: pipelineKey } })
     } else {
-      releaseStore.reset()
+      releaseStore.switchScope('', '')
     }
   },
   { immediate: true }
 )
+watch(() => auth.user?.id, () => {
+  targetEpoch++
+  createOpen.value = false; activateOpen.value = false; detailOpen.value = false
+  historyOpen.value = false; deleteOpen.value = false; deleteTarget.value = null
+})
 
 const followingURL = computed(() => releaseRuntimeURL(import.meta.env.BASE_URL || '/rainbow-bridge', undefined))
 const fixedExampleURL = computed(() => {
@@ -115,8 +142,9 @@ const formatTime = (value: string) => {
             <p class="spectrum-eyebrow">CURRENTLY SERVING / 生效版本</p>
             <strong>{{ releaseStore.active ? releaseStore.activeVersion : releaseStore.loading ? '加载中…' : '未设置' }}</strong>
             <span v-if="releaseStore.active" class="spectrum-state-pill is-active">生效中</span>
-            <p v-if="releaseStore.active?.changed_reason" class="spectrum-release-change">
-              最近切换:{{ releaseStore.active.changed_reason }}({{ formatTime(releaseStore.active.changed_at) }})
+            <p v-if="releaseStore.active" class="spectrum-release-change">
+              最近切换：{{ formatTime(releaseStore.active.changed_at) || '时间待确认' }} · {{ releaseStore.active.changed_by || '操作者待确认' }}<br>
+              {{ displayNote(releaseStore.active.changed_reason) }}
             </p>
             <p v-else class="spectrum-release-change">创建版本后不会自动生效，需显式切换。</p>
             <code>head revision {{ releaseStore.active?.revision ?? '0' }}</code>
@@ -131,10 +159,11 @@ const formatTime = (value: string) => {
     <Card v-if="hasScope" class="spectrum-panel spectrum-section">
       <CardHeader class="spectrum-panel-header">
         <CardTitle class="text-lg">版本列表</CardTitle>
-        <CardDescription>按创建顺序倒序;版本不可修改、不可覆盖、本版不提供删除</CardDescription>
+        <CardDescription>版本内容不可修改、不可覆盖；非生效版本可以删除，版本号不能重复使用。</CardDescription>
       </CardHeader>
       <CardContent class="spectrum-panel-content">
         <p v-if="releaseStore.error" class="text-sm text-destructive mb-3">{{ releaseStore.error }}</p>
+        <p v-if="releaseStore.activeError" class="text-sm text-destructive mb-3">{{ releaseStore.activeError }}</p>
         <div v-if="releaseStore.loading && releaseStore.items.length === 0" class="flex justify-center py-10">
           <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
@@ -149,7 +178,7 @@ const formatTime = (value: string) => {
                   <TableHead class="py-3 px-4 text-left text-sm">版本</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">来源冻结</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">创建时间</TableHead>
-                  <TableHead class="py-3 px-4 text-left text-sm">说明</TableHead>
+                  <TableHead class="py-3 px-4 text-left text-sm">备注</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">内容</TableHead>
                   <TableHead class="py-3 px-4 text-left text-sm">状态</TableHead>
                   <TableHead class="py-3 px-4 text-right text-sm">操作</TableHead>
@@ -160,7 +189,7 @@ const formatTime = (value: string) => {
                   <TableCell class="spectrum-release-version font-mono"><span aria-hidden="true" />{{ item.meta.version }}</TableCell>
                   <TableCell data-label="来源冻结" class="text-sm font-mono">rev {{ item.meta.source_freeze_revision }}</TableCell>
                   <TableCell data-label="创建时间" class="text-xs text-muted-foreground">{{ formatTime(item.meta.created_at) }}</TableCell>
-                  <TableCell class="spectrum-release-reason" :title="item.meta.reason">{{ item.meta.reason }}</TableCell>
+                  <TableCell class="spectrum-release-reason" :title="displayNote(item.meta.reason)">{{ displayNote(item.meta.reason) }}</TableCell>
                   <TableCell class="py-3 px-4 text-xs text-muted-foreground">
                     {{ item.meta.config_count ?? 0 }} 配置 · {{ item.meta.asset_count ?? 0 }} 资源
                   </TableCell>
@@ -169,7 +198,7 @@ const formatTime = (value: string) => {
                     <Badge v-else variant="outline" class="px-2 py-0.5">未生效</Badge>
                   </TableCell>
                   <TableCell class="py-3 px-4 text-right">
-                    <div class="flex items-center justify-end gap-2">
+                    <div class="spectrum-release-row-actions">
                       <Button variant="ghost" size="sm" @click="openDetail(item.meta.version)">
                         <Eye class="w-4 h-4 mr-1" />
                         查看
@@ -178,6 +207,7 @@ const formatTime = (value: string) => {
                         <ArrowRightLeft class="w-4 h-4 mr-1" />
                         {{ releaseStore.isOlderThanActive(item.meta.version) ? '切回此版本' : '切换生效版本' }}
                       </Button>
+                      <Button v-if="auth.authenticated && releaseStore.canDelete(item)" variant="ghost" size="sm" class="text-destructive" @click="openDelete(item.meta.version, item.meta.snapshot_id)">删除版本</Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -223,7 +253,7 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
           <li>旧接口 <span class="font-mono">/api/v1/runtime/config</span> 仍读取编辑区,默认语义不变;需要版本化请改接上面的新地址。</li>
           <li>建议业务每 30 秒左右完整重读一次并整体替换本地一套值,不要只合并新字段;失败时由应用决定是否沿用上次成功值。</li>
           <li>响应保留 JSON 数字原文;JavaScript 原生 <span class="font-mono">JSON.parse</span> 仍可能损失大整数,相关客户端请使用无损解析。</li>
-          <li>初版边界:单范围最多 5000 条配置、快照 payload ≤64 MiB、去重资源 ≤500 份且单份 ≤32 MiB、资源合计 ≤100 MiB;版本不可删除,磁盘会随版本积累。</li>
+          <li>单范围最多 5000 条配置、快照 payload ≤64 MiB、去重资源 ≤500 份且单份 ≤32 MiB、资源合计 ≤100 MiB；删除版本暂不释放底层文件空间。</li>
           <li>切换目标会校验该版本全部资源可读且 SHA-256 一致;已提交版本数据缺失时读取返回 503,不会回退编辑区。</li>
         </ul>
       </CardContent>
@@ -231,6 +261,7 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
     </details>
     <RouterLink v-if="hasScope" class="spectrum-quiet-link mt-6" :to="{ path: '/config', query: { env: selectedEnvKey, pipeline: selectedPipelineKey } }">返回当前范围的配置工作区 <ArrowUpRight :size="14" /></RouterLink>
 
+    <DeleteReleaseDialog :open="deleteOpen" :target="deleteTarget" @update:open="deleteOpen = $event" />
     <CreateReleaseDialog
       :open="createOpen"
       :environment-key="selectedEnvKey"

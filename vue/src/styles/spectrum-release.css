@@ -12,6 +12,12 @@
 .spectrum-release-source-status code { color: var(--spectrum-inverse-muted); font-size: 12px; }
 .spectrum-release-editing > p:not(.spectrum-eyebrow) { color: var(--spectrum-inverse-muted); font-size: 12px; line-height: 2; }
 .spectrum-release-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.spectrum-delete-overlay { background: color-mix(in srgb, var(--spectrum-ink) 24%, transparent); backdrop-filter: blur(2px); }
+.spectrum-delete-target { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 24px; padding: 16px; background: var(--muted); border-radius: 8px; font-size: 14px; }
+.spectrum-delete-target dt { color: var(--muted-foreground); }
+.spectrum-delete-target dd { overflow-wrap: anywhere; }
+.spectrum-delete-target code { font-size: 12px; margin-left: 8px; }
+.spectrum-release-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .spectrum-release-table { min-width: 880px; }
 .spectrum-release-table .spectrum-release-version { font-size: 20px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .spectrum-release-version > span { display: inline-block; width: 8px; height: 8px; margin-right: 12px; border-radius: 50%; background: var(--border); vertical-align: middle; }

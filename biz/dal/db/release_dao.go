@@ -56,7 +56,7 @@ func (dao *ReleaseDAO) GetVersionByCreationRequestID(ctx context.Context, db *go
 // ListVersions 按创建 ID 倒序分页;多取一条用于 has_more。
 func (dao *ReleaseDAO) ListVersions(ctx context.Context, db *gorm.DB, environmentKey, pipelineKey string, limit int, beforeID uint) ([]model.ConfigReleaseVersion, bool, error) {
 	query := db.WithContext(ctx).
-		Where("environment_key = ? AND pipeline_key = ?", environmentKey, pipelineKey)
+		Where("environment_key = ? AND pipeline_key = ? AND deleted_at IS NULL", environmentKey, pipelineKey)
 	if beforeID > 0 {
 		query = query.Where("id < ?", beforeID)
 	}

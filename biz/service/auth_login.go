@@ -270,7 +270,7 @@ func (s *Service) ChangePassword(ctx context.Context, input AuthPasswordChangeIn
 		return authCSRFError()
 	}
 	if !IsValidAuthPassword(input.NewPassword) {
-		return authInvalidRequestError("新密码需 15-128 个字符且不超过 512 字节")
+		return authInvalidRequestError("新密码需 5-128 个字符且不超过 512 字节")
 	}
 	if input.NewPassword == input.CurrentPassword {
 		return authInvalidRequestError("新密码不能与当前密码相同")

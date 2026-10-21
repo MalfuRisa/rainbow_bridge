@@ -1,0 +1,26 @@
+# 本地开发配置(方案 B:源码运行)
+# 数据库用 SQLite、存储用本地磁盘,不依赖 PostgreSQL/MinIO
+# Redis 默认关闭:本机 Redis 在 WSL 内部且只绑定 WSL 的 127.0.0.1,Windows 侧连不上
+server:
+  address: ":8080"
+  base_path: "/rainbow-bridge"
+
+database:
+  driver: "sqlite"
+  sqlite:
+    path: "data/resource.db"
+
+redis:
+  enabled: false
+
+storage:
+  type: "local"
+
+# 内网环境:版本检查接口不请求 GitHub
+intranet:
+  enabled: true
+
+log:
+  level: "info"
+  output: "stdout"
+  file: "logs/rainbow-bridge.log"

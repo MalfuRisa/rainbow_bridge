@@ -101,6 +101,13 @@ export function dataDir(target: Target): string {
   return path.join(target.instanceDir, 'data')
 }
 
+/** 隔离启动器可显式指定快照目录；未配置时保持后端默认布局。 */
+export function releaseSnapshotsDir(target: Target): string {
+  const override = target.label === 'a' ? process.env.RB_QA_A_RELEASE_DIR :
+    target.label === 'b' ? process.env.RB_QA_B_RELEASE_DIR : undefined
+  return override || path.join(dataDir(target), 'release-snapshots')
+}
+
 /** 证据文件统一落到本轮 artifacts，文件名带阶段前缀。 */
 export function writeEvidence(name: string, payload: unknown): string {
   const dir = artifactsDir()

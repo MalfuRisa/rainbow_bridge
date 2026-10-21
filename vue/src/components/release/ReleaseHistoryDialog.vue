@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { useDialogHistory } from '@/composables/useDialogHistory'
+import { displayNote } from '@/lib/operation-note'
 import { History } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,45 +20,14 @@ const emit = defineEmits<{
 
 const releaseStore = useReleaseStore()
 
-const items = ref<ReleaseEventItem[]>([])
-const hasMore = ref(false)
-const nextBefore = ref('')
-const loading = ref(false)
-const errorMessage = ref('')
-
-const formatTime = (value: string) => {
-  if (!value) return ''
-  const time = new Date(value)
-  return Number.isNaN(time.getTime()) ? value : time.toLocaleString()
-}
-
-const load = async (beforeEventId = '') => {
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const data = await releaseStore.history(props.environmentKey, props.pipelineKey, beforeEventId)
-    const page = data.items ?? []
-    items.value = beforeEventId ? [...items.value, ...page] : page
-    hasMore.value = data.has_more ?? false
-    nextBefore.value = data.next_before_event_id || ''
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '历史加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      items.value = []
-      hasMore.value = false
-      nextBefore.value = ''
-      load()
-    }
-  }
+const { items, hasMore, nextBefore, loading, errorMessage, load } = useDialogHistory<ReleaseEventItem>(
+  () => [props.open, props.environmentKey, props.pipelineKey, releaseStore.contentEpoch] as const, (env, pipeline, before) => releaseStore.history(env, pipeline, before),
 )
+const formatTime = (value: string) => value ? new Date(value).toLocaleString() : '时间待确认'
+const eventLabels = new Map([
+  ['create', '创建版本'], ['activate', '切换生效版本'], ['delete', '删除版本'],
+])
+const eventLabel = (kind: string) => eventLabels.get(kind) || '未知操作'
 </script>
 
 <template>
@@ -80,7 +50,7 @@ watch(
         <div v-for="item in items" :key="item.event_id" class="rounded-md border p-3 text-sm space-y-1">
           <div class="flex items-center gap-2 flex-wrap">
             <Badge :variant="item.event_type === 'activate' ? 'default' : 'secondary'" class="px-2 py-0.5 text-xs">
-              {{ item.event_type === 'activate' ? '切换' : '创建' }}
+              {{ eventLabel(item.event_type) }}
             </Badge>
             <span class="font-mono">{{ item.version }}</span>
             <span v-if="item.event_type === 'activate'" class="text-xs text-muted-foreground font-mono">
@@ -88,8 +58,8 @@ watch(
             </span>
             <span class="text-xs text-muted-foreground ml-auto">{{ formatTime(item.created_at) }}</span>
           </div>
-          <div class="text-muted-foreground">原因:{{ item.reason || '(未填写)' }}</div>
-          <div class="text-xs text-muted-foreground">操作者:{{ item.actor }} · request {{ item.request_id.slice(0, 8) }}</div>
+          <div class="text-muted-foreground">备注：{{ displayNote(item.reason) }}</div>
+          <div class="text-xs text-muted-foreground">操作者:{{ item.actor }} · request {{ (item.request_id || '').slice(0, 8) }}</div>
         </div>
 
         <div v-if="hasMore" class="text-center pt-2">

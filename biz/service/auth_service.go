@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"log"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -93,7 +93,7 @@ func (s *Service) EnsureAuthBootstrap(ctx context.Context) error {
 		return fmt.Errorf("auth bootstrap: %s is required when no admin account exists", AdminInitialPasswordEnv)
 	}
 	if !IsValidAuthPassword(password) {
-		return fmt.Errorf("auth bootstrap: %s must be 15-128 characters and at most 512 bytes", AdminInitialPasswordEnv)
+		return fmt.Errorf("auth bootstrap: %s must be 5-128 characters and at most 512 bytes", AdminInitialPasswordEnv)
 	}
 	hash, err := hashAdminPassword(password)
 	if err != nil {

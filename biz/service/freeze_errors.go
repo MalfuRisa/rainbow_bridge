@@ -112,7 +112,7 @@ func freezeInvalidRequestError(message string) *FreezeError {
 }
 
 func freezeInvalidReasonError() *FreezeError {
-	return newFreezeError(400, ErrTypeFreezeInvalidReason, "reason must be 1-500 characters after trimming")
+	return newFreezeError(400, ErrTypeFreezeInvalidReason, "reason must not exceed 500 characters after trimming")
 }
 
 func freezeInvalidRevisionError(value string) *FreezeError {

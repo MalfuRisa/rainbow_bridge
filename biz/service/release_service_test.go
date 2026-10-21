@@ -676,7 +676,7 @@ func TestReleaseValidationAndListPagination(t *testing.T) {
 		{"latest", uuid.NewString(), "原因", "1"},
 		{strings.Repeat("a", 65), uuid.NewString(), "原因", "1"},
 		{"v1.0", "not-a-uuid", "原因", "1"},
-		{"v1.0", uuid.NewString(), "  ", "1"},
+		{"v1.0", uuid.NewString(), strings.Repeat("汉", 501), "1"},
 		{"v1.0", uuid.NewString(), "原因", "abc"},
 		{"v1.0", uuid.NewString(), "原因", "-1"},
 	} {

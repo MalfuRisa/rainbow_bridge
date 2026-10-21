@@ -84,16 +84,16 @@ func (s *Service) ReleaseStaticExport(ctx context.Context, input ReleaseStaticEx
 	ctx, cancel := context.WithTimeout(ctx, releaseExportTotalTimeout)
 	defer cancel()
 
-	storage, err := s.releaseStorage()
-	if err != nil {
-		return nil, err
-	}
 	plan, err := s.buildReleaseStaticPlan(ctx, environmentKey, pipelineKey, versionName, expectedSnapshot)
 	if err != nil {
 		// 期限内失败才是内部/业务错误;已超时或已取消统一按导出超时表达
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, releaseExportContextError(ctxErr)
 		}
+		return nil, err
+	}
+	storage, err := s.releaseStorage()
+	if err != nil {
 		return nil, err
 	}
 	if hook := releaseExportPauseHookForTest; hook != nil {
@@ -126,6 +126,9 @@ func (s *Service) buildReleaseStaticPlan(ctx context.Context, environmentKey, pi
 	}
 	if row.SnapshotID != expectedSnapshot {
 		return nil, releaseSnapshotMismatchError(environmentKey, pipelineKey, versionName, expectedSnapshot, row.SnapshotID)
+	}
+	if row.DeletedAt != nil {
+		return nil, releaseVersionDeletedError()
 	}
 	if payloadDigest(row.Payload) != row.PayloadSha256 {
 		return nil, releaseIncompleteError("release payload digest mismatch")

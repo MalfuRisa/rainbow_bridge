@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
-import { dataDir, freezeToken, targetA, writeEvidence } from '../support/env'
+import { releaseSnapshotsDir, freezeToken, targetA, writeEvidence } from '../support/env'
 import {
   TINY_TXT,
   createConfig,
@@ -290,8 +290,7 @@ test.describe('首页生效配置与静态导出 @release', () => {
     expect(row.assets.length).toBe(1)
 
     const assetPath = path.join(
-      dataDir(target),
-      'release-snapshots',
+      releaseSnapshotsDir(target),
       row.meta.snapshot_id,
       'assets',
       `${row.assets[0].asset_id}.bin`,

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { noteTooLong, displayNote } from '@/lib/operation-note'
+import { useDialogAttempt } from '@/composables/useDialogAttempt'
 import { toast } from 'vue-sonner'
 import { AlertCircle, Lock, PackagePlus } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
@@ -40,6 +42,7 @@ const limitInfo = ref<{ item: string; limit: number; actual: number } | null>(nu
 /** 首次提交的整份请求:确认已提交结果必须原样重发,业务 payload 与请求标识保持不变。 */
 const pendingPayload = ref<ReleaseCreatePayload | null>(null)
 const retryAvailable = ref(false)
+const targetDeleted = ref(false)
 
 const freezeStatus = computed(() => freezeStore.statusFor(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey))
 const frozen = computed(() => freezeStatus.value?.state === 'locked')
@@ -48,6 +51,8 @@ const scopeLine = computed(() => {
   const { environmentKey, pipelineKey, environmentName, pipelineName } = scopeSnapshot.value
   return `${environmentName || environmentKey}(${environmentKey}) / ${pipelineName || pipelineKey}(${pipelineKey})`
 })
+const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey], () => { submitting.value = false; errorMessage.value = ''; pendingPayload.value = null; retryAvailable.value = false; targetDeleted.value = false })
+
 /** 表单是否仍然等于首次提交的请求(范围/版本/原因未改)。 */
 const retryMatchesPending = computed(() => {
   const pending = pendingPayload.value
@@ -112,7 +117,7 @@ const describeIssue = (value: string) => {
 }
 
 const submit = async (reuseRequestId: boolean) => {
-  if (submitting.value || !auth.authenticated) return
+  if (submitting.value || targetDeleted.value || !auth.authenticated) return
   errorMessage.value = ''
   issues.value = []
   limitInfo.value = null
@@ -133,8 +138,8 @@ const submit = async (reuseRequestId: boolean) => {
       errorMessage.value = '请填写版本号(小写字母/数字开头,可含 . _ -)'
       return
     }
-    if (!trimmedReason || trimmedReason.length > 500) {
-      errorMessage.value = '请填写 1-500 字符的原因'
+    if (noteTooLong(trimmedReason)) {
+      errorMessage.value = '备注最多500字'
       return
     }
     payload = {
@@ -147,14 +152,17 @@ const submit = async (reuseRequestId: boolean) => {
     }
     pendingPayload.value = payload
   }
+  const current = startAttempt()
   submitting.value = true
   retryAvailable.value = false
   try {
     const result = await releaseStore.create(payload)
+    if (!current()) return
     toast.success(result.replayed ? '该请求已提交过:返回原已保存版本' : '版本已保存,尚未切换生效')
     emit('created', payload.version)
     emit('update:open', false)
   } catch (error) {
+    if (!current()) return
     if (error instanceof ApiError) {
       const payload = (error.payload || {}) as {
         resource_issues?: ReleaseResourceIssue[]
@@ -173,8 +181,15 @@ const submit = async (reuseRequestId: boolean) => {
           await freezeStore.loadStatus(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_VERSION_EXISTS':
-          errorMessage.value = '该版本号已存在;版本不可覆盖,请更换版本号'
+          errorMessage.value = '版本号已使用，已删版本号也不能复用'
           pendingPayload.value = null
+          break
+        case 'RELEASE_VERSION_DELETED':
+          targetDeleted.value = true
+          pendingPayload.value = null
+          retryAvailable.value = false
+          errorMessage.value = '该版本已被删除'
+          await releaseStore.refreshScope(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey)
           break
         case 'RELEASE_REQUEST_CONFLICT':
           errorMessage.value = '该请求标识已用于不同内容;已生成新的请求标识,请确认后重试'
@@ -203,7 +218,7 @@ const submit = async (reuseRequestId: boolean) => {
       errorMessage.value = error instanceof Error ? `${error.message}(网络结果不确定时可重试本次请求)` : '创建失败'
     }
   } finally {
-    submitting.value = false
+    if (current()) submitting.value = false
   }
 }
 </script>
@@ -252,7 +267,7 @@ const submit = async (reuseRequestId: boolean) => {
         </div>
 
         <div v-if="showRetry" class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid="restore-pending">
-          确认结果会原样重发首次提交的请求(版本 {{ pendingPayload?.version }},来源 revision {{ pendingFreezeRevision }},原因「{{ pendingPayload?.reason }}」),不要求当前仍处于锁定状态;再次点击主按钮则按当前输入提交为新请求。
+          确认结果会原样重发首次提交的请求(版本 {{ pendingPayload?.version }},来源 revision {{ pendingFreezeRevision }},备注：{{ displayNote(pendingPayload?.reason) }}),不要求当前仍处于锁定状态;再次点击主按钮则按当前输入提交为新请求。
         </div>
 
         <div class="space-y-2">
@@ -261,7 +276,7 @@ const submit = async (reuseRequestId: boolean) => {
         </div>
 
         <div class="space-y-2">
-          <Label for="release-reason" class="text-sm font-medium">原因(必填,1-500 字符)</Label>
+          <Label for="release-reason" class="text-sm font-medium">备注（选填）</Label>
           <Textarea id="release-reason" :rows="2" class="resize-none" v-model="reason" placeholder="例如:上线前验收完成" />
         </div>
 
@@ -269,10 +284,10 @@ const submit = async (reuseRequestId: boolean) => {
 
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="emit('update:open', false)">取消</Button>
-        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="submitting || !auth.authenticated" @click="submit(true)">
+        <Button v-if="showRetry" variant="secondary" class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated" @click="submit(true)">
           确认结果(同一请求标识)
         </Button>
-        <Button class="h-10" :disabled="submitting || !auth.authenticated || (!frozen && !showRetry)" @click="submit(false)">
+        <Button class="h-10" :disabled="targetDeleted || submitting || !auth.authenticated || (!frozen && !showRetry)" @click="submit(false)">
           {{ submitting ? '提交中...' : showRetry ? '按当前输入提交新请求' : '保存版本' }}
         </Button>
       </DialogFooter>

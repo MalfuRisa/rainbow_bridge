@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { useDialogHistory } from '@/composables/useDialogHistory'
+import { displayNote } from '@/lib/operation-note'
 import { History } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,44 +17,10 @@ const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
 }>()
 
-const items = ref<FreezeEventItem[]>([])
-const hasMore = ref(false)
-const nextBefore = ref('')
-const loading = ref(false)
-const errorMessage = ref('')
-
-const formatTime = (value: string) => {
-  if (!value) return ''
-  const time = new Date(value)
-  return Number.isNaN(time.getTime()) ? value : time.toLocaleString()
-}
-
-const load = async (beforeEventId = '') => {
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const data = await freezeApi.history(props.environmentKey, props.pipelineKey, 20, beforeEventId)
-    items.value = beforeEventId ? [...items.value, ...data.items] : data.items
-    hasMore.value = data.has_more
-    nextBefore.value = data.next_before_event_id || ''
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '历史加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      items.value = []
-      hasMore.value = false
-      nextBefore.value = ''
-      load()
-    }
-  }
+const { items, hasMore, nextBefore, loading, errorMessage, load } = useDialogHistory<FreezeEventItem>(
+  () => [props.open, props.environmentKey, props.pipelineKey] as const, (env, pipeline, before) => freezeApi.history(env, pipeline, 20, before),
 )
+const formatTime = (value: string) => value ? new Date(value).toLocaleString() : '时间待确认'
 </script>
 
 <template>
@@ -85,7 +52,7 @@ watch(
             </span>
             <span class="text-xs text-muted-foreground ml-auto">{{ formatTime(item.created_at) }}</span>
           </div>
-          <div class="text-muted-foreground">原因:{{ item.reason || '(未填写)' }}</div>
+          <div class="text-muted-foreground">备注：{{ displayNote(item.reason) }}</div>
           <div class="text-xs text-muted-foreground">操作者:{{ item.actor }}</div>
         </div>
 

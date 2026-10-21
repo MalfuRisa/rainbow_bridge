@@ -119,8 +119,40 @@ export interface ReleaseActivatePayload {
   reason: string
 }
 
+export interface ReleaseDeletePayload {
+  environment_key: string
+  pipeline_key: string
+  version: string
+  expected_snapshot_id: string
+  request_id: string
+  reason: string
+}
+export interface ReleaseDeleteResult {
+  request_id: string
+  snapshot_id: string
+  version: string
+  deleted: boolean
+  deleted_at: string
+  deleted_by: string
+  reason: string
+  replayed: boolean
+}
+
 
 export const releaseApi = {
+  async delete(payload: ReleaseDeletePayload): Promise<ReleaseDeleteResult> {
+    const response = await apiClient.request<ReleaseDeleteResult>('POST', '/api/v1/release/delete',
+      { ...payload }, { showErrorToast: false })
+    const data = response.data
+    if (!data || data.deleted !== true || data.request_id !== payload.request_id ||
+        data.snapshot_id !== payload.expected_snapshot_id || data.version !== payload.version ||
+        typeof data.deleted_at !== 'string' || !data.deleted_at ||
+        typeof data.deleted_by !== 'string' || !data.deleted_by ||
+        typeof data.reason !== 'string' || typeof data.replayed !== 'boolean') {
+      throw new ApiError(502, '删除响应不完整或目标不匹配，请确认结果', '', ErrorType.API)
+    }
+    return data
+  },
   async list(environmentKey: string, pipelineKey: string, beforeId = ''): Promise<ReleaseListData> {
     const response = await apiClient.request<ReleaseListData>(
       'GET',

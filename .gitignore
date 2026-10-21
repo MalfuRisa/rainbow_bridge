@@ -109,3 +109,11 @@ config.yaml.demo
 .dev-18081/
 .dev-integration/
 /tests/e2e/test-results-auth/
+
+# 清理功能隔离冒烟(数据/二进制/本地凭据不进库)
+.smoke-cleanup/
+
+# Local consolidation checks and development snapshots
+.local-qa/
+/data/release-snapshots/
+*.lnk

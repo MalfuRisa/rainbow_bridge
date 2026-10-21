@@ -8,6 +8,7 @@ import {
   type ReleaseDetailData,
   type ReleaseHistoryData,
   type ReleaseListItem,
+  type ReleaseDeletePayload,
 } from '@/lib/api/release'
 
 /**
@@ -25,6 +26,12 @@ export const useReleaseStore = defineStore('release', () => {
   const nextBeforeId = ref('')
   const active = ref<ReleaseActiveInfo | null>(null)
   const error = ref('')
+  const activeError = ref('')
+  const listLoaded = ref(false)
+  const activeLoaded = ref(false)
+  const listedActive = ref<ReleaseActiveInfo | null>(null)
+  const contentEpoch = ref(0)
+  let scopeEpoch = 0
 
   const keyOf = (environmentKey: string, pipelineKey: string) => `${environmentKey}/${pipelineKey}`
   const isCurrentScope = (environmentKey: string, pipelineKey: string) =>
@@ -41,6 +48,16 @@ export const useReleaseStore = defineStore('release', () => {
 
   const activeVersion = computed(() => active.value?.version ?? '')
   const loading = computed(() => pending.value > 0)
+  const deletionStateKnown = computed(() => {
+    if (loading.value || error.value || activeError.value || !listLoaded.value || !activeLoaded.value) return false
+    if (active.value && (!active.value.snapshot_id || !active.value.version || !active.value.revision)) return false
+    const sameActive = listedActive.value?.snapshot_id === active.value?.snapshot_id &&
+      listedActive.value?.revision === active.value?.revision
+    return sameActive && !items.value.some(row => row.is_active &&
+      row.meta.snapshot_id !== active.value?.snapshot_id)
+  })
+  const canDelete = (item: ReleaseListItem) => deletionStateKnown.value && Boolean(item.meta.snapshot_id) &&
+    !item.is_active && item.meta.snapshot_id !== active.value?.snapshot_id && item.meta.version !== active.value?.version
 
   /**
    * 目标版本是否早于当前生效版本(列表按创建倒序,序号更大表示更早),仅决定按钮文案:
@@ -59,10 +76,15 @@ export const useReleaseStore = defineStore('release', () => {
     nextBeforeId.value = ''
     active.value = null
     error.value = ''
+    activeError.value = ''
+    listLoaded.value = false
+    activeLoaded.value = false
+    listedActive.value = null
   }
 
   /** 切换范围:清空并开启新批次加载列表与 active。 */
   const switchScope = async (environmentKey: string, pipelineKey: string): Promise<void> => {
+    scopeEpoch++
     scopeKey.value = keyOf(environmentKey, pipelineKey)
     const batch = beginBatch()
     reset()
@@ -83,7 +105,8 @@ export const useReleaseStore = defineStore('release', () => {
       items.value = data.items ?? []
       hasMore.value = data.has_more ?? false
       nextBeforeId.value = data.next_before_id ?? ''
-      active.value = data.active ?? null
+      listedActive.value = data.active ?? null
+      listLoaded.value = true
     } catch (e) {
       if (!isCurrentRequest(environmentKey, pipelineKey, batch)) return
       error.value = e instanceof Error ? e.message : '版本列表加载失败'
@@ -120,13 +143,20 @@ export const useReleaseStore = defineStore('release', () => {
   /** 刷新 active;不开启新批次,但旧批次的迟到响应不会覆盖当前状态。 */
   const refreshActive = async (environmentKey: string, pipelineKey: string, batch = batchId.value): Promise<void> => {
     if (!isCurrentRequest(environmentKey, pipelineKey, batch)) return
+    pending.value += 1
+    activeLoaded.value = false
+    activeError.value = ''
     try {
       const data = await releaseApi.active(environmentKey, pipelineKey)
       if (!isCurrentRequest(environmentKey, pipelineKey, batch)) return
       active.value = data
-    } catch {
+      activeLoaded.value = true
+    } catch (cause) {
       if (!isCurrentRequest(environmentKey, pipelineKey, batch)) return
       active.value = null
+      activeError.value = cause instanceof Error ? cause.message : '生效状态加载失败'
+    } finally {
+      if (isCurrentRequest(environmentKey, pipelineKey, batch)) pending.value = Math.max(0, pending.value - 1)
     }
   }
 
@@ -134,6 +164,9 @@ export const useReleaseStore = defineStore('release', () => {
   const refreshScope = async (environmentKey: string, pipelineKey: string): Promise<void> => {
     if (!isCurrentScope(environmentKey, pipelineKey)) return
     const batch = beginBatch()
+    listLoaded.value = false
+    hasMore.value = false
+    nextBeforeId.value = ''
     await Promise.all([
       loadFirstPage(environmentKey, pipelineKey, batch),
       refreshActive(environmentKey, pipelineKey, batch),
@@ -148,8 +181,9 @@ export const useReleaseStore = defineStore('release', () => {
 
   /** 创建版本:成功后开启新批次刷新列表与双状态(创建不切换生效)。 */
   const create = async (payload: ReleaseCreatePayload) => {
+    const originalScope = scopeEpoch
     const result = await releaseApi.create(payload)
-    if (isCurrentScope(payload.environment_key, payload.pipeline_key)) {
+    if (originalScope === scopeEpoch && isCurrentScope(payload.environment_key, payload.pipeline_key)) {
       const batch = beginBatch()
       await Promise.all([
         loadFirstPage(payload.environment_key, payload.pipeline_key, batch),
@@ -161,8 +195,9 @@ export const useReleaseStore = defineStore('release', () => {
 
   /** 切换生效版本:成功后开启新批次刷新列表与 active。 */
   const activate = async (payload: ReleaseActivatePayload) => {
+    const originalScope = scopeEpoch
     const result = await releaseApi.activate(payload)
-    if (isCurrentScope(payload.environment_key, payload.pipeline_key)) {
+    if (originalScope === scopeEpoch && isCurrentScope(payload.environment_key, payload.pipeline_key)) {
       const batch = beginBatch()
       await Promise.all([
         loadFirstPage(payload.environment_key, payload.pipeline_key, batch),
@@ -172,8 +207,23 @@ export const useReleaseStore = defineStore('release', () => {
     return result
   }
 
+  const deleteVersion = async (payload: ReleaseDeletePayload) => {
+    const originalScope = scopeEpoch
+    const result = await releaseApi.delete(payload)
+    if (originalScope !== scopeEpoch || !isCurrentScope(payload.environment_key, payload.pipeline_key)) {
+      return { result, refreshFailed: false }
+    }
+    contentEpoch.value++
+    await refreshScope(payload.environment_key, payload.pipeline_key)
+    return { result, refreshFailed: Boolean(error.value || activeError.value) }
+  }
+
   return {
-    resetSession: () => { scopeKey.value = ''; beginBatch(); reset() },
+    resetSession: () => { scopeEpoch++; contentEpoch.value++; scopeKey.value = ''; beginBatch(); reset() },
+    canDelete,
+    activeError,
+    contentEpoch,
+    deleteVersion,
     scopeKey,
     items,
     hasMore,

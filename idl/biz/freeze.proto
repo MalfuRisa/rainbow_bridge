@@ -60,7 +60,7 @@ message FreezeStatusResponse {
 message LockFreezeRequest {
   string environment_key = 1;
   string pipeline_key = 2;
-  string reason = 3;            // trimmed 1-500 characters
+  string reason = 3;            // optional; trimmed 0-500 Unicode characters
   string expected_revision = 4; // decimal string
 }
 
@@ -68,7 +68,7 @@ message LockFreezeRequest {
 message UnlockFreezeRequest {
   string environment_key = 1;
   string pipeline_key = 2;
-  string reason = 3;
+  string reason = 3;            // optional; trimmed 0-500 Unicode characters
   string expected_revision = 4;
 }
 

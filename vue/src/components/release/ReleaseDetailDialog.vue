@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
+import { displayNote } from '@/lib/operation-note'
+import { sessionIdentity, sessionGeneration } from '@/lib/auth/session'
+import { ApiError } from '@/lib/api/error'
+import { Button } from '@/components/ui/button'
 import { FileArchive, Loader2, ShieldCheck } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,26 +28,26 @@ const detail = ref<ReleaseDetailData | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
 
-watch(
-  () => [props.open, props.version],
-  ([open]) => {
-    const load = async () => {
-      detail.value = null
-      errorMessage.value = ''
-      if (!open || !props.version) return
-      loading.value = true
-      try {
-        detail.value = await releaseStore.detail(props.environmentKey, props.pipelineKey, props.version)
-      } catch (error) {
-        errorMessage.value = error instanceof Error ? error.message : '详情加载失败'
-      } finally {
-        loading.value = false
-      }
-    }
-    load()
-  },
-  { immediate: true }
-)
+let epoch = 0
+async function load() {
+  const batch = ++epoch
+  const identity = sessionGeneration()
+  const { environmentKey, pipelineKey, version, open } = props
+  detail.value = null; errorMessage.value = ''; loading.value = false
+  if (!open || !version) return
+  loading.value = true
+  const current = () => batch === epoch && identity === sessionGeneration()
+  try {
+    const data = await releaseStore.detail(environmentKey, pipelineKey, version)
+    if (current()) detail.value = data
+  } catch (cause) {
+    if (!current()) return
+    errorMessage.value = cause instanceof ApiError && cause.code === 410 ? '该版本已被删除' : cause instanceof Error ? cause.message : '详情加载失败'
+    if (cause instanceof ApiError && cause.code === 410) await releaseStore.refreshScope(environmentKey, pipelineKey)
+  } finally { if (current()) loading.value = false }
+}
+watch(() => [props.open, props.environmentKey, props.pipelineKey, props.version, releaseStore.contentEpoch, sessionIdentity.value], load, { immediate: true })
+onUnmounted(() => { epoch++ })
 </script>
 
 <template>
@@ -54,13 +58,13 @@ watch(
         <DialogDescription class="text-muted-foreground">
           只读快照:内容与资源保存在创建时刻,不随编辑区变化。
         </DialogDescription>
-      </DialogHeader>
+      </DialogHeader><Button variant="outline" size="sm" :disabled="loading" @click="load">刷新详情</Button>
 
       <div class="space-y-4 py-2">
         <div v-if="loading" class="flex items-center justify-center py-8">
           <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
-        <p v-else-if="errorMessage" class="text-sm text-destructive">{{ errorMessage }}</p>
+        <p v-else-if="errorMessage" class="text-sm text-destructive" role="alert">{{ errorMessage }}</p>
 
         <template v-else-if="detail">
           <div class="spectrum-release-detail-meta rounded-md border p-3 text-sm grid grid-cols-2 gap-2">
@@ -69,7 +73,7 @@ watch(
             <div><span class="text-muted-foreground">配置:</span>{{ detail.meta.config_count ?? 0 }} 项</div>
             <div><span class="text-muted-foreground">资源:</span>{{ detail.meta.asset_count ?? 0 }} 项 / {{ detail.meta.asset_bytes ?? 0 }} 字节</div>
             <div class="col-span-2 break-all"><span class="text-muted-foreground">payload 摘要:</span><span class="font-mono text-xs">{{ detail.meta.payload_sha256 }}</span></div>
-            <div class="col-span-2"><span class="text-muted-foreground">说明:</span>{{ detail.meta.reason }}</div>
+            <div class="col-span-2"><span class="text-muted-foreground">备注：</span>{{ displayNote(detail.meta.reason) }}</div>
             <div v-if="(detail.meta.external_references ?? []).length" class="col-span-2">
               <span class="text-muted-foreground">外部地址(内容不受冻结控制):</span>
               <ul class="list-disc list-inside text-xs font-mono">

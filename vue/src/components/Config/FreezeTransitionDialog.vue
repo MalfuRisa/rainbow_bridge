@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { noteTooLong, displayNote } from '@/lib/operation-note'
+import { useDialogAttempt } from '@/composables/useDialogAttempt'
 import { toast } from 'vue-sonner'
 import { AlertCircle, ShieldAlert } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
@@ -37,6 +39,8 @@ const errorMessage = ref('')
 const latestState = ref<{ state: string; revision: string } | null>(null)
 const resourceIssues = ref<FreezeResourceIssue[]>([])
 const externalReferences = ref<string[]>([])
+
+const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey, props.mode], () => { submitting.value = false; errorMessage.value = ''; reason.value = '' })
 
 const isLock = computed(() => props.mode === 'lock')
 const title = computed(() => (isLock.value ? '锁定配置范围' : '解除配置冻结'))
@@ -97,8 +101,8 @@ const handleSubmit = async () => {
   if (submitting.value || !auth.authenticated) return
   errorMessage.value = ''
   const trimmedReason = reason.value.trim()
-  if (!trimmedReason || trimmedReason.length > 500) {
-    errorMessage.value = '请填写 1-500 字符的原因(说明用途,不作为身份凭证)'
+  if (noteTooLong(trimmedReason)) {
+    errorMessage.value = '备注最多500字'
     return
   }
   const payload = {
@@ -107,17 +111,21 @@ const handleSubmit = async () => {
     reason: trimmedReason,
     expected_revision: expectedRevision.value,
   }
+  const current = startAttempt()
   submitting.value = true
   try {
     if (isLock.value) {
       await freezeStore.lock(payload)
+      if (!current()) return
       toast.success('已锁定该范围')
     } else {
       await freezeStore.unlock(payload)
+      if (!current()) return
       toast.success('已解除冻结')
     }
     close()
   } catch (error) {
+    if (!current()) return
     if (error instanceof ApiError) {
       switch (error.errorType) {
         case 'FREEZE_REVISION_CONFLICT':
@@ -146,7 +154,7 @@ const handleSubmit = async () => {
       errorMessage.value = error instanceof Error ? error.message : '操作失败'
     }
   } finally {
-    submitting.value = false
+    if (current()) submitting.value = false
   }
 }
 </script>
@@ -196,7 +204,7 @@ const handleSubmit = async () => {
         </p>
 
         <div class="space-y-2">
-          <Label for="freeze-reason" class="text-sm font-medium">原因(必填,1-500 字符)</Label>
+          <Label for="freeze-reason" class="text-sm font-medium">备注（选填）</Label>
           <Textarea
             id="freeze-reason"
             :rows="2"

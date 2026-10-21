@@ -2,9 +2,9 @@
 
 完成日期：2026-10-20。
 
-本地集成分支：`codex/admin-login-integration`。
+当前统一分支：`main_v1`。2026-10-21已将前后端最新成果收回主目录；下文旧工作树与实例地址是历史验收记录。
 
-集成工作树：`C:/Users/MalfuRisa/.codex/worktrees/admin-login-integration/rainbow_bridge`。
+当前代码目录：`D:/kylin/rainbow_bridge`。启动方式见 [一键启动](../script/start-local.README.md)。
 
 ## 最终能做什么
 
@@ -57,7 +57,11 @@ Release证据运行名 `integration-release-20261020`，Freeze为 `integration-f
 
 完整应用：`http://127.0.0.1:18082/rainbow-bridge/`。
 
-管理员账号为 `admin`，随机密码仅保存在本工作树 `.dev-integration/admin-password.txt`，不打印在报告或聊天，不进入Git。数据库、二进制、运行日志和截图也都在被忽略的 `.dev-integration/` 中。该实例使用独立Cookie `rb_admin_integration`，不复用18081的数据。
+按演示要求，管理员账号与密码均固定为 `admin`。18082 已同步切换，原随机密码失效，需要重新登录。数据库、二进制、运行日志和截图都在被忽略的 `.dev-integration/` 中。该实例使用独立Cookie `rb_admin_integration`，不复用18081的数据。
+
+原仓库的 `start-rainbow.cmd` 也已接入整合版本，默认在18080启动，沿用 `%LOCALAPPDATA%\RainbowBridge\local-demo` 数据；旧演示密码会自动迁移为 `admin`。具体参数见 `script/start-local.README.md`。密码最小长度同步改为5，初始化、登录、改密与本机重置使用相同规则。
+
+启动器验收已通过：独立18083实例的首次启动、旧密码迁移、同目录重启；启动器异常与端口保护回归；18082浏览器实际登录、刷新恢复、退出与旧会话拒绝。修改后的 Go 全量测试和 vet 通过。此次启动器和固定密码的新增修改尚未提交、未推送。
 
 该实例运行最终dev二进制并直接服务本工作树 `vue/dist`，不依赖Vite。额外的开发预览为 `http://127.0.0.1:3003/rainbow-bridge/`，代理到18082。
 
@@ -67,7 +71,7 @@ Release证据运行名 `integration-release-20261020`，Freeze为 `integration-f
 $repo = 'C:/Users/MalfuRisa/.codex/worktrees/admin-login-integration/rainbow_bridge'
 $env:FRONTEND_DIR = Join-Path $repo 'vue/dist'
 Push-Location (Join-Path $repo '.dev-integration')
-try { & './rainbow-integrated-final.exe' --config './config.yaml' }
+try { & './rainbow-admin-demo.exe' --config './config.yaml' }
 finally { Pop-Location }
 ```
 

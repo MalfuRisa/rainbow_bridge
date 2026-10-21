@@ -308,6 +308,7 @@ func Asset(ctx context.Context, c *app.RequestContext) {
 // --------------------- 错误映射 ---------------------
 
 func writeCreateError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	if releaseErr, ok := service.AsReleaseError(err); ok {
 		issues := make([]releaseResourceIssueJSON, 0, len(releaseErr.Issues))
 		for _, issue := range releaseErr.Issues {
@@ -333,21 +334,25 @@ func writeCreateError(c *app.RequestContext, err error) {
 }
 
 func writeListError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.ReleaseListResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeDetailError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.ReleaseDetailResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeActiveError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.ReleaseActiveResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeActivateError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	if releaseErr, ok := service.AsReleaseError(err); ok {
 		c.JSON(releaseErr.HTTPStatus, releaseActivateErrorJSON{
 			Code: int32(releaseErr.Code), Msg: "error", Error: releaseErr.Message, ErrorType: releaseErr.ErrorType,
@@ -363,28 +368,35 @@ func writeActivateError(c *app.RequestContext, err error) {
 }
 
 func writeHistoryError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.ReleaseHistoryResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeRuntimeError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.RuntimeReleaseResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 // writeStaticExportError 版本静态导出的错误信封:与读取共用同一映射(含 409/503/413/500)。
 func writeStaticExportError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, releaseErrorJSON{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 func writeAssetError(c *app.RequestContext, err error) {
+	c.Header("Cache-Control", "no-store")
 	status, code, errorType, message := releaseErrorParts(err)
 	c.JSON(status, &release.ReleaseAssetResponse{Code: code, Msg: "error", Error: message, ErrorType: errorType})
 }
 
 // releaseErrorParts 提取发布错误的 HTTP 映射;兼容写协调的冻结类错误。
 func releaseErrorParts(err error) (int, int32, string, string) {
+	if authErr, ok := service.AsAuthError(err); ok {
+		return authErr.HTTPStatus, int32(authErr.Code), authErr.ErrorType, authErr.Error()
+	}
 	if releaseErr, ok := service.AsReleaseError(err); ok {
 		return releaseErr.HTTPStatus, int32(releaseErr.Code), releaseErr.ErrorType, releaseErr.Message
 	}

@@ -83,6 +83,9 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 			if existing.RequestFingerprint != fingerprint {
 				return releaseRequestConflictError("request_id was already used with different fields")
 			}
+			if existing.DeletedAt != nil {
+				return releaseVersionDeletedError()
+			}
 			result = &ReleaseCreateResult{Meta: releaseMetaFromVersion(existing), Replayed: true}
 			return nil
 		}
@@ -369,6 +372,9 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			}
 			return releaseInternalError(err)
 		}
+		if target.DeletedAt != nil {
+			return releaseVersionDeletedError()
+		}
 		if err := txLogic.releaseDAO.EnsureHead(gateCtx, txLogic.db, environmentKey, pipelineKey); err != nil {
 			return releaseInternalError(err)
 		}
@@ -431,7 +437,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			FromHeadRevision:   head.Revision,
 			ToHeadRevision:     expectedRevision + 1,
 			Reason:             reason,
-			Actor:              FreezeAdminActor,
+			Actor:              identity.Username,
 			CreatedAt:          changedAt,
 		}
 		if err := txLogic.releaseDAO.AppendEvent(gateCtx, txLogic.db, event); err != nil {
@@ -510,6 +516,9 @@ func (s *Service) ReleaseDetail(ctx context.Context, environmentKey, pipelineKey
 			return nil, releaseVersionNotFoundError(environmentKey, pipelineKey, versionName)
 		}
 		return nil, releaseInternalError(err)
+	}
+	if row.DeletedAt != nil {
+		return nil, releaseVersionDeletedError()
 	}
 	payload, err := decodeReleasePayload(row.Payload)
 	if err != nil {
@@ -651,6 +660,9 @@ func (s *Service) activeInfoFromHead(ctx context.Context, l *Logic, head *model.
 		}
 		return nil, releaseInternalError(err)
 	}
+	if versionRow.DeletedAt != nil {
+		return nil, releaseIncompleteError("active snapshot has been deleted")
+	}
 	changedAt := ""
 	if head.ChangedAt != nil {
 		changedAt = head.ChangedAt.UTC().Format(time.RFC3339)
@@ -762,9 +774,9 @@ func validateReleaseTransitionInput(environmentKey, pipelineKey, versionName, ex
 	if _, err := uuid.Parse(requestID); err != nil {
 		return "", "", "", "", "", 0, releaseInvalidRequestError("request_id must be a UUID")
 	}
-	reason = strings.TrimSpace(reason)
-	if len(reason) == 0 || len(reason) > releaseReasonMax {
-		return "", "", "", "", "", 0, releaseInvalidRequestError("reason must be 1-500 characters after trimming")
+	reason, validReason := normalizeOptionalReason(reason)
+	if !validReason {
+		return "", "", "", "", "", 0, releaseInvalidRequestError("reason must not exceed 500 characters after trimming")
 	}
 	expectedRevision, err := parseReleaseRevision(expectedRevisionRaw)
 	if err != nil {

@@ -212,9 +212,7 @@ func TestFreezeAdminCredentialAndValidation(t *testing.T) {
 		t.Fatal("admin_configured must be true once an admin account exists")
 	}
 
-	// 空原因/超长原因 → 400
-	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "   ", "0")
-	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidReason)
+	// 超长原因 → 400;空原因在独立的选填契约测试覆盖。
 	_, err = svc.LockFreeze(ctx, "qa_prod", "main", string(make([]byte, 501)), "0")
 	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidReason)
 

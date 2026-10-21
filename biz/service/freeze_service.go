@@ -120,8 +120,8 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 	if environmentKey == "" || pipelineKey == "" {
 		return nil, freezeInvalidRequestError("environment_key and pipeline_key are required")
 	}
-	reason := strings.TrimSpace(input.reason)
-	if len(reason) == 0 || len(reason) > freezeReasonMax {
+	reason, validReason := normalizeOptionalReason(input.reason)
+	if !validReason {
 		return nil, freezeInvalidReasonError()
 	}
 	expectedRevision, err := parseExpectedRevision(input.expectedRevisionRaw)

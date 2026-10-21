@@ -5,8 +5,6 @@ package service
 const (
 	releaseListDefaultLimit = 20
 	releaseListMaxLimit     = 100
-
-	releaseReasonMax = 500
 )
 
 // releaseVersionPattern 与保留字:版本号为 1—64 个小写 ASCII 字符。

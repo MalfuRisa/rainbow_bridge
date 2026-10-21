@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { displayNote } from '@/lib/operation-note'
 import { Lock, LockOpen, History, ShieldCheck, PackageCheck } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,7 @@ const lastChangeText = computed(() => {
   if (!status.value?.last_changed_at) return ''
   const time = new Date(status.value.last_changed_at)
   const rendered = Number.isNaN(time.getTime()) ? status.value.last_changed_at : time.toLocaleString()
-  const reason = status.value.last_reason ? `,原因:${status.value.last_reason}` : ''
+  const reason = `，备注：${displayNote(status.value.last_reason)}`
   const by = status.value.last_changed_by ? `(${status.value.last_changed_by})` : ''
   return `${rendered}${by}${reason}`
 })

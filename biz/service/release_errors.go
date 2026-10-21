@@ -10,6 +10,8 @@ const (
 	ErrTypeReleaseInvalidRequest     = "RELEASE_INVALID_REQUEST"
 	ErrTypeReleaseScopeNotFound      = "RELEASE_SCOPE_NOT_FOUND"
 	ErrTypeReleaseVersionNotFound    = "RELEASE_VERSION_NOT_FOUND"
+	ErrTypeReleaseVersionDeleted     = "RELEASE_VERSION_DELETED"
+	ErrTypeReleaseDeleteActive       = "RELEASE_DELETE_ACTIVE"
 	ErrTypeReleaseNotActive          = "RELEASE_NOT_ACTIVE"
 	ErrTypeReleaseAssetNotFound      = "RELEASE_ASSET_NOT_FOUND"
 	ErrTypeReleaseSourceNotFrozen    = "RELEASE_SOURCE_NOT_FROZEN"
@@ -71,6 +73,10 @@ func releaseScopeNotFoundError(environmentKey, pipelineKey string) *ReleaseError
 
 func releaseVersionNotFoundError(environmentKey, pipelineKey, version string) *ReleaseError {
 	return newReleaseError(404, ErrTypeReleaseVersionNotFound, fmt.Sprintf("version %s not found in scope %s/%s", version, environmentKey, pipelineKey))
+}
+
+func releaseVersionDeletedError() *ReleaseError {
+	return newReleaseError(410, ErrTypeReleaseVersionDeleted, "version has been deleted")
 }
 
 func releaseNotActiveError(environmentKey, pipelineKey string) *ReleaseError {

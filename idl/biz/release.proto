@@ -63,7 +63,7 @@ message ReleaseCreateRequest {
   string version = 3;
   string expected_freeze_revision = 4; // decimal string
   string request_id = 5;               // UUID
-  string reason = 6;                   // trimmed 1-500 characters
+  string reason = 6;                   // optional; trimmed 0-500 Unicode characters
 }
 
 // ReleaseCreateData is the create result; creation never switches the active version.
@@ -195,7 +195,36 @@ message ReleaseActivateRequest {
   string version = 3;
   string expected_active_revision = 4; // decimal string
   string request_id = 5;               // UUID
-  string reason = 6;
+  string reason = 6;                   // optional; trimmed 0-500 Unicode characters
+}
+
+// ReleaseDeleteRequest logically deletes an inactive version without removing files.
+message ReleaseDeleteRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string version = 3;
+  string expected_snapshot_id = 4;
+  string request_id = 5;
+  string reason = 6; // optional; trimmed 0-500 Unicode characters
+}
+
+message ReleaseDeleteData {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string version = 3;
+  bool deleted = 4;
+  string deleted_at = 5;
+  string deleted_by = 6;
+  string reason = 7;
+  bool replayed = 8;
+}
+
+message ReleaseDeleteResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseDeleteData data = 5;
 }
 
 // ReleaseOperation is the idempotent operation record.
@@ -366,6 +395,11 @@ service ReleaseService {
   // Activate switches the active version (also used to switch back).
   rpc Activate(ReleaseActivateRequest) returns (ReleaseActivateResponse) {
     option (api.post) = "/api/v1/release/activate";
+  }
+
+  // Delete marks an inactive version deleted; version names remain reserved.
+  rpc Delete(ReleaseDeleteRequest) returns (ReleaseDeleteResponse) {
+    option (api.post) = "/api/v1/release/delete";
   }
 
   // History pages create/activate audit events.

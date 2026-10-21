@@ -24,14 +24,10 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 	if err := s.assertReleaseScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
 		return nil, err
 	}
-	storage, err := s.releaseStorage()
-	if err != nil {
-		return nil, err
-	}
-
 	selection := model.ReleaseSelectionActive
 	var activeRevision *int64
 	var versionRow *model.ConfigReleaseVersion
+	var err error
 	if versionParam == nil {
 		// 一次请求只解析一次 active_snapshot_id
 		head, err := s.logic.releaseDAO.GetHead(ctx, s.logic.db, environmentKey, pipelineKey)
@@ -65,6 +61,16 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 		}
 	}
 
+	if versionRow.DeletedAt != nil {
+		if versionParam == nil {
+			return nil, releaseIncompleteError("active snapshot has been deleted")
+		}
+		return nil, releaseVersionDeletedError()
+	}
+	storage, err := s.releaseStorage()
+	if err != nil {
+		return nil, err
+	}
 	if hook := releaseReadPauseHookForTest; hook != nil {
 		hook(versionRow.SnapshotID)
 	}
@@ -144,6 +150,16 @@ func (s *Service) ReleaseAssetDownload(ctx context.Context, snapshotID, assetID 
 	assetID = strings.TrimSpace(assetID)
 	if snapshotID == "" || assetID == "" {
 		return "", nil, releaseInvalidRequestError("snapshot_id and asset_id are required")
+	}
+	version, err := s.logic.releaseDAO.GetVersionBySnapshotID(ctx, s.logic.db, snapshotID)
+	if err != nil {
+		if db.IsReleaseNotFound(err) {
+			return "", nil, releaseAssetNotFoundError(snapshotID, assetID)
+		}
+		return "", nil, releaseInternalError(err)
+	}
+	if version.DeletedAt != nil {
+		return "", nil, releaseVersionDeletedError()
 	}
 	asset, err := s.logic.releaseDAO.GetAsset(ctx, s.logic.db, snapshotID, assetID)
 	if err != nil {

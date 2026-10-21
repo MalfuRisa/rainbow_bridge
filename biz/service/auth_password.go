@@ -16,7 +16,7 @@ import (
 // 密码编码:Argon2id + 随机盐,PHC 字符串保存算法、参数、盐与摘要。
 // 参数范围收紧,避免损坏或被篡改的记录触发无界计算。
 const (
-	authPasswordMinChars  = 15
+	authPasswordMinChars  = 5
 	authPasswordMaxChars  = 128
 	authPasswordMaxBytes  = 512
 	authUsernameMinChars  = 3
@@ -33,7 +33,7 @@ const (
 
 var (
 	errAuthUsernameInvalid = errors.New("auth username must match [a-zA-Z0-9_-]{3,32}")
-	errAuthPasswordInvalid = errors.New("auth password must be 15-128 characters and at most 512 bytes")
+	errAuthPasswordInvalid = errors.New("auth password must be 5-128 characters and at most 512 bytes")
 )
 
 // IsValidAuthUsername 与初始化、登录共用同一规则;大小写敏感,不做隐式转换。

@@ -9,32 +9,36 @@ const (
 
 	ReleaseEventCreate   = "create"
 	ReleaseEventActivate = "activate"
+	ReleaseEventDelete   = "delete"
 )
 
 // ConfigReleaseVersion 保存一个不可变快照的元数据与内部 payload。
 // 版本创建后配置、名称、描述、资源字节、发布说明、来源冻结 revision、创建时间与摘要
-// 都不可通过应用修改;没有更新、覆盖、删除入口。
+// 都不可通过应用修改;逻辑删除仅改变生命周期字段,不修改快照内容。
 type ConfigReleaseVersion struct {
-	ID                   uint      `gorm:"primaryKey" json:"id"`
-	SnapshotID           string    `gorm:"size:64;uniqueIndex:uk_release_snapshot;not null" json:"snapshot_id"`
-	EnvironmentKey       string    `gorm:"uniqueIndex:uk_release_scope_version,priority:1;size:191;not null" json:"environment_key"`
-	PipelineKey          string    `gorm:"uniqueIndex:uk_release_scope_version,priority:2;size:191;not null" json:"pipeline_key"`
-	Version              string    `gorm:"uniqueIndex:uk_release_scope_version,priority:3;size:64;not null" json:"version"`
-	CreationRequestID    string    `gorm:"size:64;uniqueIndex:uk_release_request;not null" json:"creation_request_id"`
-	RequestFingerprint   string    `gorm:"size:64;not null" json:"request_fingerprint"`
-	SourceFreezeRevision int64     `gorm:"not null" json:"source_freeze_revision"`
-	EnvironmentName      string    `gorm:"size:191;not null;default:''" json:"environment_name"`
-	PipelineName         string    `gorm:"size:191;not null;default:''" json:"pipeline_name"`
-	Payload              string    `gorm:"type:text;not null" json:"payload"`
-	PayloadSha256        string    `gorm:"size:64;not null" json:"payload_sha256"`
-	ManifestSha256       string    `gorm:"size:64;not null" json:"manifest_sha256"`
-	ConfigCount          int       `gorm:"not null;default:0" json:"config_count"`
-	AssetCount           int       `gorm:"not null;default:0" json:"asset_count"`
-	AssetBytes           int64     `gorm:"not null;default:0" json:"asset_bytes"`
-	ExternalReferences   string    `gorm:"type:text;not null;default:'[]'" json:"external_references"`
-	Reason               string    `gorm:"size:500;not null" json:"reason"`
-	Actor                string    `gorm:"size:64;not null" json:"actor"`
-	CreatedAt            time.Time `json:"created_at"`
+	ID                   uint       `gorm:"primaryKey" json:"id"`
+	SnapshotID           string     `gorm:"size:64;uniqueIndex:uk_release_snapshot;not null" json:"snapshot_id"`
+	EnvironmentKey       string     `gorm:"uniqueIndex:uk_release_scope_version,priority:1;size:191;not null" json:"environment_key"`
+	PipelineKey          string     `gorm:"uniqueIndex:uk_release_scope_version,priority:2;size:191;not null" json:"pipeline_key"`
+	Version              string     `gorm:"uniqueIndex:uk_release_scope_version,priority:3;size:64;not null" json:"version"`
+	CreationRequestID    string     `gorm:"size:64;uniqueIndex:uk_release_request;not null" json:"creation_request_id"`
+	RequestFingerprint   string     `gorm:"size:64;not null" json:"request_fingerprint"`
+	SourceFreezeRevision int64      `gorm:"not null" json:"source_freeze_revision"`
+	EnvironmentName      string     `gorm:"size:191;not null;default:''" json:"environment_name"`
+	PipelineName         string     `gorm:"size:191;not null;default:''" json:"pipeline_name"`
+	Payload              string     `gorm:"type:text;not null" json:"payload"`
+	PayloadSha256        string     `gorm:"size:64;not null" json:"payload_sha256"`
+	ManifestSha256       string     `gorm:"size:64;not null" json:"manifest_sha256"`
+	ConfigCount          int        `gorm:"not null;default:0" json:"config_count"`
+	AssetCount           int        `gorm:"not null;default:0" json:"asset_count"`
+	AssetBytes           int64      `gorm:"not null;default:0" json:"asset_bytes"`
+	ExternalReferences   string     `gorm:"type:text;not null;default:'[]'" json:"external_references"`
+	Reason               string     `gorm:"size:500;not null" json:"reason"`
+	Actor                string     `gorm:"size:64;not null" json:"actor"`
+	CreatedAt            time.Time  `json:"created_at"`
+	DeletedAt            *time.Time `gorm:"index" json:"deleted_at"`
+	DeletedBy            string     `gorm:"size:64;not null;default:''" json:"deleted_by"`
+	DeleteReason         string     `gorm:"size:500;not null;default:''" json:"delete_reason"`
 }
 
 func (ConfigReleaseVersion) TableName() string { return "config_release_version" }

@@ -10,8 +10,6 @@ const (
 	// FreezeAdminActor 是共享管理身份,不冒称真实个人。
 	FreezeAdminActor = "freeze-admin"
 
-	freezeReasonMax = 500
-
 	freezeHistoryDefaultLimit = 20
 	freezeHistoryMaxLimit     = 100
 )
