@@ -23,3 +23,10 @@
 过期代码工作树：`rainbow_bridge-admin-login`、`admin-login-ui/rainbow_bridge`、`admin-login-integration/rainbow_bridge`；旧提交暂存目录：`.rainbow-submit-e99c64ec`。先备份与核对唯一文件，再移除。旧打包目录 `rainbow_bridge-output` 移入备份，主目录现有业务数据与上传文件保留。
 
 远端以 `main_v1` 保存统一成果，同时移除用户指定的 `codex/config-freeze`。原 `main` 和上游仓库不修改；不创建PR、不部署。历史PRD中旧分支、工作树和实例路径作为历史证据保留，后续开发统一从本仓库开始。
+
+## 最终清理核对
+
+- 远端`main_v1`已推送，`codex/config-freeze`已在同一次原子推送中删除；删除带原分支提交校验，避免覆盖整理期间新增的远端工作。
+- 三个过期代码工作树已移除；当前`git worktree list`只保留主目录。对应四个本地`codex/*`旧分支已清理，历史可从备份恢复。
+- 旧打包目录已移至备份中的`old-output/`。自动审批检查拒绝直接递归删除`.rainbow-submit-e99c64ec`，未提供具体原因；该暂存目录改为整体移入备份中的`old-submit-directory/`，原位置不再保留。
+- 工作区无未提交改动，现有业务数据库和上传文件未删除；依赖、构建文件、临时验收目录均被忽略，未推送。
