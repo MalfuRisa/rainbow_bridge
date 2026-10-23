@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	hconfig "github.com/cloudwego/hertz/pkg/common/config"
 	"github.com/redis/go-redis/v9"
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	versionhandler "github.com/yi-nology/rainbow_bridge/biz/handler/version"
 	"github.com/yi-nology/rainbow_bridge/biz/middleware"
@@ -67,6 +68,10 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
 		&model.AuthUser{}, &model.AuthSession{},
 	); err != nil {
+		return nil, err
+	}
+
+	if err := configdb.BackfillConfigRevisions(context.Background(), db); err != nil {
 		return nil, err
 	}
 

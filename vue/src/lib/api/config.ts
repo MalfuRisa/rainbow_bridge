@@ -1,3 +1,5 @@
+import { apiClient } from './client'
+import { toSnakeCase, toCamelCase } from '../utils'
 import { BaseApiService } from './base-api'
 import type { ResourceConfig } from './types'
 
@@ -16,6 +18,13 @@ class ConfigApiService extends BaseApiService<ResourceConfig> {
 
   protected getIdParamName(): string {
     return 'resource_key'
+  }
+
+  async updateWithRevision(data: ResourceConfig, expectedEditRevision: string) {
+    const response = await apiClient.post<{ config: ResourceConfig }>(`${this.baseUrl}/update`, {
+      config: toSnakeCase(data), expected_edit_revision: expectedEditRevision,
+    })
+    return toCamelCase(response.data?.config) as unknown as ResourceConfig
   }
 
   // 重写getRequestKey方法，使用正确的请求键名

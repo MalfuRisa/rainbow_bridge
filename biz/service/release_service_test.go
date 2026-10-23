@@ -220,7 +220,7 @@ func TestReleaseIndependentFromEditorAndSourceFiles(t *testing.T) {
 		}
 		updated := buildConfig("qa_prod", "main", "REL_TEXT", "text", "changed-in-editor")
 		updated.ResourceKey = cfg.ResourceKey
-		if _, err := svc.UpdateConfig(ctx, updated); err != nil {
+		if _, err := svc.UpdateConfig(ctx, updated, currentEditRevision(t, svc, updated)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -341,7 +341,7 @@ func TestReleaseActivateLifecycleCASAndAudit(t *testing.T) {
 		if cfg.Alias == "REL_TEXT" {
 			updated := buildConfig("qa_prod", "main", "REL_TEXT", "text", "v1.1-content")
 			updated.ResourceKey = cfg.ResourceKey
-			if _, err := svc.UpdateConfig(ctx, updated); err != nil {
+			if _, err := svc.UpdateConfig(ctx, updated, currentEditRevision(t, svc, updated)); err != nil {
 				t.Fatal(err)
 			}
 		}

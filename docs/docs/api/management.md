@@ -69,7 +69,7 @@ CSRF 只在内存保存，不写 URL、日志或持久化存储。管理员写�
 
 配置列表：`GET /api/v1/config/list?environment_key=default&pipeline_key=default`，成功 data 为 `{total,list}`，不是旧文档里的 configs。单项详情 data 为 `{config}`。
 
-配置创建请求（修改同样使用 config 包装，并携带待修改的 resource_key）：
+配置创建请求：
 
 ```http
 POST /api/v1/config/create
@@ -100,6 +100,45 @@ alias 创建后不可改，name 可改；content 在管理请求中是字符串�
 迁移/归档与发布静态包不同。迁移 JSON 字段是 source_environment_key、source_pipeline_key、target_environment_key、target_pipeline_key、resource_keys、overwrite；不是 source_environment 等旧文档字段。选择性导出入口实际为 `POST /api/v1/transfer/export`，JSON 包含 format 与 selections（范围和 resource_keys）；不能按内部方法名推测出另一个路径或改成 GET。完整路由见入口索引及 IDL。导入成功后还要核对 data.resource_import 和逐项问题，不能仅凭 HTTP 200 判断全部资源恢复。
 
 部分历史 CRUD 的业务错误仍通过 HTTP 200 + 非 200 正文 code 返回，认证/冻结错误则会使用真实 HTTP 状态。此处只记录兼容现状，不声称本轮已统一历史错误协议。
+
+### 配置编辑冲突保护
+
+打开编辑时调用 `GET /api/v1/config/detail?environment_key=default&pipeline_key=default&resource_key=<配置键>`。详情直接读取数据库，返回 `Cache-Control: no-store`。列表、详情、创建及修改成功的配置均包含服务端生成的 `edit_revision`（小写标准 UUID v4）。
+
+普通修改须原样回传打开时的标识，位于请求顶层：
+
+```http
+POST /api/v1/config/update
+Content-Type: application/json
+X-CSRF-Token: <当前会话令牌>
+
+{
+  "expected_edit_revision":"c29c6fbc-a274-4b88-8a21-a1e7cc51ba83",
+  "config": {
+    "environment_key":"default",
+    "pipeline_key":"default",
+    "resource_key":"<配置键>",
+    "name":"欢迎语",
+    "type":"text",
+    "content":"欢迎使用虹桥",
+    "description":"首页文案"
+  }
+}
+```
+
+成功返回 HTTP 200、`code: 200`、`data: {config}`，正文与新标识属于同一次提交。即使内容相同，成功保存也会换新标识；`config.edit_revision` 是只读字段，不能替代顶层 `expected_edit_revision`。
+
+| HTTP | error_type | 处理方式 |
+| --- | --- | --- |
+| 400 | CONFIG_EDIT_REVISION_INVALID | 缺失、空值或非标准小写 UUID v4；修正客户端请求 |
+| 409 | CONFIG_EDIT_CONFLICT | 他人或导入迁移已修改；保留草稿，重新加载并核对 |
+| 404 | CONFIG_EDIT_TARGET_NOT_FOUND | 配置已删除；保留草稿并刷新列表，不自动重建 |
+
+冲突正文为 `{code:409,msg:"error",error:"配置已被其他操作修改，请重新加载后核对再保存",error_type:"CONFIG_EDIT_CONFLICT",resource_key:"<配置键>"}`，不附带最新正文或标识。认证和 CSRF 仍先执行；合法请求若范围已冻结，优先返回原有 `409 SCOPE_FROZEN`。
+
+编辑窗口提供“复制我的草稿”“重新加载”“取消”。重新加载须确认替换未保存内容，取消或读取失败均保留草稿。网络中断导致保存结果未知时，保留草稿并重新加载核对，不自动重发或强制覆盖。
+
+升级需同步切换前后端及管理客户端；旧客户端缺少顶层标识会收到真实 HTTP 400。启动时会持久化回填旧数据的空标识，不改变业务内容或时间戳；导入及迁移覆盖生成目标的新标识，跳过项不变。发布快照、版本摘要及版本运行态不包含此字段。不支持旧二进制与新二进制混合写同一数据库。
 
 ## 3. 锁版和解锁
 

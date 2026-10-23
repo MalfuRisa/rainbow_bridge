@@ -56,7 +56,7 @@
 .spectrum-shell .config-row-actions button { width: 32px; height: 40px; color: var(--spectrum-secondary-text); }
 .spectrum-shell .config-row-actions button:last-child:not(:disabled) { color: var(--destructive); }
 .spectrum-shell .config-catalog-footer { display: flex; justify-content: space-between; gap: 16px; padding: 24px 0 0; font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
-.spectrum-shell .config-detail { background: var(--spectrum-ink); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-ink-line); border-radius: 16px; padding: 24px; min-width: 0; box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-shell .config-detail { background: var(--spectrum-material-dark); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-material-dark-edge); border-radius: 16px; padding: 24px; min-width: 0; box-shadow: var(--spectrum-material-dark-shadow); }
 .spectrum-shell .config-detail h2 { font-size: 24px; overflow-wrap: anywhere; }
 .spectrum-shell .config-detail-overline { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; font: 12px/1.5 Consolas, monospace; letter-spacing: 1px; color: var(--spectrum-inverse-muted); }
 .spectrum-shell .config-detail-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 12px; color: var(--spectrum-inverse-muted); }
@@ -71,7 +71,9 @@
 .spectrum-shell .config-detail-description p { font-size: 14px; line-height: 2; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .spectrum-shell .config-detail-bottom { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 24px; color: var(--spectrum-inverse-muted); font-size: 12px; }
 .spectrum-shell .config-detail-bottom > span { display: flex; align-items: center; gap: 8px; }
-.spectrum-shell .config-detail-bottom > button { background: var(--spectrum-ink-panel); color: var(--spectrum-inverse); border-color: var(--spectrum-ink-line); }
+.spectrum-shell .config-detail-bottom > button { background: var(--spectrum-material-dark-control); color: var(--spectrum-inverse); border-color: var(--spectrum-material-dark-edge); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--spectrum-inverse) 8%, transparent); }
+.spectrum-shell .config-detail-bottom > button:hover:not(:disabled) { background: var(--spectrum-ink-line); border-color: var(--spectrum-inverse-muted); }
+.spectrum-shell .config-detail-bottom > button:disabled { background: var(--spectrum-ink-panel); color: var(--spectrum-inverse-muted); opacity: 1; box-shadow: none; }
 .spectrum-shell .config-image-button { display: block; width: 100%; background: transparent; border: 0; color: var(--spectrum-inverse); }
 .spectrum-shell .config-image-button img { max-height: 320px; width: 100%; object-fit: contain; border-radius: 8px; }
 .spectrum-shell .config-media-caption { display: block; font-size: 12px; color: var(--spectrum-inverse-muted); margin-top: 12px; }

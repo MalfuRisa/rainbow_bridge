@@ -2,7 +2,7 @@
 .spectrum-login-header { width: calc(100% - 96px); max-width: 1376px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; background: var(--card); border: 1px solid var(--spectrum-surface-line); border-radius: 16px; box-shadow: var(--spectrum-elevation-navigation); }
 .spectrum-login-back { display: inline-flex; align-items: center; gap: 8px; color: var(--spectrum-link); font-size: 14px; min-height: 40px; }
 .spectrum-login-layout { width: calc(100% - 96px); max-width: 1280px; margin: 32px auto 48px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; flex: 1; min-height: 560px; }
-.spectrum-login-statement { background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; padding: 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 48px; }
+.spectrum-login-statement { background: var(--spectrum-material-dark); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-material-dark-edge); border-radius: 16px; box-shadow: var(--spectrum-material-dark-shadow); padding: 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 48px; }
 .spectrum-login-statement .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
 .spectrum-login-line { display: block; width: 64px; height: 4px; background: var(--spectrum-orange); margin-bottom: 32px; }
 .spectrum-login-motto { font-size: 56px; font-weight: 600; line-height: 1.5; letter-spacing: -1px; }

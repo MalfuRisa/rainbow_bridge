@@ -35,6 +35,7 @@ export interface ApiPipeline {
 }
 
 export interface ApiResourceConfig {
+  edit_revision?: string
   resource_key: string
   alias: string
   name: string
@@ -88,6 +89,7 @@ export interface Pipeline {
 }
 
 export interface ResourceConfig {
+  editRevision?: string
   resourceKey: string
   alias: string
   name: string

@@ -97,6 +97,7 @@ func modelConfigToPB(cfg *model.Config) *common.ResourceConfig {
 		return nil
 	}
 	return &common.ResourceConfig{
+		EditRevision:   cfg.EditRevision,
 		ResourceKey:    cfg.ResourceKey,
 		Alias:          cfg.Alias,
 		Name:           cfg.Name,

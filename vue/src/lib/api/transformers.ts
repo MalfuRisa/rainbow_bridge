@@ -69,6 +69,7 @@ export function fromApiConfig(api: ApiResourceConfig | ResourceConfig): ConfigIt
     const { type, content } = transformContentFromBackend(api.type, api.content)
     
     return {
+      editRevision: api.edit_revision,
       id: api.resource_key,
       name: api.name,
       alias: api.alias,
@@ -84,6 +85,7 @@ export function fromApiConfig(api: ApiResourceConfig | ResourceConfig): ConfigIt
     const { type, content } = transformContentFromBackend(api.type, api.content)
     
     return {
+      editRevision: api.editRevision,
       id: api.resourceKey,
       name: api.name,
       alias: api.alias,

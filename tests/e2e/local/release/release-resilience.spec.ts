@@ -1,7 +1,7 @@
 import { ensureBrowserSession } from '../support/pages'
 import { expect, test, type Route } from '@playwright/test'
 import { freezeToken, targetA, writeEvidence } from '../support/env'
-import { createConfig, ensureScope, listConfigs, scopeDevBeta, type Scope } from '../support/scopes'
+import { createConfig, updateConfig, ensureScope, listConfigs, scopeDevBeta, type Scope } from '../support/scopes'
 import { postJson, request } from '../support/net'
 import { selectEnvPipelineOnConfigPage } from '../support/pages'
 import { lockScopeFromCurrentRevision, scopeStatus, unlockScopeFromCurrentRevision } from '../freeze/support'
@@ -30,8 +30,7 @@ async function ensureSample(target: ReturnType<typeof targetA>, token: string, a
   const rows = await listConfigs(target, scopeResilience)
   const existing = rows.find((item) => item.alias === alias)
   if (existing) {
-    await postJson(target, '/api/v1/config/update', {
-      config: {
+    await updateConfig(target, scopeResilience, {
         resource_key: existing.resource_key,
         environment_key: scopeResilience.env,
         pipeline_key: scopeResilience.pipeline,
@@ -39,7 +38,6 @@ async function ensureSample(target: ReturnType<typeof targetA>, token: string, a
         name: existing.name,
         type: existing.type,
         content,
-      },
     })
   } else {
     await createConfig(target, scopeResilience, { alias, name: alias, type: 'text', content })

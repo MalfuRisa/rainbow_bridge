@@ -7,11 +7,11 @@
 .spectrum-env-select strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
 .spectrum-env-select code { display: block; color: var(--spectrum-secondary-text); font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
 .spectrum-env-row > div { flex-wrap: wrap; justify-content: flex-end; }
-.spectrum-env-context { padding: 32px; margin-bottom: 16px; background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; }
-.spectrum-env-context .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
-.spectrum-env-context h2 { margin: 24px 0; font-size: 32px; overflow-wrap: anywhere; }
-.spectrum-env-context > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--spectrum-inverse-muted); font-size: 12px; }
-.spectrum-env-context code { color: var(--spectrum-gold); overflow-wrap: anywhere; }
+.spectrum-env-context { padding: 24px; margin-bottom: 16px; background: var(--spectrum-material-context); color: var(--foreground); border: 1px solid var(--spectrum-surface-line); border-left: 3px solid var(--spectrum-orange); border-radius: 12px; box-shadow: var(--spectrum-material-soft-shadow); }
+.spectrum-env-context .spectrum-eyebrow { color: var(--muted-foreground); }
+.spectrum-env-context h2 { margin: 16px 0 12px; font-size: 24px; overflow-wrap: anywhere; }
+.spectrum-env-context > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted-foreground); font-size: 12px; }
+.spectrum-env-context code { color: var(--spectrum-link); overflow-wrap: anywhere; }
 .spectrum-channel-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 12px; border-bottom: 1px solid var(--border); }
 .spectrum-channel-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .spectrum-channel-row > div:last-child { flex-wrap: wrap; justify-content: flex-end; }

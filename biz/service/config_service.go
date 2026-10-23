@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"gorm.io/gorm"
@@ -34,28 +35,37 @@ func (s *Service) AddConfig(ctx context.Context, req *common.ResourceConfig) (*c
 	return s.decorateConfig(modelConfigToPB(entity)), nil
 }
 
-func (s *Service) UpdateConfig(ctx context.Context, req *common.ResourceConfig) (*common.ResourceConfig, error) {
+func (s *Service) UpdateConfig(ctx context.Context, req *common.ResourceConfig, expected string) (*common.ResourceConfig, error) {
+	if !configdb.ValidEditRevision(expected) {
+		return nil, configdb.ErrEditRevisionInvalid
+	}
 	if req == nil {
 		return nil, errors.New("config payload required")
 	}
 	entity := pbConfigToModel(req)
-	s.normalizeStoredConfig(entity)
+
 	scope := FreezeScopeRef{EnvironmentKey: entity.EnvironmentKey, PipelineKey: entity.PipelineKey}
 
+	var updated *model.Config
 	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
 		if err := txLogic.ensurePipelineUnlocked(gateCtx, scope.EnvironmentKey, scope.PipelineKey); err != nil {
 			return err
 		}
-		return txLogic.UpdateConfig(gateCtx, entity)
+		if err := txLogic.checkEditBaseline(gateCtx, entity, expected); err != nil {
+			return err
+		}
+		s.normalizeStoredConfig(entity)
+		if err := txLogic.UpdateConfig(gateCtx, entity, expected); err != nil {
+			return err
+		}
+		var err error
+		updated, err = txLogic.configDAO.GetByResourceKey(gateCtx, txLogic.db, entity.EnvironmentKey, entity.PipelineKey, entity.ResourceKey)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	s.logic.invalidateConfigCaches(context.WithoutCancel(ctx), []model.Config{*entity})
-	updated, err := s.logic.GetConfig(ctx, entity.EnvironmentKey, entity.PipelineKey, entity.ResourceKey)
-	if err != nil {
-		return nil, err
-	}
 	return s.decorateConfig(modelConfigToPB(updated)), nil
 }
 
@@ -86,7 +96,10 @@ func (s *Service) ListConfigs(ctx context.Context, environmentKey, pipelineKey, 
 }
 
 func (s *Service) GetConfigDetail(ctx context.Context, environmentKey, pipelineKey, resourceKey string) (*common.ResourceConfig, error) {
-	cfg, err := s.logic.GetConfig(ctx, environmentKey, pipelineKey, resourceKey)
+	cfg, err := s.logic.configDAO.GetByResourceKey(ctx, s.logic.db, environmentKey, pipelineKey, resourceKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrResourceNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

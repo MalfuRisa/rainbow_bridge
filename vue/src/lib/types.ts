@@ -83,6 +83,7 @@ export const CONFIG_TYPE_META: Record<ConfigType, { label: string; color: string
 }
 
 export interface ConfigItem {
+  editRevision?: string
   id: string
   name: string
   alias: string

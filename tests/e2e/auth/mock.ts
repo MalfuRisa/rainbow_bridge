@@ -11,7 +11,7 @@ const environment = { environment_key: 'qa', environment_name: '演示环境', p
   ] },
 ] }
 export const config = { resource_key: 'r1', environment_key: 'qa', pipeline_key: 'web',
-  alias: 'title', name: '站点标题', type: 'text', content: '光谱标题' }
+  alias: 'title', name: '站点标题', type: 'text', content: '光谱标题', edit_revision: '00000000-0000-4000-8000-000000000001' }
 export const meta = { snapshot_id: 'snap1', version: 'v1', environment_key: 'qa', pipeline_key: 'web',
   source_freeze_revision: '2', config_count: 1, asset_count: 0, created_at: '2026-10-20T00:00:00Z' }
 export function ok(route: Route, data: unknown) {

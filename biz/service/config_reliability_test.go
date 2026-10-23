@@ -376,7 +376,7 @@ func TestDescriptionCanBeCleared(t *testing.T) {
 	for _, description := range []string{"", "after"} {
 		c.Description = description
 		c.Alias = "ignored"
-		if err := s.logic.UpdateConfig(ctx, &c); err != nil {
+		if err := s.logic.UpdateConfig(ctx, &c, c.EditRevision); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.logic.GetConfig(ctx, "dev", "main", c.ResourceKey)

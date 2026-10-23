@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"log"
 
 	"github.com/yi-nology/rainbow_bridge/biz/dal/db"
@@ -80,24 +81,21 @@ func (s *Service) InitDefaults(ctx context.Context) error {
 
 // MigrateConfigDefaults sets default environment_key and pipeline_key for existing configs.
 func MigrateConfigDefaults(db *gorm.DB) error {
-	result := db.Model(&model.Config{}).
-		Where("environment_key = '' OR environment_key IS NULL").
-		Update("environment_key", DefaultEnvironmentKey)
-	if result.Error != nil {
-		return result.Error
+	var rows []model.Config
+	if err := db.Where("environment_key = '' OR environment_key IS NULL OR pipeline_key = '' OR pipeline_key IS NULL").Find(&rows).Error; err != nil {
+		return err
 	}
-	if result.RowsAffected > 0 {
-		log.Printf("[Migration] Updated %d configs with default environment_key", result.RowsAffected)
-	}
-
-	result = db.Model(&model.Config{}).
-		Where("pipeline_key = '' OR pipeline_key IS NULL").
-		Update("pipeline_key", DefaultPipelineKey)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected > 0 {
-		log.Printf("[Migration] Updated %d configs with default pipeline_key", result.RowsAffected)
+	for _, row := range rows {
+		fields := map[string]any{"edit_revision": uuid.NewString()}
+		if row.EnvironmentKey == "" {
+			fields["environment_key"] = DefaultEnvironmentKey
+		}
+		if row.PipelineKey == "" {
+			fields["pipeline_key"] = DefaultPipelineKey
+		}
+		if err := db.Model(&model.Config{}).Where("id = ? AND (environment_key = '' OR environment_key IS NULL OR pipeline_key = '' OR pipeline_key IS NULL)", row.ID).Updates(fields).Error; err != nil {
+			return err
+		}
 	}
 
 	return nil

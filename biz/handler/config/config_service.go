@@ -4,11 +4,13 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/handler"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/config"
@@ -61,29 +63,30 @@ func Create(ctx context.Context, c *app.RequestContext) {
 // @router /api/v1/config/update [POST]
 func Update(ctx context.Context, c *app.RequestContext) {
 	req := &config.UpdateConfigRequest{}
-	if err := c.BindJSON(req); err != nil {
-		c.JSON(consts.StatusOK, &config.ConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+	if err := json.Unmarshal(c.Request.Body(), req); err != nil || req.Config == nil || req.Config.ResourceKey == "" || req.Config.EnvironmentKey == "" || req.Config.PipelineKey == "" || !configdb.ValidEditRevision(req.ExpectedEditRevision) {
+		c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: configdb.ErrEditRevisionInvalid.Error(), ErrorType: "CONFIG_EDIT_REVISION_INVALID"})
 		return
 	}
-	if req.Config == nil || req.Config.ResourceKey == "" {
-		c.JSON(consts.StatusOK, &config.ConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "resource_key is required",
-		})
-		return
-	}
-	cfg, err := svc.UpdateConfig(handler.EnrichContext(ctx, c), req.GetConfig())
+	cfg, err := svc.UpdateConfig(handler.EnrichContext(ctx, c), req.GetConfig(), req.ExpectedEditRevision)
 	if err != nil {
+		status, kind := 0, ""
+		switch {
+		case errors.Is(err, configdb.ErrEditRevisionInvalid):
+			status, kind = 400, "CONFIG_EDIT_REVISION_INVALID"
+		case errors.Is(err, configdb.ErrEditConflict):
+			status, kind = 409, "CONFIG_EDIT_CONFLICT"
+		case errors.Is(err, configdb.ErrEditTargetNotFound):
+			status, kind = 404, "CONFIG_EDIT_TARGET_NOT_FOUND"
+		}
+		if status != 0 {
+			c.JSON(status, &config.ConfigResponse{Code: int32(status), Msg: "error", Error: err.Error(), ErrorType: kind, ResourceKey: req.Config.ResourceKey})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &config.ConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
 		}
-		status := consts.StatusInternalServerError
+		status = consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound
 		}
@@ -200,6 +203,7 @@ func List(ctx context.Context, c *app.RequestContext) {
 // Detail .
 // @router /api/v1/config/detail [GET]
 func Detail(ctx context.Context, c *app.RequestContext) {
+	c.Header("Cache-Control", "no-store")
 	req := &config.ConfigDetailRequest{
 		EnvironmentKey: c.Query("environment_key"),
 		PipelineKey:    c.Query("pipeline_key"),

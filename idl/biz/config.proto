@@ -13,6 +13,7 @@ message CreateConfigRequest {
 // UpdateConfigRequest is used for updating a config.
 message UpdateConfigRequest {
   common.ResourceConfig config = 1;
+  string expected_edit_revision = 2;
 }
 
 // DeleteConfigRequest is used for deleting a config.
@@ -57,6 +58,7 @@ message ConfigResponse {
   string msg = 2;
   string error = 3;
   ConfigData data = 4;
+  string resource_key = 6;
   string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 

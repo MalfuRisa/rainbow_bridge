@@ -5,14 +5,15 @@
 .spectrum-workflow-steps li.is-current { color: var(--foreground); font-weight: 600; }
 .spectrum-workflow-steps li.is-current > span { color: var(--spectrum-link); }
 .spectrum-migration-route { display: grid; grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr); gap: 24px; align-items: stretch; }
-.spectrum-migration-endpoint { padding: 32px; border-radius: 16px; min-width: 0; }
-.spectrum-migration-endpoint h2 { margin: 24px 0; font-size: 32px; }
-.spectrum-migration-source { background: var(--spectrum-ink); color: var(--spectrum-inverse); }
-.spectrum-migration-source .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
-.spectrum-migration-source [role=combobox] { background: var(--spectrum-ink-panel); color: var(--spectrum-inverse); border-color: var(--spectrum-ink-line); }
-.spectrum-migration-target { background: var(--spectrum-surface-soft); border: 1px solid var(--spectrum-surface-line); }
+.spectrum-migration-endpoint { padding: 24px; border: 1px solid var(--spectrum-surface-line); border-radius: 12px; min-width: 0; color: var(--foreground); box-shadow: var(--spectrum-material-soft-shadow); }
+.spectrum-migration-endpoint h2 { margin: 16px 0 24px; font-size: 24px; }
+.spectrum-migration-source { background: var(--spectrum-material-context); border-top: 3px solid var(--spectrum-orange); padding-top: calc(24px - 2px); }
+.spectrum-migration-target { background: var(--spectrum-material-soft); border-top: 3px solid var(--input); padding-top: calc(24px - 2px); }
+.spectrum-migration-endpoint .spectrum-eyebrow { color: var(--muted-foreground); }
 .spectrum-migration-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.spectrum-migration-fields [role=combobox] { min-height: 48px; min-width: 0; width: 100%; box-shadow: none; }
+.spectrum-shell .spectrum-migration-fields [role=combobox] { min-height: 48px; min-width: 0; width: 100%; background: var(--card); color: var(--foreground); border-color: var(--input); box-shadow: none; }
+.spectrum-shell .spectrum-migration-fields [role=combobox]:hover:not(:disabled) { border-color: var(--spectrum-link); }
+.spectrum-shell .spectrum-migration-endpoint .spectrum-migration-fields [role=combobox]:disabled { background: color-mix(in srgb, var(--secondary) 32%, var(--card)); color: var(--muted-foreground); border-color: var(--spectrum-surface-line); opacity: 1; box-shadow: none; }
 .spectrum-migration-arrow { display: flex; align-items: center; justify-content: center; color: var(--spectrum-link); }
 .spectrum-migration-page .spectrum-table table { min-width: 480px; }
 .spectrum-operations .spectrum-conflict-row { background: var(--spectrum-caution-bg); color: var(--spectrum-caution); }
@@ -23,7 +24,7 @@
 .spectrum-transfer-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
 .spectrum-transfer-content, .spectrum-transfer-aside { min-width: 0; }
 .spectrum-transfer-aside { padding-top: 0; }
-.spectrum-operations .spectrum-transfer-summary { background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; padding: 24px; }
+.spectrum-operations .spectrum-transfer-summary { background: var(--spectrum-material-dark); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-material-dark-edge); border-radius: 16px; padding: 24px; box-shadow: var(--spectrum-material-dark-shadow); }
 .spectrum-transfer-summary .spectrum-panel-header { padding-top: 0; }
 .spectrum-transfer-summary .spectrum-panel-header .spectrum-eyebrow { color: var(--spectrum-inverse-muted); font-size: 12px; margin-bottom: 16px; }
 .spectrum-transfer-summary .text-muted-foreground { color: var(--spectrum-inverse-muted); }

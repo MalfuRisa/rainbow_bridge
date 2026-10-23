@@ -23,15 +23,30 @@ func (dao *ConfigDAO) Create(ctx context.Context, db *gorm.DB, entity *model.Con
 	if entity.ResourceKey == "" {
 		entity.ResourceKey = uuid.NewString()
 	}
+	entity.EditRevision = uuid.NewString()
 	return configWriteError(db.WithContext(ctx).Create(entity).Error)
 }
 
-// UpdateByEnvironmentAndPipeline updates an existing configuration identified by environment_key + pipeline_key + resource_key.
+// OverwriteByEnvironmentAndPipeline updates an existing configuration identified by environment_key + pipeline_key + resource_key.
 // Note: alias field is immutable and will not be updated.
-func (dao *ConfigDAO) UpdateByEnvironmentAndPipeline(ctx context.Context, db *gorm.DB, environmentKey, pipelineKey string, entity *model.Config) error {
+func (dao *ConfigDAO) OverwriteByEnvironmentAndPipeline(ctx context.Context, db *gorm.DB, environmentKey, pipelineKey string, entity *model.Config) error {
 	if entity == nil {
 		return errors.New("config must not be nil")
 	}
+	return dao.updateConfig(ctx, db, environmentKey, pipelineKey, entity, "")
+}
+
+func (dao *ConfigDAO) UpdateIfRevision(ctx context.Context, db *gorm.DB, entity *model.Config, expected string) error {
+	if !ValidEditRevision(expected) {
+		return ErrEditRevisionInvalid
+	}
+	if entity == nil {
+		return errors.New("config must not be nil")
+	}
+	return dao.updateConfig(ctx, db, entity.EnvironmentKey, entity.PipelineKey, entity, expected)
+}
+
+func (dao *ConfigDAO) updateConfig(ctx context.Context, db *gorm.DB, environmentKey, pipelineKey string, entity *model.Config, expected string) error {
 	// Preserve existing non-zero update semantics except description, which is
 	// always the submitted value (including an omitted/empty string).
 	fields := map[string]any{"description": entity.Description}
@@ -50,11 +65,31 @@ func (dao *ConfigDAO) UpdateByEnvironmentAndPipeline(ctx context.Context, db *go
 	if entity.IsPerm {
 		fields["is_perm"] = true
 	}
-	return db.WithContext(ctx).
-		Model(&model.Config{}).
-		Where("environment_key = ? AND pipeline_key = ? AND resource_key = ?", environmentKey, pipelineKey, entity.ResourceKey).
-		Updates(fields).
-		Error
+	revision := uuid.NewString()
+	fields["edit_revision"] = revision
+	query := db.WithContext(ctx).Model(&model.Config{}).Where("environment_key = ? AND pipeline_key = ? AND resource_key = ?", environmentKey, pipelineKey, entity.ResourceKey)
+	if expected != "" {
+		query = query.Where("edit_revision = ?", expected)
+	}
+	result := query.Updates(fields)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		_, err := dao.GetByResourceKey(ctx, db, environmentKey, pipelineKey, entity.ResourceKey)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrEditTargetNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return ErrEditConflict
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("config update affected multiple rows")
+	}
+	entity.EditRevision = revision
+	return nil
 }
 
 // ClearAll removes all configuration entries.

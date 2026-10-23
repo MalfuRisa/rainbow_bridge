@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Search, Pencil, Trash2, Loader2, Layers, ArrowRight, FileText } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,11 +16,11 @@ const props = defineProps<{
   frozen?: boolean; frozenReason?: string
 }>()
 type ConfigPayload = { name: string; alias: string; type: string; content: string; description: string }
-type SaveDone = (ok: boolean, message?: string) => void
+type SaveDone = (ok: boolean, message?: string, kind?: string) => void
 const emit = defineEmits<{
   search: [value: string]
   create: [config: ConfigPayload, done: SaveDone]
-  update: [config: ConfigPayload & { id: string }, done: SaveDone]
+  update: [config: ConfigPayload & { id: string; expectedEditRevision: string }, done: SaveDone]
   delete: [id: string, done: SaveDone]
   imagePreview: [url: string, name: string]
   retry: []
@@ -79,6 +79,7 @@ function closeForm(open: boolean) {
   })
 }
 function resetForm() { closeForm(false) }
+watch(() => [props.selectedEnvKey, props.selectedPipelineKey], () => { closeForm(false); deleteTarget.value = null }, { flush: 'sync' })
 function createConfig(config: ConfigPayload, done: SaveDone) {
   emit('create', config, (ok, message) => {
     done(ok, message)

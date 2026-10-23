@@ -34,6 +34,8 @@ Content-Type 用于 JSON 请求；资源上传使用 multipart/form-data。x-env
 
 登录及会话接口成功使用 `code: 0`、`msg: "success"`。下载接口成功返回 ZIP 或资源字节。部分历史 CRUD 错误仍以 HTTP 200 携带业务错误 code，调用方应同时检查 HTTP 状态和正文 code；不能假定所有接口成功 code 都相同。
 
+配置修改采用编辑标识校验：打开详情取得 `edit_revision`，保存时在顶层携带 `expected_edit_revision`；过期返回真实 HTTP 409，缺失或非法返回 400，目标已删除返回 404。具体请求及草稿处理见 [管理 API 的配置编辑冲突保护](management.md#配置编辑冲突保护)。
+
 **状态码说明**：
 
 | HTTP 状态 | 说明 |

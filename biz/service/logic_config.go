@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/pkg/common"
 	"github.com/yi-nology/rainbow_bridge/pkg/redis"
@@ -39,22 +40,45 @@ func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 	return l.configDAO.Create(ctx, l.db, cfg)
 }
 
-func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config) error {
-	if cfg == nil {
-		return nil
+func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config, expected string) error {
+	if !configdb.ValidEditRevision(expected) {
+		return configdb.ErrEditRevisionInvalid
 	}
+	if cfg == nil {
+		return errors.New("config payload required")
+	}
+	if err := l.checkEditBaseline(ctx, cfg, expected); err != nil {
+		return err
+	}
+	return l.writeConfig(ctx, cfg, expected)
+}
+func (l *Logic) checkEditBaseline(ctx context.Context, cfg *model.Config, expected string) error {
+	current, err := l.configDAO.GetByResourceKey(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return configdb.ErrEditTargetNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.EditRevision != expected {
+		return configdb.ErrEditConflict
+	}
+	return nil
+}
+
+// overwriteConfig is reserved for explicit migration writes.
+func (l *Logic) overwriteConfig(ctx context.Context, cfg *model.Config) error {
+	return l.writeConfig(ctx, cfg, "")
+}
+func (l *Logic) writeConfig(ctx context.Context, cfg *model.Config, expected string) error {
 	normalizeConfigPayload(cfg)
 	if err := l.validateConfigContent(ctx, cfg); err != nil {
 		return err
 	}
-	if _, err := l.configDAO.GetByResourceKey(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrResourceNotFound
-		}
-		return err
+	if expected != "" {
+		return l.configDAO.UpdateIfRevision(ctx, l.db, cfg, expected)
 	}
-
-	return l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg)
+	return l.configDAO.OverwriteByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg)
 }
 
 func (l *Logic) DeleteConfig(ctx context.Context, environmentKey, pipelineKey, resourceKey string) error {
@@ -76,7 +100,7 @@ func (l *Logic) GetConfig(ctx context.Context, environmentKey, pipelineKey, reso
 	// 尝试从缓存中获取
 	var cachedConfig model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfig)
-	if err == nil && found {
+	if err == nil && found && configdb.ValidEditRevision(cachedConfig.EditRevision) {
 		return &cachedConfig, nil
 	}
 
@@ -105,7 +129,7 @@ func (l *Logic) GetConfigByKey(ctx context.Context, resourceKey string) (*model.
 	// 尝试从缓存中获取
 	var cachedConfig model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfig)
-	if err == nil && found {
+	if err == nil && found && configdb.ValidEditRevision(cachedConfig.EditRevision) {
 		return &cachedConfig, nil
 	}
 
@@ -134,7 +158,7 @@ func (l *Logic) ListConfigs(ctx context.Context, environmentKey, pipelineKey, mi
 	// 尝试从缓存中获取
 	var cachedConfigs []model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfigs)
-	if err == nil && found {
+	if err == nil && found && validConfigRevisions(cachedConfigs) {
 		return cachedConfigs, nil
 	}
 
@@ -216,4 +240,13 @@ func (l *Logic) ExportConfigs(ctx context.Context, environmentKey, pipelineKey s
 func (l *Logic) ListBusinessKeys(ctx context.Context) ([]string, error) {
 	// Deprecated: business_key is replaced by environment_key + pipeline_key
 	return []string{}, errors.New("business_key is deprecated")
+}
+
+func validConfigRevisions(configs []model.Config) bool {
+	for _, cfg := range configs {
+		if !configdb.ValidEditRevision(cfg.EditRevision) {
+			return false
+		}
+	}
+	return true
 }

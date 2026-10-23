@@ -124,7 +124,7 @@ func (l *Logic) importConfigs(ctx context.Context, configs []model.Config, overw
 				}
 				cfg.ResourceKey = target.ResourceKey
 				cfg.Alias = target.Alias
-				if err := l.configDAO.UpdateByEnvironmentAndPipeline(ctx, tx, cfg.EnvironmentKey, cfg.PipelineKey, &cfg); err != nil {
+				if err := l.configDAO.OverwriteByEnvironmentAndPipeline(ctx, tx, cfg.EnvironmentKey, cfg.PipelineKey, &cfg); err != nil {
 					return err
 				}
 				// Return persisted values, including fields whose zero values are ignored.

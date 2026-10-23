@@ -1,7 +1,7 @@
 import { ensureBrowserSession } from '../support/pages'
 import { expect, test } from '@playwright/test'
 import { freezeToken, targetA, writeEvidence } from '../support/env'
-import { createConfig, deleteConfig, ensureScope, listConfigs, scopeDevBeta, scopeDevMain } from '../support/scopes'
+import { createConfig, updateConfig, deleteConfig, ensureScope, listConfigs, scopeDevBeta, scopeDevMain } from '../support/scopes'
 import { expectPageTitle, gotoPage, selectEnvPipelineOnConfigPage } from '../support/pages'
 import { lockScopeFromCurrentRevision, scopeStatus, unlockScopeFromCurrentRevision } from '../freeze/support'
 import { postJson, request } from '../support/net'
@@ -88,7 +88,7 @@ test.describe('版本发布页面流程 @release', () => {
       const current = await listConfigs(target, scopeDevMain)
       const row = current.find((item) => item.alias === 'REL_UI_TEXT')
       if (row) {
-        await postJson(target, '/api/v1/config/update', { config: { resource_key: row.resource_key, environment_key: scopeDevMain.env, pipeline_key: scopeDevMain.pipeline, alias: row.alias, name: row.name, type: row.type, content: 'ui-v2' } })
+        await updateConfig(target, scopeDevMain, { resource_key: row.resource_key, environment_key: scopeDevMain.env, pipeline_key: scopeDevMain.pipeline, alias: row.alias, name: row.name, type: row.type, content: 'ui-v2' })
       }
       await lockScopeFromCurrentRevision(target, scopeDevMain, token)
     })()

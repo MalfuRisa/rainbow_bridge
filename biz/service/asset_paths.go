@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"net/url"
 	"strings"
 
@@ -99,7 +100,7 @@ func (s *Service) MigrateToFullAssetPaths(ctx context.Context) error {
 		if normalized == cfg.Content {
 			continue
 		}
-		if err := s.logic.db.WithContext(ctx).Model(&cfg).Update("content", normalized).Error; err != nil {
+		if err := s.logic.db.WithContext(ctx).Model(&cfg).Updates(map[string]any{"content": normalized, "edit_revision": uuid.NewString()}).Error; err != nil {
 			return err
 		}
 		s.logic.invalidateConfigCaches(ctx, []model.Config{cfg})

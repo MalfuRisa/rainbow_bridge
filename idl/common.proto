@@ -15,6 +15,7 @@ message ResourceConfig {
   string remark = 8;
   bool is_perm = 9;
   string description = 10;
+  string edit_revision = 11; // server-owned editing token
 }
 
 // FileAsset represents an uploaded file.

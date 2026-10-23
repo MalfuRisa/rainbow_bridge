@@ -521,7 +521,7 @@ func TestReleaseCreateDuringConcurrentWrites(t *testing.T) {
 	go func() {
 		updated := buildConfig("qa_prod", "main", "REL_TEXT", "text", "api=https://api.example.com/v1/after")
 		updated.ResourceKey = textKey
-		_, err := svc.UpdateConfig(adminTestContext(), updated)
+		_, err := svc.UpdateConfig(adminTestContext(), updated, currentEditRevision(t, svc, updated))
 		outcomes <- outcome{"update", err}
 	}()
 	go func() {

@@ -47,7 +47,7 @@ func TestFreezeBlocksAllWriteEntries(t *testing.T) {
 
 	update := buildConfig("qa_prod", "main", "BEFORE_LOCK", "text", "changed")
 	update.ResourceKey = existing.ResourceKey
-	_, err = svc.UpdateConfig(ctx, update)
+	_, err = svc.UpdateConfig(ctx, update, existing.EditRevision)
 	requireFreezeErrorType(t, err, ErrTypeScopeFrozen)
 
 	err = svc.DeleteConfig(ctx, "qa_prod", "main", existing.ResourceKey)

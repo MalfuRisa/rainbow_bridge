@@ -316,7 +316,7 @@ func TestReleaseStaticExportIndependentOfEditorAndSourceFiles(t *testing.T) {
 		if cfg.Alias == "TEXT" {
 			updated := buildConfig(fixture.scopeEnv, fixture.scopePipe, "TEXT", "text", "api=https://api.example.com/v2/changed")
 			updated.ResourceKey = cfg.ResourceKey
-			if _, err := svc.UpdateConfig(ctx, updated); err != nil {
+			if _, err := svc.UpdateConfig(ctx, updated, currentEditRevision(t, svc, updated)); err != nil {
 				t.Fatalf("update: %v", err)
 			}
 		}
@@ -602,7 +602,7 @@ func TestReleaseStaticExportDuringActiveSwitch(t *testing.T) {
 		if cfg.Alias == "TEXT" {
 			updated := buildConfig(fixture.scopeEnv, fixture.scopePipe, "TEXT", "text", "api=https://api.example.com/v2/second")
 			updated.ResourceKey = cfg.ResourceKey
-			if _, err := fixture.svc.UpdateConfig(adminTestContext(), updated); err != nil {
+			if _, err := fixture.svc.UpdateConfig(adminTestContext(), updated, currentEditRevision(t, fixture.svc, updated)); err != nil {
 				t.Fatalf("update: %v", err)
 			}
 		}

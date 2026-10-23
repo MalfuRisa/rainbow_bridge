@@ -168,6 +168,7 @@ for (const [type, content] of [
   test(`编辑 ${type} 时保留原始数值和别名，失败后仍可重试`, async ({ page }) => {
     const mock = await mockApi(page, true)
     mock.overrides.set('config/list', route => ok(route, { list: [{ ...config, type, content }], total: 1 }))
+    mock.overrides.set('config/detail', route => ok(route, { config: { ...config, type, content } }))
     await page.goto('config?env=qa&pipeline=web')
     const origin = page.getByRole('button', { name: type === 'keyvalue' ? '编辑配置' : '编辑 站点标题', exact: true })
     await origin.click()
@@ -181,7 +182,7 @@ for (const [type, content] of [
     await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog.getByRole('alert')).toBeFocused()
     expect(mock.writes('config/update')[0].postDataJSON().config).toMatchObject({ name: '新的名称', alias: 'title', type, content })
-    mock.overrides.set('config/update', route => ok(route, {}))
+    mock.overrides.set('config/update', route => ok(route, { config: { ...config, type, content, name: '新的名称', edit_revision: '00000000-0000-4000-8000-000000000002' } }))
     await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect(origin).toBeFocused()

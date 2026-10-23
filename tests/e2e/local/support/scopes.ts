@@ -40,6 +40,7 @@ export interface AssetUpload {
 
 export interface ResourceConfig {
   resource_key: string
+  edit_revision: string
   alias: string
   name: string
   environment_key: string
@@ -129,7 +130,9 @@ export async function updateConfig(
   config: Record<string, unknown>,
   expectOk = true,
 ): Promise<RawResponse> {
+  const detail = await getJson(target, `/api/v1/config/detail?environment_key=${encodeURIComponent(scope.env)}&pipeline_key=${encodeURIComponent(scope.pipeline)}&resource_key=${encodeURIComponent(String(config.resource_key))}`)
   const response = await postJson(target, '/api/v1/config/update', {
+    expected_edit_revision: detail.json?.data?.config?.edit_revision,
     config: {
       environment_key: scope.env,
       pipeline_key: scope.pipeline,

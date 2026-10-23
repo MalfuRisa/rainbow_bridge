@@ -1,5 +1,5 @@
 /* §2.1 / §2.8: active version is the anchor; creating a snapshot is the primary action. */
-.spectrum-release-status { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; padding: 32px; margin-top: 24px; background: var(--spectrum-ink); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-ink-line); border-radius: 16px; box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-release-status { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; padding: 32px; margin-top: 24px; background: var(--spectrum-material-dark); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-material-dark-edge); border-radius: 16px; box-shadow: var(--spectrum-material-dark-shadow); }
 .spectrum-release-status .spectrum-eyebrow { color: var(--spectrum-inverse-muted); }
 .spectrum-release-current { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-content: start; align-items: center; gap: 16px; }
 .spectrum-release-current > .spectrum-eyebrow, .spectrum-release-current > .spectrum-release-change, .spectrum-release-current > code { grid-column: 1 / -1; }

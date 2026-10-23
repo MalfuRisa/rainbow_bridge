@@ -35,7 +35,7 @@ func TestConfigUpdateWhitelistAndDescriptionZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := model.Config{ID: original.ID + 10, EnvironmentKey: "different", PipelineKey: "different", ResourceKey: original.ResourceKey, Alias: "mutated", Content: "new", CreatedAt: time.Unix(1, 0), DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}
-	if err := dao.UpdateByEnvironmentAndPipeline(ctx, conn, "dev", "main", &update); err != nil {
+	if err := dao.OverwriteByEnvironmentAndPipeline(ctx, conn, "dev", "main", &update); err != nil {
 		t.Fatal(err)
 	}
 	got, err := dao.GetByResourceKey(ctx, conn, "dev", "main", original.ResourceKey)
@@ -52,7 +52,7 @@ func TestConfigUpdateWhitelistAndDescriptionZero(t *testing.T) {
 		t.Fatalf("existing zero-value rules changed: %+v", got)
 	}
 	update.Description = "restored"
-	if err := dao.UpdateByEnvironmentAndPipeline(ctx, conn, "dev", "main", &update); err != nil {
+	if err := dao.OverwriteByEnvironmentAndPipeline(ctx, conn, "dev", "main", &update); err != nil {
 		t.Fatal(err)
 	}
 	got, err = dao.GetByResourceKey(ctx, conn, "dev", "main", original.ResourceKey)

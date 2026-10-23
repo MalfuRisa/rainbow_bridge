@@ -109,6 +109,7 @@ export const useConfigStore = defineStore('config', () => {
     pipelineKey: string,
     config: {
       id: string
+      expectedEditRevision: string
       name: string
       alias: string
       type: ConfigType
@@ -127,7 +128,7 @@ export const useConfigStore = defineStore('config', () => {
         environmentId: environmentKey,
         pipelineId: pipelineKey,
       })
-      await configApi.update(apiConfig as any)
+      await configApi.updateWithRevision(apiConfig as any, config.expectedEditRevision)
       await refreshCurrentScope(environmentKey, pipelineKey)
       toast.success('配置更新成功')
     } catch (e) {

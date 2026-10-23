@@ -183,7 +183,7 @@ func (s *Service) readMigrationSourceAsset(ctx context.Context, sp *Logic, oldID
 func (s *Service) writeMigratedConfig(ctx context.Context, sp *Logic, cfg *model.Config, overwrite bool) error {
 	kind := migrationFailureConfigWriteFailed
 	if overwrite {
-		if err := sp.UpdateConfig(ctx, cfg); err != nil {
+		if err := sp.overwriteConfig(ctx, cfg); err != nil {
 			return &migrationFailure{alias: cfg.Alias, kind: kind, cause: err}
 		}
 		return nil

@@ -8,6 +8,7 @@ import (
 
 // Config represents a configuration resource persisted in storage.
 type Config struct {
+	EditRevision   string         `gorm:"column:edit_revision;type:varchar(36)" json:"edit_revision,omitempty"`
 	ID             uint           `gorm:"primaryKey" json:"id,omitempty"`
 	CreatedAt      time.Time      `json:"created_at,omitempty"`
 	UpdatedAt      time.Time      `json:"updated_at,omitempty"`

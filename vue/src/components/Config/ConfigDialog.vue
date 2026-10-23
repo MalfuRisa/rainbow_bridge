@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
+import { configApi } from '@/lib/api/config'
+import { fromApiConfig } from '@/lib/api/transformers'
 import { useDialogAttempt } from '@/composables/useDialogAttempt'
 import { objectValueTokens, tokenDisplay } from '@/lib/config-json'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -36,15 +38,16 @@ const emit = defineEmits<{
     type: ConfigType
     content: string
     description: string
-  }, done: (ok: boolean, message?: string) => void): void
+  }, done: (ok: boolean, message?: string, kind?: string) => void): void
   (e: 'update', config: {
     id: string
+    expectedEditRevision: string
     name: string
     alias: string
     type: ConfigType
     content: string
     description: string
-  }, done: (ok: boolean, message?: string) => void): void
+  }, done: (ok: boolean, message?: string, kind?: string) => void): void
   (e: 'reset'): void
 }>()
 
@@ -65,9 +68,12 @@ const colorValue = ref('#3B82F6')
 const errors = ref<{ field: string; message: string }[]>([])
 
 const isEditing = computed(() => !!props.editingConfig)
+const baseline = ref('')
+const loadingDetail = ref(false)
+const blocked = ref('')
 const saving = ref(false)
 const uploading = ref(false)
-const busy = computed(() => saving.value || uploading.value)
+const busy = computed(() => saving.value || uploading.value || loadingDetail.value)
 const formElement = ref<HTMLFormElement | null>(null)
 const saveError = ref('')
 const startAttempt = useDialogAttempt(
@@ -111,6 +117,8 @@ const resetForm = () => {
   colorValue.value = '#3B82F6'
   errors.value = []
   saveError.value = ''
+  baseline.value = ''
+  blocked.value = ''
   saving.value = false
   emit('update:editingConfig', null)
   emit('reset')
@@ -255,7 +263,7 @@ const handleAdd = () => {
 }
 
 const handleUpdate = () => {
-  if (busy.value) return
+  if (blocked.value || !baseline.value || busy.value) return
   if (!validateForm() || !props.editingConfig) return
   if (props.frozen) {
     showSaveError(`该范围已冻结,无法修改配置${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`)
@@ -266,19 +274,21 @@ const handleUpdate = () => {
   saving.value = true
   emit('update', {
     id: props.editingConfig.id,
+    expectedEditRevision: baseline.value,
     name: formData.value.name,
     alias: formData.value.alias,
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
-  }, (ok, message) => {
+  }, (ok, message, kind) => {
     if (!current()) return
     saving.value = false
     if (ok) {
       resetForm()
       return
     }
-    showSaveError(message || '保存失败')
+    blocked.value = ['CONFIG_EDIT_CONFLICT', 'CONFIG_EDIT_TARGET_NOT_FOUND', 'UNKNOWN_RESULT'].includes(kind || '') ? kind! : ''
+    showSaveError(kind === 'CONFIG_EDIT_CONFLICT' ? '这条配置已被其他操作更新。你的修改尚未保存，请重新加载后核对。' : kind === 'UNKNOWN_RESULT' ? '保存结果未确认，请重新加载核对' : message || '保存失败')
   })
 }
 
@@ -339,42 +349,66 @@ const updateKeyValuePair = (index: number, field: 'key' | 'value', value: string
 }
 
 // 初始化编辑数据
-if (isEditing.value && props.editingConfig) {
-  let formattedContent = props.editingConfig.content
-  if (props.editingConfig.type === 'object' && props.editingConfig.content.trim()) {
-    try {
-      JSON.parse(props.editingConfig.content)
-      formattedContent = props.editingConfig.content
-    } catch {
-      formattedContent = props.editingConfig.content
-    }
-  }
+function initializeEdit(config: ConfigItem) {
 
   formData.value = {
-    name: props.editingConfig.name,
-    alias: props.editingConfig.alias,
-    type: props.editingConfig.type,
-    content: formattedContent,
-    description: props.editingConfig.description || '',
+    name: config.name,
+    alias: config.alias,
+    type: config.type,
+    content: config.content,
+    description: config.description || '',
   }
 
-  if (props.editingConfig.type === 'keyvalue') {
+  originalValueTokens = new Map()
+  keyValuePairs.value = [{ key: '', value: '' }]
+  if (config.type === 'keyvalue') {
     try {
-      originalValueTokens = objectValueTokens(props.editingConfig.content)
+      originalValueTokens = objectValueTokens(config.content)
       keyValuePairs.value = Array.from(originalValueTokens, ([key, value]) => ({ key, value: tokenDisplay(value) }))
     } catch {
       keyValuePairs.value = [{ key: '', value: '' }]
     }
-  } else if (props.editingConfig.type === 'boolean') {
-    booleanValue.value = props.editingConfig.content === 'true'
-  } else if (props.editingConfig.type === 'color') {
-    colorValue.value = props.editingConfig.content || '#3B82F6'
+  } else if (config.type === 'boolean') {
+    booleanValue.value = config.content === 'true'
+  } else if (config.type === 'color') {
+    colorValue.value = config.content || '#3B82F6'
   }
 }
 
+async function loadEdit(confirmReplace = false) {
+  if (confirmReplace && !window.confirm('将用最新配置替换当前未保存内容')) return
+  const target = props.editingConfig
+  if (!target) return
+  const current = startAttempt()
+  loadingDetail.value = true
+  try {
+    const response = await configApi.detail(target.id, { environmentKey: props.selectedEnvKey, pipelineKey: props.selectedPipelineKey })
+    if (!current()) return
+    if (!response.config?.editRevision) throw new Error('配置编辑版本无效，请重新加载')
+    const config = fromApiConfig(response.config)
+    initializeEdit(config)
+    baseline.value = config.editRevision!
+    blocked.value = ''
+    saveError.value = ''
+    initialSignature.value = formSignature()
+  } catch (error) {
+    if (current()) showSaveError(error instanceof Error ? error.message : '加载失败，草稿已保留')
+  } finally { if (current()) loadingDetail.value = false }
+}
+async function copyDraft() {
+  try { await navigator.clipboard.writeText(JSON.stringify({ ...formData.value, content: getFinalContent() }, null, 2)) }
+  catch { showSaveError('复制失败，请手动复制草稿') }
+}
+watch(() => [props.open, props.selectedEnvKey, props.selectedPipelineKey, props.editingConfig?.id], () => {
+  baseline.value = ''
+  blocked.value = ''
+  loadingDetail.value = false
+  if (props.open && props.editingConfig) void loadEdit()
+}, { immediate: true, flush: 'post' })
+
 const formSignature = () => JSON.stringify({ ...formData.value, content: getFinalContent() })
-const initialSignature = formSignature()
-const isDirty = computed(() => formSignature() !== initialSignature)
+const initialSignature = ref(formSignature())
+const isDirty = computed(() => formSignature() !== initialSignature.value)
 </script>
 
 <template>
@@ -401,7 +435,7 @@ const isDirty = computed(() => formSignature() !== initialSignature)
       </DialogHeader>
       <form ref="formElement" class="spectrum-config-dialog-form" novalidate :aria-busy="busy" @submit.prevent="isEditing ? handleUpdate() : handleAdd()">
       <div class="spectrum-config-dialog-body">
-      <fieldset class="spectrum-config-fields" :disabled="busy">
+      <fieldset class="spectrum-config-fields" :disabled="busy || isEditing && !baseline">
         <div v-if="saveError" role="alert" tabindex="-1" class="spectrum-config-save-error p-3 rounded-md bg-destructive/10 border border-destructive/20">
           <div class="flex items-center gap-2 text-destructive font-medium text-sm">
             <AlertCircle class="w-4 h-4" />
@@ -596,10 +630,12 @@ const isDirty = computed(() => formSignature() !== initialSignature)
       </fieldset>
       </div>
         <DialogFooter class="spectrum-config-dialog-footer">
+          <Button v-if="blocked" type="button" variant="outline" :disabled="busy" @click="copyDraft">复制我的草稿</Button>
+          <Button v-if="(isEditing && !baseline) || (blocked && blocked !== 'CONFIG_EDIT_TARGET_NOT_FOUND')" type="button" variant="outline" :disabled="busy" @click="loadEdit(true)">重新加载</Button>
           <Button variant="outline" :disabled="busy" @click="handleOpenChange(false)" class="h-10">
             取消
           </Button>
-          <Button type="submit" class="h-10" :disabled="busy || frozen">
+          <Button type="submit" class="h-10" :disabled="busy || frozen || Boolean(blocked) || isEditing && !baseline">
             <Loader2 v-if="saving" class="w-4 h-4 mr-2 animate-spin" />
             {{ saving ? '保存中...' : '保存' }}
           </Button>

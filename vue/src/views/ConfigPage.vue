@@ -7,7 +7,7 @@ import { useConfigStore } from '@/stores/config'
 import { useFreezeStore } from '@/stores/freeze'
 import { type ConfigType } from '@/lib/types'
 import { resolveAssetUrl } from '@/lib/utils'
-import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
+import { ApiError, isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
 import EnvironmentSelector from '@/components/Config/EnvironmentSelector.vue'
 import FreezePanel from '@/components/Config/FreezePanel.vue'
 import ConfigList from '@/components/Config/ConfigList.vue'
@@ -101,12 +101,13 @@ const handleCreate = async (config: {
 
 const handleUpdate = async (config: {
   id: string
+  expectedEditRevision: string
   name: string
   alias: string
   type: string
   content: string
   description: string
-}, done: (ok: boolean, message?: string) => void) => {
+}, done: (ok: boolean, message?: string, kind?: string) => void) => {
   const environmentKey = selectedEnvKey.value
   const pipelineKey = selectedPipelineKey.value
   if (!selectedEnvKey.value || !selectedPipelineKey.value) {
@@ -116,6 +117,7 @@ const handleUpdate = async (config: {
   try {
     await configStore.updateConfig(environmentKey, pipelineKey, {
       id: config.id,
+      expectedEditRevision: config.expectedEditRevision,
       name: config.name,
       alias: config.alias,
       type: config.type as ConfigType,
@@ -129,7 +131,8 @@ const handleUpdate = async (config: {
       done(false, `${freezeErrorMessage(error)}。已刷新冻结状态`)
       return
     }
-    done(false, error instanceof Error ? error.message : '保存失败')
+    const kind = error instanceof ApiError ? error.errorType || (error.code === -1 ? 'UNKNOWN_RESULT' : '') : 'UNKNOWN_RESULT'
+    done(false, error instanceof Error ? error.message : '保存结果未确认，请重新加载核对', kind)
   }
 }
 
