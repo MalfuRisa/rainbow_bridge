@@ -55,7 +55,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: vue/package-lock.json
 
@@ -66,11 +66,7 @@ jobs:
           mkdir -p pkg/static/web
           cd vue
           npm ci
-          if [ -n "$BASE_PATH" ]; then
-            export VITE_BASE_PATH="./${BASE_PATH}/"
-          else
-            export VITE_BASE_PATH="./"
-          fi
+          export BASE_PATH="${BASE_PATH%/}/"
           npm run build
           cd ..
           cp -r vue/dist/* pkg/static/web/
@@ -81,8 +77,8 @@ jobs:
         with:
           go-version: '1.25.x'
       
-      - name: Tidy Go dependencies
-        run: go mod tidy
+      - name: Download Go dependencies
+        run: go mod download
 
       - name: Configure environment
         run: |
@@ -101,9 +97,17 @@ jobs:
           OUTPUT_DIR="./dist/${NAME}"
           mkdir -p "$OUTPUT_DIR"
           go build \
+            -mod=readonly -trimpath \
             -ldflags="-X 'main.Version=${{ env.VERSION }}' -X 'main.GitCommit=${{ env.GIT_COMMIT }}' -X 'main.BuildTime=${{ env.BUILD_TIME }}' -X 'main.BasePath=${{ env.BASE_PATH }}'" \
             -o "$OUTPUT_DIR/app${{ matrix.bin_ext }}" .
-          cp config.yaml "$OUTPUT_DIR/config.yaml"
+          for TOOL in admin-password-reset backup-restore; do
+            go build -mod=readonly -trimpath -o "$OUTPUT_DIR/${TOOL}${{ matrix.bin_ext }}" "./cmd/${TOOL}"
+          done
+          cp deploy/release/config.yaml "$OUTPUT_DIR/config.yaml"
+          cp config.yaml "$OUTPUT_DIR/config.reference.yaml"
+          cp deploy/release/QUICKSTART.md "$OUTPUT_DIR/QUICKSTART.md"
+          cp "docs/releases/${VERSION}.md" "$OUTPUT_DIR/RELEASE_NOTES.md"
+          cp -r docs/docs/api "$OUTPUT_DIR/api"
           cp -r deploy "$OUTPUT_DIR/deploy"
           cp -r pkg/static/web "$OUTPUT_DIR/web"
 
@@ -137,7 +141,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: vue/package-lock.json
 
@@ -147,11 +151,7 @@ jobs:
         run: |
           cd vue
           npm ci
-          if [ -n "$BASE_PATH" ]; then
-            export VITE_BASE_PATH="/${BASE_PATH}/"
-          else
-            export VITE_BASE_PATH="/"
-          fi
+          export BASE_PATH="${BASE_PATH%/}/"
           npm run build
           cd ..
 
@@ -163,7 +163,7 @@ jobs:
           cp -r vue/dist/* /tmp/frontend/
           # 使用-C选项指定目录，避免cd操作
           tar czf dist/frontend.tar.gz -C /tmp/frontend .
-          zip -rq dist/frontend.zip -j /tmp/frontend/*
+          (cd /tmp/frontend && zip -rq "$GITHUB_WORKSPACE/dist/frontend.zip" .)
           ls -la dist/
 
       - name: Upload frontend artifact

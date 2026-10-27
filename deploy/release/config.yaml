@@ -1,0 +1,24 @@
+server:
+  address: "127.0.0.1:8080"
+  base_path: "/rainbow-bridge"
+database:
+  driver: "sqlite"
+  sqlite:
+    path: "data/resource.db"
+redis:
+  enabled: false
+storage:
+  type: "local"
+backup:
+  enabled: false
+auth:
+  cookie_secure: false
+  allow_insecure_localhost: true
+  trusted_origins:
+    - "http://127.0.0.1:8080"
+    - "http://localhost:8080"
+intranet:
+  enabled: true
+log:
+  level: "info"
+  output: "stdout"

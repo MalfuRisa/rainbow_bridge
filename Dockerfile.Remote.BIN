@@ -13,6 +13,7 @@ ARG TARGETARCH=amd64
 FROM debian:bookworm-slim AS binary-artifact
 
 ARG BINARY_ARTIFACT_URL
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -23,14 +24,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /artifact
 
-RUN if [ -n "$BINARY_ARTIFACT_URL" ]; then \
-      wget -O artifact.tar.gz "$BINARY_ARTIFACT_URL" 2>/dev/null && \
-      tar -xzf artifact.tar.gz --strip-components=1 2>/dev/null || \
-      echo "Failed to download or extract binary artifact, exiting"; \
-    else \
-      echo "BINARY_ARTIFACT_URL not set, exiting"; \
-      exit 1; \
-    fi
+RUN test -n "$BINARY_ARTIFACT_URL" && \
+    ARTIFACT_URL="$(printf '%s' "$BINARY_ARTIFACT_URL" | sed "s/__ARCH__/${TARGETARCH}/g")" && \
+    wget -O artifact.tar.gz "$ARTIFACT_URL" && \
+    tar -xzf artifact.tar.gz --strip-components=1 && \
+    test -x /artifact/app
 
 ##
 ## App runtime stage (target: app)
@@ -50,7 +48,7 @@ WORKDIR /app
 # 从binary-artifact阶段复制预构建的二进制文件和前端文件
 COPY --from=binary-artifact /artifact/app /app/server
 COPY --from=binary-artifact /artifact/web /app/web
-COPY --from=binary-artifact /artifact/config.yaml /app/config.yaml
+COPY config.yaml /app/config.yaml
 
 RUN mkdir -p /app/data/uploads /var/lib/rainbow_bridge && chown -R rainbow:rainbow /app /var/lib/rainbow_bridge
 
