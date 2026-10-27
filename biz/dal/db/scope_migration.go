@@ -211,9 +211,9 @@ func ensureNoDuplicateActive(ctx context.Context, db *gorm.DB, table, firstColum
 		ScopeKey string
 		Count    int64
 	}
-	keyExpr := fmt.Sprintf("%s || '|' || COALESCE(%s,'')", firstColumn, secondColumn)
+	keyExpr := fmt.Sprintf("%s || '|' || COALESCE(%s,'')", columns, secondColumn)
 	if db.Dialector.Name() == "mysql" {
-		keyExpr = fmt.Sprintf("CONCAT(%s,'|',COALESCE(%s,''))", firstColumn, secondColumn)
+		keyExpr = fmt.Sprintf("CONCAT(%s,'|',COALESCE(%s,''))", columns, secondColumn)
 	}
 	query := fmt.Sprintf(
 		"SELECT %s AS scope_key, COUNT(*) AS count FROM %s WHERE active_slot = ? GROUP BY %s HAVING COUNT(*) > 1",
