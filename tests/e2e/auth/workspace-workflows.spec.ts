@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { mockApi, ok, config } from './mock'
+import { mockApi, ok, config, fixtureIdentity } from './mock'
 
 async function captureDesktop(page: Page, name: string) {
   for (const width of [1280, 1440]) {
@@ -77,6 +77,8 @@ test('迁移预览保留冲突保护，确认覆盖后按所选范围提交并�
   expect(mock.writes('transfer/migrate')[0].postDataJSON()).toMatchObject({
     source_environment_key: 'qa', source_pipeline_key: 'web', target_environment_key: 'qa', target_pipeline_key: 'staging',
     resource_keys: ['r1'], overwrite: true,
+    source_expected_environment_id: fixtureIdentity('qa'), source_expected_scope_id: fixtureIdentity('qa', 'web'),
+    target_expected_environment_id: fixtureIdentity('qa'), target_expected_scope_id: fixtureIdentity('qa', 'staging'),
   })
   await page.getByRole('button', { name: '开始新的迁移', exact: true }).click()
   await expect(page.getByRole('button', { name: '预览变更', exact: true })).toBeDisabled()

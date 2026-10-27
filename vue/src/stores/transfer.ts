@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { transferApi, type ExportSelection, type ExportTreeEnvironment, type ImportJsonData } from '@/lib/api/transfer'
 import { toast } from 'vue-sonner'
+import { captureScope } from '@/lib/scope'
 
 export type { ExportTreeEnvironment }
 
@@ -34,7 +35,11 @@ export const useTransferStore = defineStore('transfer', () => {
   ) => {
     loading.value = true
     try {
+      const source = captureScope(sourceEnvKey, sourcePipelineKey)
+      const target = captureScope(targetEnvKey, targetPipelineKey)
       await transferApi.migrate({
+        sourceExpectedEnvironmentId: source.environmentId, sourceExpectedScopeId: source.scopeId,
+        targetExpectedEnvironmentId: target.environmentId, targetExpectedScopeId: target.scopeId,
         sourceEnvironmentKey: sourceEnvKey,
         sourcePipelineKey: sourcePipelineKey,
         targetEnvironmentKey: targetEnvKey,
@@ -55,6 +60,7 @@ export const useTransferStore = defineStore('transfer', () => {
     loading.value = true
     try {
       const response = await transferApi.exportSelective({
+        source: 'editor',
         format: 'zip',
         selections,
       })

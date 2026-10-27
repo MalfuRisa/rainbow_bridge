@@ -1,5 +1,6 @@
 import { apiClient } from './client'
 import { toCamelCase } from '../utils'
+import { readScope } from '@/lib/scope'
 import type {
   ApiEnvironmentOverview,
   EnvironmentOverview,
@@ -21,12 +22,12 @@ export const runtimeApi = {
     environmentKey: string,
     pipelineKey: string
   ): Promise<RuntimeConfigData | null> => {
-    const resp = await apiClient.get<RuntimeConfigData>('/api/v1/runtime/config', undefined, {
+    const resp = await readScope(environmentKey, pipelineKey, scopeId => apiClient.get<RuntimeConfigData>('/api/v1/runtime/config', { scope_id: scopeId }, {
       headers: {
         'x-environment': environmentKey,
         'x-pipeline': pipelineKey,
       },
-    })
+    }))
     return resp.data || null
   },
 
@@ -34,7 +35,9 @@ export const runtimeApi = {
     environmentKey: string,
     pipelineKey: string
   ): Promise<Blob> => {
-    const query = new URLSearchParams({ environment_key: environmentKey, pipeline_key: pipelineKey })
-    return apiClient.download('/api/v1/runtime/static?' + query.toString())
+    return readScope(environmentKey, pipelineKey, scopeId => {
+      const query = new URLSearchParams({ environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId })
+      return apiClient.download('/api/v1/runtime/static?' + query.toString())
+    })
   },
 }

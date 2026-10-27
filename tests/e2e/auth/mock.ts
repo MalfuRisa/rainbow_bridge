@@ -1,5 +1,23 @@
 import type { Page, Route, Request } from '@playwright/test'
 import JSZip from 'jszip'
+import { createHash } from 'node:crypto'
+
+export function fixtureIdentity(environment: string, pipeline?: string) {
+  const hex = createHash('sha256').update(JSON.stringify([environment, pipeline ?? null])).digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+// Legacy fixtures use business keys; model the new server's explicit identity fields.
+function scopeResponse(value: unknown, parentEnvironment = 'qa', parentPipeline = 'web'): unknown {
+  if (Array.isArray(value)) return value.map(item => scopeResponse(item, parentEnvironment, parentPipeline))
+  if (!value || typeof value !== 'object') return value
+  const item = value as Record<string, unknown>
+  const env = typeof item.environment_key === 'string' ? item.environment_key : parentEnvironment
+  const pipeline = typeof item.pipeline_key === 'string' ? item.pipeline_key : parentPipeline
+  const result = Object.fromEntries(Object.entries(item).map(([key, nested]) => [key, scopeResponse(nested, env, pipeline)]))
+  if ('environment_key' in item || 'pipeline_key' in item) result.environment_id ??= fixtureIdentity(env)
+  if ('pipeline_key' in item || 'resource_key' in item || 'file_id' in item) result.scope_id ??= fixtureIdentity(env, pipeline)
+  return result
+}
 
 export const CSRF = 'mock-csrf-not-a-real-secret'
 export const identity = { user: { id: '1', username: 'admin', role: 'admin' },
@@ -15,7 +33,7 @@ export const config = { resource_key: 'r1', environment_key: 'qa', pipeline_key:
 export const meta = { snapshot_id: 'snap1', version: 'v1', environment_key: 'qa', pipeline_key: 'web',
   source_freeze_revision: '2', config_count: 1, asset_count: 0, created_at: '2026-10-20T00:00:00Z' }
 export function ok(route: Route, data: unknown) {
-  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'success', data }) })
+  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'success', data: scopeResponse(data) }) })
 }
 export function fail(route: Route, status: number, kind: string, extraHeaders: Record<string, string> = {}) {
   return route.fulfill({ status, contentType: 'application/json', headers: extraHeaders,
@@ -63,13 +81,23 @@ export async function mockApi(page: Page, authenticated = false) {
     if (path === 'asset/list') return ok(route, { list: [], total: 0 })
     if (path === 'asset/upload') return ok(route, { asset: { file_id: 'a1', file_name: 'fixture.txt', content_type: 'text/plain', file_size: 4 } })
     if (path === 'transfer/export-tree') return ok(route, { environments: [environment] })
+    if (path === 'transfer/export-preview') {
+      const body = request.postDataJSON()
+      const scopes = body.source === 'editor' ? body.selections.map((selection: { environment_key: string; pipeline_key?: string; expected_environment_id?: string; expected_scope_id?: string }) => ({
+        environment_key: selection.environment_key, pipeline_key: selection.pipeline_key || 'web',
+        environment_id: selection.expected_environment_id, scope_id: selection.expected_scope_id,
+      })) : [{ environment_key: body.environment_key, pipeline_key: body.pipeline_key, scope_id: body.expected_scope_id }]
+      return ok(route, { resolved_source: { kind: body.source, captured_at: '2026-10-26T00:00:00Z', scopes,
+        scope_id: body.expected_scope_id, snapshot_id: body.expected_snapshot_id, version: body.version || (body.source === 'active' ? 'v1' : null) },
+        counts: { configs: 1, assets: 0, bytes: '1024' }, estimated_bytes: '1024', warnings: [] })
+    }
     if (path === 'transfer/export') return route.fulfill({ status: 200, contentType: 'application/zip', body: zip })
     if (path === 'transfer/import-preview') return ok(route, { format: 'zip', environments: [{ ...environment, status: 'new',
       pipelines: environment.pipelines.map(pipeline => ({ ...pipeline, status: 'new', configs: pipeline.configs.map(item => ({ ...item, status: 'new' })) })) }],
       summary: { total_environments: 1, total_pipelines: 1, total_configs: 1, total_assets: 0, new_count: 1, existing_count: 0, conflict_count: 0 } })
     if (path === 'transfer/import-selective') return ok(route, { imported: 1, skipped: 0, failed: 0 })
     if (path === 'release/list') return ok(route, { items: [{ meta, is_active: false }], has_more: false, active: null })
-    if (path === 'release/active') return ok(route, { active: null })
+    if (path === 'release/active') return ok(route, { active: null, active_revision: '0' })
     if (path === 'release/create') return ok(route, { meta, replayed: false })
     if (path === 'release/activate') return ok(route, { active: { version: 'v1', revision: '1' }, operation: { replayed: false } })
     return ok(route, {})

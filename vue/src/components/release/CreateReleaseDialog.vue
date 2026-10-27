@@ -6,19 +6,21 @@ import { toast } from 'vue-sonner'
 import { AlertCircle, Lock, PackagePlus } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api/error'
+import { operationMessage } from '@/lib/api/messages'
+import { pendingReleaseKey, readPendingRelease, writePendingRelease } from '@/composables/releaseReviewPending'
 import type { ReleaseCreatePayload, ReleaseResourceIssue } from '@/lib/api/release'
 
 const props = defineProps<{
   open: boolean
   environmentKey: string
   pipelineKey: string
+  scopeId: string
   environmentName?: string
   pipelineName?: string
 }>()
@@ -31,8 +33,7 @@ const emit = defineEmits<{
 const freezeStore = useFreezeStore()
 const releaseStore = useReleaseStore()
 
-const scopeSnapshot = ref({ environmentKey: '', pipelineKey: '', environmentName: '', pipelineName: '' })
-const version = ref('')
+const scopeSnapshot = ref({ scopeId: '', environmentKey: '', pipelineKey: '', environmentName: '', pipelineName: '' })
 const reason = ref('')
 const auth = useAuthStore()
 const submitting = ref(false)
@@ -43,6 +44,11 @@ const limitInfo = ref<{ item: string; limit: number; actual: number } | null>(nu
 const pendingPayload = ref<ReleaseCreatePayload | null>(null)
 const retryAvailable = ref(false)
 const targetDeleted = ref(false)
+let storageKey = ''
+function savePending(payload: ReleaseCreatePayload | null) {
+  writePendingRelease(storageKey, payload ? { kind: 'create', payload } : null)
+  pendingPayload.value = payload
+}
 
 const freezeStatus = computed(() => freezeStore.statusFor(scopeSnapshot.value.environmentKey, scopeSnapshot.value.pipelineKey))
 const frozen = computed(() => freezeStatus.value?.state === 'locked')
@@ -51,14 +57,13 @@ const scopeLine = computed(() => {
   const { environmentKey, pipelineKey, environmentName, pipelineName } = scopeSnapshot.value
   return `${environmentName || environmentKey}(${environmentKey}) / ${pipelineName || pipelineKey}(${pipelineKey})`
 })
-const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey], () => { submitting.value = false; errorMessage.value = ''; pendingPayload.value = null; retryAvailable.value = false; targetDeleted.value = false })
+const startAttempt = useDialogAttempt(() => [props.open, props.scopeId, props.environmentKey, props.pipelineKey], () => { submitting.value = false; errorMessage.value = ''; pendingPayload.value = null; retryAvailable.value = false; targetDeleted.value = false })
 
 /** 表单是否仍然等于首次提交的请求(范围/版本/原因未改)。 */
 const retryMatchesPending = computed(() => {
   const pending = pendingPayload.value
   if (!pending) return false
   return (
-    version.value.trim() === pending.version &&
     reason.value.trim() === pending.reason &&
     scopeSnapshot.value.environmentKey === pending.environment_key &&
     scopeSnapshot.value.pipelineKey === pending.pipeline_key
@@ -68,7 +73,6 @@ const retryMatchesPending = computed(() => {
 const showRetry = computed(() => retryAvailable.value && retryMatchesPending.value)
 
 const resetAttempt = () => {
-  version.value = ''
   reason.value = ''
   errorMessage.value = ''
   issues.value = []
@@ -82,12 +86,22 @@ watch(
   (open) => {
     if (open) {
       scopeSnapshot.value = {
+        scopeId: props.scopeId,
         environmentKey: props.environmentKey,
         pipelineKey: props.pipelineKey,
         environmentName: props.environmentName || '',
         pipelineName: props.pipelineName || '',
       }
       resetAttempt()
+      storageKey = pendingReleaseKey(String(auth.user?.id ?? ''), props.scopeId)
+      try {
+        const saved = readPendingRelease(storageKey, props.scopeId)
+        if (saved?.kind === 'create' && saved.payload.environment_key === props.environmentKey && saved.payload.pipeline_key === props.pipelineKey) {
+          pendingPayload.value = saved.payload; reason.value = saved.payload.reason; retryAvailable.value = true
+        } else if (saved) {
+          targetDeleted.value = true; errorMessage.value = '该范围有未确认的发布操作，请前往“发布配置”确认结果。'
+        }
+      } catch { targetDeleted.value = true; errorMessage.value = '未确认操作无法读取，请刷新版本列表核对结果。' }
       freezeStore.loadStatus(props.environmentKey, props.pipelineKey)
     } else {
       // 关闭后清除本次操作说明
@@ -131,12 +145,7 @@ const submit = async (reuseRequestId: boolean) => {
     // 原样重发首次提交的整份请求(含当时的冻结 revision),不重新读取来源状态
     payload = pendingPayload.value as ReleaseCreatePayload
   } else {
-    const trimmedVersion = version.value.trim()
     const trimmedReason = reason.value.trim()
-    if (!trimmedVersion) {
-      errorMessage.value = '请填写版本号(小写字母/数字开头,可含 . _ -)'
-      return
-    }
     if (noteTooLong(trimmedReason)) {
       errorMessage.value = '备注最多500字'
       return
@@ -144,21 +153,24 @@ const submit = async (reuseRequestId: boolean) => {
     payload = {
       environment_key: scopeSnapshot.value.environmentKey,
       pipeline_key: scopeSnapshot.value.pipelineKey,
-      version: trimmedVersion,
+      expected_scope_id: scopeSnapshot.value.scopeId,
       expected_freeze_revision: freezeRevision.value,
       request_id: crypto.randomUUID(),
       reason: trimmedReason,
     }
-    pendingPayload.value = payload
   }
   const current = startAttempt()
   submitting.value = true
   retryAvailable.value = false
   try {
+    savePending(payload)
     const result = await releaseStore.create(payload)
     if (!current()) return
+    if (!result.meta?.version || !result.meta.snapshot_id || result.meta.scope_id !== props.scopeId ||
+        (payload.version && payload.version !== result.meta.version)) throw new Error('创建响应不完整，请确认原请求结果')
+    savePending(null)
     toast.success(result.replayed ? '已确认：版本已创建' : '版本已创建，尚未生效')
-    emit('created', payload.version)
+    emit('created', result.meta.version)
     emit('update:open', false)
   } catch (error) {
     if (!current()) return
@@ -169,6 +181,17 @@ const submit = async (reuseRequestId: boolean) => {
         latest_state?: string
       }
       switch (error.errorType) {
+        case 'RELEASE_VERSION_AUTO_ASSIGNED':
+        case 'RELEASE_VERSION_SEQUENCE_EXHAUSTED':
+          errorMessage.value = operationMessage(error.errorType, error.message)
+          savePending(null)
+          break
+        case 'SCOPE_INVALID_REQUEST':
+        case 'SCOPE_IDENTITY_CONFLICT':
+        case 'SCOPE_DELETED':
+          targetDeleted.value = true; pendingPayload.value = null; retryAvailable.value = false
+          errorMessage.value = error.message
+          break
         case 'RELEASE_SOURCE_NOT_FROZEN':
           errorMessage.value = '该范围尚未锁定或已解锁;请重新锁版后再创建'
           pendingPayload.value = null
@@ -216,6 +239,7 @@ const submit = async (reuseRequestId: boolean) => {
       retryAvailable.value = true
       errorMessage.value = error instanceof Error ? `${error.message}(网络结果不确定时可重试本次请求)` : '创建失败'
     }
+    if (current() && error instanceof ApiError && error.code >= 400 && error.code < 500) savePending(null)
   } finally {
     if (current()) submitting.value = false
   }
@@ -266,13 +290,10 @@ const submit = async (reuseRequestId: boolean) => {
         </div>
 
         <div v-if="showRetry" class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-testid="restore-pending">
-          创建结果尚未确认。点击“确认结果”核对首次提交；重新创建将视为新操作。版本：{{ pendingPayload?.version }}；备注：{{ displayNote(pendingPayload?.reason) }}。
+          创建结果尚未确认。点击“确认结果”核对首次提交。{{ pendingPayload?.version ? `原版本：${pendingPayload.version}；` : '版本号由系统生成；' }}备注：{{ displayNote(pendingPayload?.reason) }}。
         </div>
 
-        <div class="space-y-2">
-          <Label for="release-version" class="text-sm font-medium">版本号</Label>
-          <Input id="release-version" class="h-10 font-mono" v-model="version" placeholder="例如 v1.0" />
-        </div>
+        <p class="text-sm text-muted-foreground">版本号由系统生成。</p>
 
         <div class="space-y-2">
           <Label for="release-reason" class="text-sm font-medium">备注（选填）</Label>

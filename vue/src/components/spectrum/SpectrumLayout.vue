@@ -6,6 +6,7 @@ import { useVersionStore } from '@/stores/version'
 import '@/styles/spectrum.css'
 import WorkspaceAccount from '@/components/auth/WorkspaceAccount.vue'
 import SessionNotice from '@/components/auth/SessionNotice.vue'
+import ScopeNotice from './ScopeNotice.vue'
 import { getBasePath } from '@/lib/utils'
 import TopologyBackground from './TopologyBackground.vue'
 
@@ -23,6 +24,7 @@ const navigation = [
   { to: '/migration', label: '配置迁移' },
   { to: '/import-export', label: '导入导出' },
   { to: '/releases', label: '版本发布' },
+  { to: '/backups', label: '备份恢复' },
 ]
 const version = computed(() => versionStore.versionInfo?.version || '')
 const hasNewVersion = computed(() => Boolean(version.value && versionStore.latestRelease && version.value !== versionStore.latestRelease.tag_name && !versionStore.latestRelease.prerelease))
@@ -49,7 +51,7 @@ onMounted(() => { void versionStore.init() })
       <a class="spectrum-doc-link" href="https://yi-nology.github.io/rainbow_bridge/guide/" target="_blank" rel="noopener noreferrer">使用文档 <ArrowUpRight :size="14" /></a>
       <WorkspaceAccount />
     </header>
-    <main id="spectrum-main" class="spectrum-main" tabindex="-1"><SessionNotice /><slot /></main>
+    <main id="spectrum-main" class="spectrum-main" tabindex="-1"><SessionNotice /><ScopeNotice /><slot /></main>
     <footer class="spectrum-footer">
       <details v-if="versionStore.versionInfo" class="spectrum-build-info">
         <summary>RAINBOW BRIDGE <code>{{ version }}</code><ChevronDown :size="12" aria-hidden="true" /></summary>

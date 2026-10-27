@@ -30,12 +30,15 @@ func (s *Service) GetRuntimeOverview(ctx context.Context) (*runtime.RuntimeOverv
 		var pipelineOverviews []*runtime.PipelineOverview
 		for _, pl := range pipelines {
 			pipelineOverviews = append(pipelineOverviews, &runtime.PipelineOverview{
-				PipelineKey:  pl.PipelineKey,
-				PipelineName: pl.PipelineName,
+				ScopeId:       pl.ScopeID,
+				EnvironmentId: pl.EnvironmentID,
+				PipelineKey:   pl.PipelineKey,
+				PipelineName:  pl.PipelineName,
 			})
 		}
 
 		envOverviews = append(envOverviews, &runtime.EnvironmentOverview{
+			EnvironmentId:   env.EnvironmentID,
 			EnvironmentKey:  env.EnvironmentKey,
 			EnvironmentName: env.EnvironmentName,
 			Pipelines:       pipelineOverviews,
@@ -51,7 +54,6 @@ func (s *Service) GetRuntimeOverview(ctx context.Context) (*runtime.RuntimeOverv
 		},
 	}, nil
 }
-
 
 func extractAssetIDsFromCommonConfigs(configs []*common.ResourceConfig) []string {
 	var ids []string

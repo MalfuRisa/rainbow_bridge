@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { ImportSummary } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,12 +12,26 @@ import ImportPreviewTree from './ImportPreviewTree.vue'
 import { transferApi, type ExportSelection, type ImportPreviewData } from '@/lib/api/transfer'
 import { useFreezeStore } from '@/stores/freeze'
 import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
+import { useEnvironmentStore } from '@/stores/environment'
+import { useScopeSelection } from '@/composables/useScopeSelection'
+import EnvironmentChannelSelector from '@/components/resources/EnvironmentChannelSelector.vue'
+import { captureScope, type ScopeTarget } from '@/lib/scope'
+import type { Environment } from '@/lib/types'
+import { configApi } from '@/lib/api/config'
 
 const emit = defineEmits<{
   (e: 'load-tree'): void
 }>()
 
 const freezeStore = useFreezeStore()
+const environments = useEnvironmentStore()
+const importMode = ref<'original' | 'target'>('original')
+const { envPipelineModel, selectedScopeId, selectedEnvKey, selectedPipelineKey, initialize } = useScopeSelection(() => environments.environments)
+onMounted(initialize)
+const targetBindings = ref<Environment[]>([])
+const fixedTarget = ref<ScopeTarget | null>(null)
+let parseBatch = 0
+onUnmounted(() => { parseBatch++ })
 
 const importFile = ref<File | null>(null)
 const importPreview = ref<ImportPreviewData | null>(null)
@@ -54,6 +68,7 @@ watch(importPreview, async (preview) => {
 })
 
 const lockedTargets = computed(() => {
+  if (importMode.value === 'target') return freezeStore.isLocked(selectedEnvKey.value, selectedPipelineKey.value) ? [{ label: `${selectedEnvKey.value}/${selectedPipelineKey.value}`, reason: '' }] : []
   if (!importPreview.value) return [] as { label: string; reason: string }[]
   const targets: { label: string; reason: string }[] = []
   for (const env of importPreview.value.environments) {
@@ -71,6 +86,8 @@ const lockedTargets = computed(() => {
 
 const validateFile = (file: File): string | null => {
   const fileName = file.name.toLowerCase()
+  if (importMode.value === 'target' && !selectedScopeId.value) return '请先选择目标环境和渠道。'
+  if (importMode.value === 'target' && !fileName.endsWith('.zip')) return '指定目标渠道请使用 ZIP 迁移包。TAR.GZ 可按包内范围导入。'
   if (!fileName.endsWith('.zip') && !fileName.endsWith('.tar.gz') && !fileName.endsWith('.tgz')) {
     return '不支持的文件格式，请上传 .zip 或 .tar.gz 文件'
   }
@@ -123,18 +140,35 @@ const processFile = async (file: File) => {
   importResult.value = null
   importError.value = null
   importPreview.value = null
+  targetBindings.value = []
   isParsing.value = true
-
+  const batch = ++parseBatch
   try {
+    await environments.fetchOverview()
+    if (environments.error) throw new Error(environments.error)
+    targetBindings.value = JSON.parse(JSON.stringify(environments.environments))
+    fixedTarget.value = importMode.value === 'target' ? captureScope(selectedEnvKey.value, selectedPipelineKey.value) : null
     const preview = await parseFile(file)
+    if (preview && fixedTarget.value) {
+      const target = fixedTarget.value
+      const existing = await configApi.list({ environmentKey: target.environmentKey, pipelineKey: target.pipelineKey, scopeId: target.scopeId })
+      const aliases = new Set(existing.list.map(item => item.alias))
+      let conflicts = 0
+      for (const env of preview.environments) for (const pipeline of env.pipelines) for (const config of pipeline.configs) {
+        config.status = aliases.has(config.alias) ? 'conflict' : 'new'
+        if (config.status === 'conflict') conflicts++
+      }
+      preview.summary.conflict_count = conflicts
+    }
+    if (batch !== parseBatch) return
     if (preview) {
       importPreview.value = preview
       importSelections.value = processPreviewData(preview)
     }
   } catch (err) {
-    importError.value = err instanceof Error ? err.message : '文件解析失败'
+    if (batch === parseBatch) importError.value = err instanceof Error ? err.message : '文件解析失败'
   } finally {
-    isParsing.value = false
+    if (batch === parseBatch) isParsing.value = false
   }
 }
 
@@ -150,8 +184,20 @@ const checkImportConflicts = (): boolean => {
 
 const executeImport = async (): Promise<void> => {
   if (!importFile.value || !importPreview.value) return
-  
-  importResult.value = await transferApi.importSelective(importFile.value, importSelections.value, overwriteConflicts.value)
+  if (importMode.value === 'target') {
+    if (!fixedTarget.value) throw new Error('请先选择目标渠道并重新解析文件。')
+    if (!importFile.value.name.toLowerCase().endsWith('.zip')) throw new Error('指定目标渠道当前仅支持 ZIP，请使用 ZIP 迁移包。')
+    importResult.value = await transferApi.importFile(importFile.value, fixedTarget.value, overwriteConflicts.value)
+    return
+  }
+  const selections = importSelections.value.flatMap(selection => {
+    const env = targetBindings.value.find(item => item.key === selection.environment_key)
+    const previewEnv = importPreview.value!.environments.find(item => item.environment_key === selection.environment_key)
+    const pipelines = selection.pipeline_key ? [selection.pipeline_key] : (previewEnv?.pipelines || []).map(item => item.pipeline_key)
+    return pipelines.length ? pipelines.map(key => ({ ...selection, pipeline_key: key, expected_environment_id: env?.environmentId,
+      expected_scope_id: env?.pipelines.find(item => item.key === key)?.scopeId })) : [{ ...selection, expected_environment_id: env?.environmentId }]
+  })
+  importResult.value = await transferApi.importSelective(importFile.value, selections, overwriteConflicts.value)
 }
 
 const handleImportSuccess = () => {
@@ -160,21 +206,24 @@ const handleImportSuccess = () => {
 }
 
 const handleImport = async () => {
-  if (!importFile.value || !importPreview.value) return
+  if (!importFile.value || !importPreview.value || isImporting.value) return
 
   if (checkImportConflicts()) {
     return
   }
 
   isImporting.value = true
+  const batch = parseBatch
   importSuccess.value = false
   importError.value = null
   importErrorIsFreeze.value = false
 
   try {
     await executeImport()
+    if (batch !== parseBatch) return
     handleImportSuccess()
   } catch (err) {
+    if (batch !== parseBatch) return
     if (isFreezeBlockedError(err)) {
       // 后端 409 展示实际受阻目标与原因,并刷新冻结状态;选择保持不丢
       importErrorIsFreeze.value = true
@@ -198,6 +247,9 @@ const handleImport = async () => {
 }
 
 const clearImport = () => {
+  parseBatch++
+  showConfirmDialog.value = false
+  fixedTarget.value = null
   importSuccess.value = false
   importResult.value = null
   importFile.value = null
@@ -214,11 +266,33 @@ const clearImport = () => {
 const handleImportSelectionsChange = (selections: ExportSelection[]) => {
   importSelections.value = selections
 }
+watch([importMode, () => importMode.value === 'target' ? selectedScopeId.value : ''], () => {
+  parseBatch++
+  if (!importFile.value) return
+  isParsing.value = false
+  importPreview.value = null; importSelections.value = []; fixedTarget.value = null; showConfirmDialog.value = false
+  importError.value = '导入目标已变化，请重新解析文件并核对。'
+}, { flush: 'sync' })
+watch(() => JSON.stringify(environments.environments.map(env => [env.environmentId, env.pipelines.map(pipe => pipe.scopeId)])), () => {
+  if ((!importPreview.value && !isParsing.value) || !targetBindings.value.length) return
+  const changed = targetBindings.value.some(old => {
+    const current = environments.environments.find(env => env.key === old.key)
+    return current?.environmentId !== old.environmentId || old.pipelines.some(pipe => current?.pipelines.find(item => item.key === pipe.key)?.scopeId !== pipe.scopeId)
+  })
+  if (changed) { parseBatch++; isParsing.value = false; importPreview.value = null; fixedTarget.value = null; showConfirmDialog.value = false; importError.value = '范围已删除或重新创建，请重新解析文件后核对。' }
+})
 </script>
 
 <template>
   <div class="spectrum-transfer-layout">
     <div class="spectrum-transfer-content space-y-6">
+      <Button v-if="importFile && !importPreview && !isParsing" variant="outline" @click="processFile(importFile)">重新解析文件</Button>
+      <Card class="spectrum-panel"><CardHeader class="spectrum-panel-header"><CardTitle class="text-lg">导入到编辑区</CardTitle></CardHeader><CardContent class="spectrum-panel-content space-y-4">
+        <div class="flex gap-3"><Button :variant="importMode === 'original' ? 'default' : 'outline'" :disabled="isImporting" @click="importMode = 'original'">按包内范围</Button><Button :variant="importMode === 'target' ? 'default' : 'outline'" :disabled="isImporting" @click="importMode = 'target'">指定目标渠道</Button></div>
+        <p class="text-sm text-muted-foreground">{{ importMode === 'original' ? '按包内环境和渠道导入，可选择配置；不存在的范围将新建。' : '将 ZIP 迁移包的全部配置导入一个渠道，可选择是否覆盖冲突项。' }}</p>
+        <EnvironmentChannelSelector v-if="importMode === 'target'" v-model="envPipelineModel" :disabled="isImporting" />
+        <p class="text-xs text-muted-foreground">迁移包仅更新编辑区，不自动锁版、发布或切换生效。业务静态包和整实例备份不可在此导入。</p>
+      </CardContent></Card>
       <Card class="spectrum-panel">
         <CardHeader class="spectrum-panel-header">
           <CardTitle class="text-lg">上传文件</CardTitle>
@@ -232,7 +306,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               :class="{ 'is-dragging': dragging }"
               role="button"
               tabindex="0"
-              aria-label="选择或拖入配置备份文件"
+              aria-label="选择或拖入迁移包"
               @keydown.enter="fileInputRef?.click()"
               @keydown.space.prevent="fileInputRef?.click()"
               @dragover.prevent="dragging = true"
@@ -278,7 +352,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
 
               <Alert v-if="importError && !importPreview" variant="destructive">
                 <AlertCircle class="h-4 w-4" />
-                <AlertTitle>解析失败</AlertTitle>
+                <AlertTitle>无法继续导入</AlertTitle>
                 <AlertDescription>{{ importError }}</AlertDescription>
               </Alert>
             </div>
@@ -288,7 +362,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
 
       <Card v-if="importPreview" class="spectrum-panel spectrum-section">
         <CardHeader class="spectrum-panel-header">
-          <CardTitle class="text-lg">选择导入内容</CardTitle>
+          <CardTitle class="text-lg">{{ importMode === 'target' ? '包内内容概览' : '选择导入内容' }}</CardTitle>
         </CardHeader>
         <CardContent class="spectrum-panel-content space-y-4">
           <Alert v-if="lockedTargets.length" variant="destructive">
@@ -338,14 +412,15 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
             </div>
           </div>
 
-          <ImportPreviewTree
+          <div v-if="importMode === 'original'" :inert="isImporting"><ImportPreviewTree
             :data="importPreview.environments"
             @change="handleImportSelectionsChange"
-          />
+          /></div>
 
           <div v-if="importPreview.summary.conflict_count > 0" class="flex items-center gap-2 p-3 bg-muted rounded-lg mt-4">
             <Checkbox
               id="overwrite"
+              :disabled="isImporting"
               :model-value="overwriteConflicts"
               @update:model-value="(v: boolean) => overwriteConflicts = v"
             />
@@ -360,7 +435,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
     <div class="spectrum-transfer-aside space-y-6">
       <Card class="spectrum-panel spectrum-transfer-summary">
         <CardHeader class="spectrum-panel-header">
-          <p class="spectrum-eyebrow">IMPORT / 恢复清单</p>
+          <p class="spectrum-eyebrow">IMPORT / 导入清单</p>
           <CardTitle class="text-lg">导入操作</CardTitle>
         </CardHeader>
         <CardContent class="spectrum-panel-content space-y-4">
@@ -396,7 +471,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               <Button
                 class="w-full"
                 @click="handleImport"
-                :disabled="isImporting || importSelections.length === 0"
+                :disabled="isImporting || !importPreview || (importMode === 'original' ? importSelections.length === 0 : !fixedTarget) || lockedTargets.length > 0"
               >
                 <Loader2 v-if="isImporting" class="w-4 h-4 mr-2 animate-spin" />
                 <Upload v-else class="w-4 h-4 mr-2" />
@@ -404,7 +479,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
               </Button>
             </div>
 
-            <Alert v-if="importError" variant="destructive">
+            <Alert v-if="importError && importPreview" variant="destructive">
               <Lock v-if="importErrorIsFreeze" class="h-4 w-4" />
               <AlertCircle v-else class="h-4 w-4" />
               <AlertTitle>{{ importErrorIsFreeze ? '导入被拒绝(目标已冻结)' : '导入失败' }}</AlertTitle>
@@ -441,7 +516,7 @@ const handleImportSelectionsChange = (selections: ExportSelection[]) => {
         <AlertCircle class="h-4 w-4" />
         <AlertTitle>注意事项</AlertTitle>
         <AlertDescription class="space-y-1">
-          <p>导入不可撤销，建议先备份现有数据。</p>
+          <p>导入修改编辑区，建议先保存所需内容。</p>
           <p>冲突项默认跳过；勾选覆盖后替换冲突项，其他配置保留。</p>
         </AlertDescription>
       </Alert>

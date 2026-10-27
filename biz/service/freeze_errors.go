@@ -24,6 +24,7 @@ const (
 
 // FreezeBlockedScope 描述被冻结而阻止写入的范围。
 type FreezeBlockedScope struct {
+	ScopeID        string
 	EnvironmentKey string
 	PipelineKey    string
 	State          string

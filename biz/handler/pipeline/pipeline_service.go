@@ -5,6 +5,8 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -48,8 +50,16 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedEnvironmentId()) == "" {
+		c.JSON(400, &pipeline.PipelineResponse{Code: 400, Msg: "error", Error: "expected_environment_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 
-	if err := svc.AddPipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline); err != nil {
+	if err := svc.AddPipelineWithIdentity(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline, req.GetExpectedEnvironmentId()); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
@@ -66,10 +76,14 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	created, fetchErr := svc.GetPipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline.GetPipelineKey())
+	if fetchErr != nil {
+		created = req.Pipeline
+	}
 	c.JSON(consts.StatusOK, &pipeline.PipelineResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: &pipeline.PipelineData{Pipeline: req.Pipeline},
+		Data: &pipeline.PipelineData{Pipeline: created},
 	})
 }
 
@@ -103,7 +117,15 @@ func Update(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	if err := svc.UpdatePipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline); err != nil {
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &pipeline.PipelineResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	if err := svc.UpdatePipelineWithIdentity(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline, req.GetExpectedScopeId()); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
@@ -120,10 +142,14 @@ func Update(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	updated, fetchErr := svc.GetPipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline.GetPipelineKey())
+	if fetchErr != nil {
+		updated = req.Pipeline
+	}
 	c.JSON(consts.StatusOK, &pipeline.PipelineResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: &pipeline.PipelineData{Pipeline: req.Pipeline},
+		Data: &pipeline.PipelineData{Pipeline: updated},
 	})
 }
 
@@ -157,7 +183,16 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	if err := svc.DeletePipeline(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.PipelineKey); err != nil {
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &pipeline.DeletePipelineResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	result, err := svc.DeletePipelineWithIdentity(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.PipelineKey, req.GetExpectedScopeId())
+	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &pipeline.DeletePipelineResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if releaseErr, ok := service.AsReleaseError(err); ok {
 			c.JSON(releaseErr.HTTPStatus, &pipeline.DeletePipelineResponse{Code: int32(releaseErr.Code), Msg: "error", Error: releaseErr.Message, ErrorType: releaseErr.ErrorType})
 			return
@@ -181,6 +216,14 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &pipeline.DeletePipelineResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
+		Data: &pipeline.DeletePipelineData{
+			Deleted:   true,
+			ScopeId:   result.ScopeID,
+			DeletedAt: result.DeletedAt.UTC().Format(time.RFC3339),
+			Configs:   int32(result.Configs),
+			Assets:    int32(result.Assets),
+			Versions:  int32(result.Versions),
+		},
 	})
 }
 

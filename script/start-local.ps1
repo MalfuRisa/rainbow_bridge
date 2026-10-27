@@ -223,6 +223,7 @@ try {
         Invoke-BuildStep -Command 'go' -Arguments @('build', '-o', $resetExe, './cmd/admin-password-reset')
     } finally { Pop-Location }
 
+    $backupControlDir = (Join-Path $DataDir 'backup-control').Replace('\', '/').Replace("'", "''")
     @"
 server:
   address: "127.0.0.1:$Port"
@@ -235,6 +236,9 @@ redis:
   enabled: false
 storage:
   type: "local"
+backup:
+  enabled: true
+  control_dir: '$backupControlDir'
 auth:
   cookie_name: "rb_demo_$($key.Substring(0, 12).ToLowerInvariant())"
   cookie_secure: false
@@ -262,6 +266,7 @@ log:
     Test-LocalLogin -Url $url -ResetExe $resetExe -DataDir $DataDir
     Write-LauncherMessage "Ready: $url/"
     Write-LauncherMessage "Persistent demo data: $DataDir"
+    Write-LauncherMessage "Business backup enabled. Control directory: $(Join-Path $DataDir 'backup-control')"
     Write-LauncherMessage 'Login account: admin / password: admin'
     Write-LauncherMessage "Logs: $outLog / $errLog"
     if ($CheckOnly) {

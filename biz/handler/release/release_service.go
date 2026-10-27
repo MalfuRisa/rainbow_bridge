@@ -32,10 +32,16 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, releaseErrorJSON{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 	result, err := svc.CreateRelease(handler.EnrichContext(ctx, c), service.ReleaseCreateInput{
+		ExpectedScopeID:           req.GetExpectedScopeId(),
 		EnvironmentKey:            req.GetEnvironmentKey(),
 		PipelineKey:               req.GetPipelineKey(),
 		Version:                   req.GetVersion(),
+		AutoOnly:                  true,
 		ExpectedFreezeRevisionRaw: req.GetExpectedFreezeRevision(),
 		RequestID:                 req.GetRequestId(),
 		Reason:                    req.GetReason(),
@@ -65,6 +71,10 @@ func List(ctx context.Context, c *app.RequestContext) {
 		}
 		limit = parsed
 	}
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id")); err != nil {
+		writeListError(c, err)
+		return
+	}
 	page, err := svc.ReleaseVersions(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), limit, c.Query("before_id"))
 	if err != nil {
 		writeListError(c, err)
@@ -89,6 +99,10 @@ func List(ctx context.Context, c *app.RequestContext) {
 // Detail .
 // @router /api/v1/release/detail [GET]
 func Detail(ctx context.Context, c *app.RequestContext) {
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id")); err != nil {
+		writeDetailError(c, err)
+		return
+	}
 	detail, err := svc.ReleaseDetail(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("version"))
 	if err != nil {
 		writeDetailError(c, err)
@@ -119,7 +133,8 @@ func Detail(ctx context.Context, c *app.RequestContext) {
 // Active .
 // @router /api/v1/release/active [GET]
 func Active(ctx context.Context, c *app.RequestContext) {
-	active, err := svc.ReleaseActive(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"))
+	state, err := svc.ReadReleaseActiveState(handler.EnrichContext(ctx, c),
+		c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id"))
 	if err != nil {
 		writeActiveError(c, err)
 		return
@@ -128,7 +143,10 @@ func Active(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, releaseEnvelopeJSON{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: releaseActiveDataJSON{Active: activeJSONFrom(active)},
+		Data: releaseActiveDataJSON{
+			Active:         activeJSONFrom(state.Active),
+			ActiveRevision: strconv.FormatInt(state.Revision, 10),
+		},
 	})
 }
 
@@ -142,7 +160,12 @@ func Activate(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, releaseErrorJSON{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 	result, err := svc.ActivateRelease(handler.EnrichContext(ctx, c), service.ReleaseActivateInput{
+		ExpectedScopeID:           req.GetExpectedScopeId(),
 		EnvironmentKey:            req.GetEnvironmentKey(),
 		PipelineKey:               req.GetPipelineKey(),
 		Version:                   req.GetVersion(),
@@ -180,6 +203,10 @@ func History(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 		limit = parsed
+	}
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id")); err != nil {
+		writeHistoryError(c, err)
+		return
 	}
 	page, err := svc.ReleaseHistoryPage(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), limit, c.Query("before_event_id"))
 	if err != nil {
@@ -232,7 +259,7 @@ func RuntimeRelease(ctx context.Context, c *app.RequestContext) {
 		writeRuntimeError(c, err)
 		return
 	}
-	data, err := svc.RuntimeRelease(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, versionParam)
+	data, err := svc.RuntimeReleaseWithScope(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, versionParam, c.Query("scope_id"))
 	if err != nil {
 		writeRuntimeError(c, err)
 		return
@@ -267,6 +294,7 @@ func RuntimeReleaseStatic(ctx context.Context, c *app.RequestContext) {
 	environmentKey := strings.TrimSpace(string(c.GetHeader("x-environment")))
 	pipelineKey := strings.TrimSpace(string(c.GetHeader("x-pipeline")))
 	result, err := svc.ReleaseStaticExport(handler.EnrichContext(ctx, c), service.ReleaseStaticExportInput{
+		ExpectedScopeID:    c.Query("scope_id"),
 		EnvironmentKey:     environmentKey,
 		PipelineKey:        pipelineKey,
 		Version:            c.Query("version"),
@@ -309,6 +337,10 @@ func Asset(ctx context.Context, c *app.RequestContext) {
 
 func writeCreateError(c *app.RequestContext, err error) {
 	c.Header("Cache-Control", "no-store")
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		c.JSON(scopeErr.HTTPStatus, releaseErrorJSON{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+		return
+	}
 	if releaseErr, ok := service.AsReleaseError(err); ok {
 		issues := make([]releaseResourceIssueJSON, 0, len(releaseErr.Issues))
 		for _, issue := range releaseErr.Issues {
@@ -353,6 +385,10 @@ func writeActiveError(c *app.RequestContext, err error) {
 
 func writeActivateError(c *app.RequestContext, err error) {
 	c.Header("Cache-Control", "no-store")
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		c.JSON(scopeErr.HTTPStatus, releaseErrorJSON{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+		return
+	}
 	if releaseErr, ok := service.AsReleaseError(err); ok {
 		c.JSON(releaseErr.HTTPStatus, releaseActivateErrorJSON{
 			Code: int32(releaseErr.Code), Msg: "error", Error: releaseErr.Message, ErrorType: releaseErr.ErrorType,
@@ -394,6 +430,9 @@ func writeAssetError(c *app.RequestContext, err error) {
 
 // releaseErrorParts 提取发布错误的 HTTP 映射;兼容写协调的冻结类错误。
 func releaseErrorParts(err error) (int, int32, string, string) {
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		return scopeErr.HTTPStatus, int32(scopeErr.Code), scopeErr.ErrorType, scopeErr.Message
+	}
 	if authErr, ok := service.AsAuthError(err); ok {
 		return authErr.HTTPStatus, int32(authErr.Code), authErr.ErrorType, authErr.Error()
 	}
@@ -455,6 +494,7 @@ type releaseActivateErrorJSON struct {
 }
 
 type releaseMetaJSON struct {
+	ScopeID              string   `json:"scope_id"`
 	SnapshotID           string   `json:"snapshot_id"`
 	EnvironmentKey       string   `json:"environment_key"`
 	PipelineKey          string   `json:"pipeline_key"`
@@ -475,6 +515,7 @@ type releaseMetaJSON struct {
 }
 
 type releaseActiveJSON struct {
+	ScopeID       string `json:"scope_id"`
 	SnapshotID    string `json:"snapshot_id"`
 	Version       string `json:"version"`
 	Revision      string `json:"revision"`
@@ -528,7 +569,8 @@ type releaseDetailDataJSON struct {
 }
 
 type releaseActiveDataJSON struct {
-	Active *releaseActiveJSON `json:"active"`
+	Active         *releaseActiveJSON `json:"active"`
+	ActiveRevision string             `json:"active_revision"`
 }
 
 type releaseOperationJSON struct {
@@ -570,6 +612,7 @@ func metaJSONFrom(meta service.ReleaseVersionMeta) releaseMetaJSON {
 		refs = make([]string, 0)
 	}
 	return releaseMetaJSON{
+		ScopeID:              meta.ScopeID,
 		SnapshotID:           meta.SnapshotID,
 		EnvironmentKey:       meta.EnvironmentKey,
 		PipelineKey:          meta.PipelineKey,
@@ -595,6 +638,7 @@ func activeJSONFrom(active *service.ReleaseActiveInfo) *releaseActiveJSON {
 		return nil
 	}
 	return &releaseActiveJSON{
+		ScopeID:       active.ScopeID,
 		SnapshotID:    active.SnapshotID,
 		Version:       active.Version,
 		Revision:      strconv.FormatInt(active.Revision, 10),
@@ -624,6 +668,7 @@ type runtimeReleaseEnvironmentJSON struct {
 }
 
 type runtimeReleaseDataJSON struct {
+	ScopeID              string                        `json:"scope_id"`
 	ActivatedAt          string                        `json:"activated_at,omitempty"`
 	SnapshotID           string                        `json:"snapshot_id"`
 	Version              string                        `json:"version"`
@@ -643,6 +688,7 @@ type runtimeReleaseResponseJSON struct {
 
 func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtimeReleaseDataJSON {
 	result := runtimeReleaseDataJSON{
+		ScopeID:              data.ScopeID,
 		ActivatedAt:          data.ActivatedAt,
 		SnapshotID:           data.SnapshotID,
 		Version:              data.Version,

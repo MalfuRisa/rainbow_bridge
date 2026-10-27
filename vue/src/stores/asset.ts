@@ -5,6 +5,7 @@ import { assetApi } from '@/lib/api/asset'
 import { fromApiAsset } from '@/lib/api/transformers'
 import type { Asset } from '@/lib/api/transformers'
 import { toast } from 'vue-sonner'
+import { scopeIdFor } from '@/lib/scope'
 
 export const useAssetStore = defineStore('asset', () => {
   const assets = ref<Asset[]>([])
@@ -12,7 +13,7 @@ export const useAssetStore = defineStore('asset', () => {
   const error = ref<string | null>(null)
   let requestId = 0
   let currentScope = ''
-  const scopeKey = (environmentKey: string, pipelineKey: string) => JSON.stringify([environmentKey, pipelineKey])
+  const scopeKey = (environmentKey: string, pipelineKey: string, scopeId = scopeIdFor(environmentKey, pipelineKey)) => JSON.stringify([environmentKey, pipelineKey, scopeId])
   const resetAssets = () => {
     requestId += 1
     currentScope = ''
@@ -21,15 +22,15 @@ export const useAssetStore = defineStore('asset', () => {
     loading.value = false
   }
 
-  const fetchAssets = async (environmentKey: string, pipelineKey: string) => {
+  const fetchAssets = async (environmentKey: string, pipelineKey: string, scopeId = scopeIdFor(environmentKey, pipelineKey)) => {
     const batch = ++requestId
-    const scope = scopeKey(environmentKey, pipelineKey)
+    const scope = scopeKey(environmentKey, pipelineKey, scopeId)
     if (scope !== currentScope) assets.value = []
     currentScope = scope
     loading.value = true
     error.value = null
     try {
-      const response = await assetApi.list({ environmentKey, pipelineKey })
+      const response = await assetApi.list({ environmentKey, pipelineKey, scopeId })
       if (batch !== requestId) return
       assets.value = response.list.map(fromApiAsset)
     } catch (e) {
@@ -44,11 +45,12 @@ export const useAssetStore = defineStore('asset', () => {
   const uploadAsset = async (
     file: File,
     environmentKey: string,
-    pipelineKey: string
+    pipelineKey: string,
+    expectedScopeId: string
   ): Promise<Asset | null> => {
     try {
-      const result = await assetApi.upload(file, environmentKey, pipelineKey)
-      if (currentScope === scopeKey(environmentKey, pipelineKey)) await fetchAssets(environmentKey, pipelineKey)
+      const result = await assetApi.upload(file, environmentKey, pipelineKey, expectedScopeId)
+      if (currentScope === scopeKey(environmentKey, pipelineKey, expectedScopeId) && expectedScopeId === scopeIdFor(environmentKey, pipelineKey)) await fetchAssets(environmentKey, pipelineKey, expectedScopeId)
       toast.success('资源上传成功')
       return result.asset ? fromApiAsset(result.asset) : null
     } catch (e) {

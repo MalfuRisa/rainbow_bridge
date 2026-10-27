@@ -5,8 +5,9 @@ package transfer
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -60,10 +61,21 @@ func Import(ctx context.Context, c *app.RequestContext) {
 		// 获取目标环境和渠道（用户在前端选择的）
 		targetEnv := strings.TrimSpace(string(c.FormValue("environment_key")))
 		targetPipeline := strings.TrimSpace(string(c.FormValue("pipeline_key")))
+		expectedEnvironmentID := strings.TrimSpace(string(c.FormValue("expected_environment_id")))
+		expectedScopeID := strings.TrimSpace(string(c.FormValue("expected_scope_id")))
 		overwrite := strings.ToLower(string(c.FormValue("overwrite"))) == "true"
 
-		outcome, err := svc.ImportArchiveWithResult(handler.EnrichContext(ctx, c), data, "zip", targetEnv, targetPipeline, nil, overwrite)
+		outcome, err := svc.ImportArchiveWithIdentity(handler.EnrichContext(ctx, c), data, "zip",
+			targetEnv, targetPipeline, expectedEnvironmentID, expectedScopeID, nil, overwrite)
 		if err != nil {
+			if transferErr, ok := service.AsTransferExportError(err); ok {
+				c.JSON(transferErr.HTTPStatus, &transfer.ImportResponse{Code: int32(transferErr.Code), Msg: "error", Error: transferErr.Message, ErrorType: transferErr.ErrorType})
+				return
+			}
+			if scopeErr, ok := service.AsScopeError(err); ok {
+				c.JSON(scopeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+				return
+			}
 			if freezeErr, ok := service.AsFreezeError(err); ok {
 				c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 				return
@@ -96,8 +108,13 @@ func Import(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	written, err := svc.ImportConfigsWithResult(handler.EnrichContext(ctx, c), req.GetConfigs(), req.GetOverwrite())
+	written, err := svc.ImportConfigsWithIdentity(handler.EnrichContext(ctx, c), req.GetConfigs(),
+		req.GetOverwrite(), req.GetExpectedEnvironmentId(), req.GetExpectedScopeId())
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
@@ -209,50 +226,151 @@ func ExportTree(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// ExportSelective exports selected configurations.
+// ExportSelective exports selected configurations or a release snapshot as a
+// portable migration archive.
 // @router /api/v1/transfer/export [POST]
 func ExportSelective(ctx context.Context, c *app.RequestContext) {
 	req := &transfer.ExportSelectiveRequest{}
 	if err := c.BindJSON(req); err != nil {
-		c.JSON(consts.StatusOK, &transfer.ExportResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: err.Error(),
+		c.JSON(consts.StatusBadRequest, map[string]any{
+			"code": consts.StatusBadRequest, "msg": "error", "error": err.Error(),
+			"error_type": service.ErrTypeTransferInvalidRequest,
 		})
 		return
 	}
-
-	if len(req.Selections) == 0 {
-		c.JSON(consts.StatusOK, &transfer.ExportResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "selections cannot be empty",
-		})
-		return
-	}
-
-	format := strings.ToLower(strings.TrimSpace(req.Format))
-	if format == "" {
-		format = "zip"
-	}
-
-	data, filename, err := svc.ExportConfigsSelective(handler.EnrichContext(ctx, c), req.Selections, format)
+	result, err := svc.ExportWithSource(handler.EnrichContext(ctx, c), exportRequestFromPB(req))
 	if err != nil {
 		handler.WriteExportError(c, err)
 		return
 	}
-
-	var contentType string
-	switch format {
-	case "tar.gz":
-		contentType = "application/gzip"
-	default:
-		contentType = "application/zip"
+	defer os.Remove(result.TempPath)
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Rainbow-Export-Source", result.Source)
+	if result.SnapshotID != "" {
+		c.Header("X-Rainbow-Snapshot-Id", result.SnapshotID)
 	}
+	if result.Version != "" {
+		c.Header("X-Rainbow-Version", result.Version)
+	}
+	c.FileAttachment(result.TempPath, result.FileName)
+}
 
-	c.Header("Content-Type", contentType)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(consts.StatusOK, contentType, data)
+// ExportPreview resolves the export source without generating an archive.
+// @router /api/v1/transfer/export-preview [POST]
+func ExportPreview(ctx context.Context, c *app.RequestContext) {
+	req := &transfer.ExportSelectiveRequest{}
+	if err := c.BindJSON(req); err != nil {
+		c.JSON(consts.StatusBadRequest, map[string]any{
+			"code": consts.StatusBadRequest, "msg": "error", "error": err.Error(),
+			"error_type": service.ErrTypeTransferInvalidRequest,
+		})
+		return
+	}
+	preview, err := svc.PreviewExport(handler.EnrichContext(ctx, c), exportRequestFromPB(req))
+	if err != nil {
+		handler.WriteExportError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(consts.StatusOK, map[string]any{
+		"code": consts.StatusOK,
+		"msg":  "OK",
+		"data": exportPreviewJSON(preview),
+	})
+}
+
+func exportRequestFromPB(req *transfer.ExportSelectiveRequest) service.ExportRequest {
+	request := service.ExportRequest{
+		Format: req.GetFormat(), Source: req.GetSource(),
+		EnvironmentKey: req.GetEnvironmentKey(), PipelineKey: req.GetPipelineKey(),
+		ExpectedScopeID: req.GetExpectedScopeId(), Version: req.GetVersion(),
+		ExpectedSnapshotID:    req.GetExpectedSnapshotId(),
+		ExpectedEnvironmentID: req.GetExpectedEnvironmentId(),
+	}
+	for _, selection := range req.GetSelections() {
+		if selection == nil {
+			continue
+		}
+		request.Selections = append(request.Selections, &service.ExportSelection{
+			EnvironmentKey:        selection.GetEnvironmentKey(),
+			PipelineKey:           selection.GetPipelineKey(),
+			ResourceKeys:          selection.GetResourceKeys(),
+			ExpectedEnvironmentID: selection.GetExpectedEnvironmentId(),
+			ExpectedScopeID:       selection.GetExpectedScopeId(),
+		})
+	}
+	return request
+}
+
+type exportScopeJSON struct {
+	EnvironmentKey  string `json:"environment_key"`
+	EnvironmentName string `json:"environment_name"`
+	PipelineKey     string `json:"pipeline_key"`
+	PipelineName    string `json:"pipeline_name"`
+	EnvironmentID   string `json:"environment_id"`
+	ScopeID         string `json:"scope_id"`
+	Version         string `json:"version,omitempty"`
+	SnapshotID      string `json:"snapshot_id,omitempty"`
+}
+
+type exportResolvedSourceJSON struct {
+	Kind           string            `json:"kind"`
+	CapturedAt     string            `json:"captured_at"`
+	EnvironmentKey string            `json:"environment_key,omitempty"`
+	PipelineKey    string            `json:"pipeline_key,omitempty"`
+	EnvironmentID  string            `json:"environment_id,omitempty"`
+	ScopeID        string            `json:"scope_id,omitempty"`
+	Version        string            `json:"version,omitempty"`
+	SnapshotID     string            `json:"snapshot_id,omitempty"`
+	Scopes         []exportScopeJSON `json:"scopes"`
+}
+
+type exportCountsJSON struct {
+	Configs int32  `json:"configs"`
+	Assets  int32  `json:"assets"`
+	Bytes   string `json:"bytes"`
+}
+
+type exportPreviewDataJSON struct {
+	ResolvedSource exportResolvedSourceJSON `json:"resolved_source"`
+	Counts         exportCountsJSON         `json:"counts"`
+	Warnings       []string                 `json:"warnings"`
+	EstimatedBytes string                   `json:"estimated_bytes"`
+}
+
+func exportPreviewJSON(preview *service.ExportPreview) exportPreviewDataJSON {
+	scopes := make([]exportScopeJSON, 0, len(preview.Scopes))
+	for _, scope := range preview.Scopes {
+		scopes = append(scopes, exportScopeJSON{
+			EnvironmentKey: scope.EnvironmentKey, EnvironmentName: scope.EnvironmentName,
+			PipelineKey: scope.PipelineKey, PipelineName: scope.PipelineName,
+			EnvironmentID: scope.EnvironmentID, ScopeID: scope.ScopeID,
+			Version: scope.Version, SnapshotID: scope.SnapshotID,
+		})
+	}
+	source := exportResolvedSourceJSON{
+		Kind: preview.Source, CapturedAt: preview.CapturedAt, Scopes: scopes,
+		Version: preview.Version, SnapshotID: preview.SnapshotID,
+	}
+	if len(preview.Scopes) == 1 {
+		scope := preview.Scopes[0]
+		source.EnvironmentKey = scope.EnvironmentKey
+		source.PipelineKey = scope.PipelineKey
+		source.EnvironmentID = scope.EnvironmentID
+		source.ScopeID = scope.ScopeID
+	}
+	warnings := preview.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return exportPreviewDataJSON{
+		ResolvedSource: source,
+		Counts: exportCountsJSON{
+			Configs: int32(preview.Configs), Assets: int32(preview.Assets),
+			Bytes: strconv.FormatInt(preview.Bytes, 10),
+		},
+		Warnings: warnings, EstimatedBytes: strconv.FormatInt(preview.Bytes, 10),
+	}
 }
 
 // ImportPreview previews the import file contents and detects conflicts.
@@ -291,6 +409,13 @@ func ImportPreview(ctx context.Context, c *app.RequestContext) {
 
 	preview, err := svc.ImportConfigsPreview(handler.EnrichContext(ctx, c), data, fileHeader.Filename)
 	if err != nil {
+		if transferErr, ok := service.AsTransferExportError(err); ok {
+			c.JSON(transferErr.HTTPStatus, map[string]any{
+				"code": transferErr.Code, "msg": "error", "error": transferErr.Message,
+				"error_type": transferErr.ErrorType,
+			})
+			return
+		}
 		c.JSON(consts.StatusOK, &transfer.ImportPreviewResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -358,6 +483,10 @@ func ImportSelective(ctx context.Context, c *app.RequestContext) {
 
 	outcome, err := svc.ImportConfigsSelectiveWithResult(handler.EnrichContext(ctx, c), data, fileHeader.Filename, selections, overwrite)
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &transfer.ImportResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return

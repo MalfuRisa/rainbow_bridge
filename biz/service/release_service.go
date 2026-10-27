@@ -26,9 +26,11 @@ var releaseVersionRegexp = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // ReleaseCreateInput 是创建版本的请求。
 type ReleaseCreateInput struct {
+	ExpectedScopeID           string
 	EnvironmentKey            string
 	PipelineKey               string
 	Version                   string
+	AutoOnly                  bool
 	ExpectedFreezeRevisionRaw string
 	RequestID                 string
 	Reason                    string
@@ -36,6 +38,7 @@ type ReleaseCreateInput struct {
 
 // ReleaseActivateInput 是切换生效版本的请求。
 type ReleaseActivateInput struct {
+	ExpectedScopeID           string
 	EnvironmentKey            string
 	PipelineKey               string
 	Version                   string
@@ -51,7 +54,7 @@ type ReleaseActivateInput struct {
 // 版本号冲突与范围校验 → 源存储能力与快照目录 → 冻结与 revision 校验 → 捕获与限额 →
 // 复制到准备目录(流式+SHA) → 移动最终目录 → 同一事务插入版本/清单/事件 → 提交。
 func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (*ReleaseCreateResult, error) {
-	environmentKey, pipelineKey, version, reason, requestID, expectedRevision, err := validateReleaseTransitionInput(
+	environmentKey, pipelineKey, version, reason, requestID, expectedRevision, err := validateReleaseCreateInput(
 		input.EnvironmentKey, input.PipelineKey, input.Version, input.ExpectedFreezeRevisionRaw, input.RequestID, input.Reason)
 	if err != nil {
 		return nil, err
@@ -60,12 +63,23 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 	if err != nil {
 		return nil, err
 	}
+	expectedScopeID := strings.TrimSpace(input.ExpectedScopeID)
+	autoVersion := version == ""
 	// 新入口主动设置不长于 60 秒的期限(不延长调用方更短的期限)
 	ctx, cancel := context.WithTimeout(ctx, writeGateTotalTimeout)
 	defer cancel()
 
-	fingerprint := releaseFingerprint("create", environmentKey, pipelineKey, version,
-		strconv.FormatInt(expectedRevision, 10), reason)
+	fingerprintOperation := "create"
+	fingerprintParts := []string{environmentKey, pipelineKey, expectedScopeID, version,
+		strconv.FormatInt(expectedRevision, 10), reason}
+	if autoVersion {
+		// Auto requests keep the client payload replayable: the server-assigned
+		// version is deliberately absent from the fingerprint.
+		fingerprintOperation = "create-auto-v1"
+		fingerprintParts = []string{environmentKey, pipelineKey, expectedScopeID,
+			strconv.FormatInt(expectedRevision, 10), reason}
+	}
+	fingerprint := releaseFingerprint(fingerprintOperation, fingerprintParts...)
 
 	var (
 		result      *ReleaseCreateResult
@@ -86,30 +100,38 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 			if existing.DeletedAt != nil {
 				return releaseVersionDeletedError()
 			}
+			active, activeErr := db.ScopeIsActive(gateCtx, txLogic.db, existing.ScopeID)
+			if activeErr != nil {
+				return releaseInternalError(activeErr)
+			}
+			if !active {
+				return scopeDeletedError("release request belongs to a deleted scope")
+			}
 			result = &ReleaseCreateResult{Meta: releaseMetaFromVersion(existing), Replayed: true}
 			return nil
 		}
-		if existing, err := txLogic.releaseDAO.GetVersionByScopeAndName(gateCtx, txLogic.db, environmentKey, pipelineKey, version); err != nil {
-			if !db.IsReleaseNotFound(err) {
-				return releaseInternalError(err)
+		if !autoVersion {
+			// HTTP clients may no longer submit a version. Idempotency was
+			// checked first so an old committed request can still be replayed.
+			if input.AutoOnly {
+				return releaseVersionAutoAssignedError()
 			}
-		} else if existing != nil {
-			return releaseVersionExistsError(environmentKey, pipelineKey, version)
+			if existing, err := txLogic.releaseDAO.GetVersionByScopeAndName(gateCtx, txLogic.db, environmentKey, pipelineKey, version); err != nil {
+				if !db.IsReleaseNotFound(err) {
+					return releaseInternalError(err)
+				}
+			} else if existing != nil {
+				return releaseVersionExistsError(environmentKey, pipelineKey, version)
+			}
 		}
-		// 2) 范围存在校验
-		scopeRow, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, environmentKey)
+		// 2) Identity + live scope validation
+		pipelineRow, err := resolveScopeForWrite(gateCtx, txLogic, environmentKey, pipelineKey, expectedScopeID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return releaseScopeNotFoundError(environmentKey, pipelineKey)
-			}
-			return releaseInternalError(err)
+			return err
 		}
-		pipelineRow, err := txLogic.pipelineDAO.GetByKey(gateCtx, txLogic.db, environmentKey, pipelineKey)
+		scopeRow, err := txLogic.environmentDAO.GetByID(gateCtx, txLogic.db, pipelineRow.EnvironmentID)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return releaseScopeNotFoundError(environmentKey, pipelineKey)
-			}
-			return releaseInternalError(err)
+			return releaseScopeNotFoundError(environmentKey, pipelineKey)
 		}
 		// 3) 源存储能力与快照目录:只有真的要新建时才校验(创建从本地源存储读取,MinIO 源本版不支持)
 		if s.config != nil && s.config.Storage.Type == "minio" {
@@ -131,7 +153,17 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 		if freezeState.Revision != expectedRevision {
 			return releaseSourceRevisionError(expectedRevision, freezeState.Revision)
 		}
-		// 5) 捕获计划(payload 已定型,资源待复制)
+		// 5) Allocate the version number only after the request is known to be
+		// a real new operation, inside the same write transaction.
+		if autoVersion {
+			allocated, allocErr := allocateReleaseVersion(gateCtx, txLogic,
+				environmentKey, pipelineKey, pipelineRow.ScopeID)
+			if allocErr != nil {
+				return allocErr
+			}
+			version = db.ReleaseVersionFromNumber(allocated)
+		}
+		// 6) 捕获计划(payload 已定型,资源待复制)
 		plan, err := s.captureReleasePlan(gateCtx, txLogic, environmentKey, pipelineKey, scopeRow, pipelineRow)
 		if err != nil {
 			return err
@@ -220,6 +252,7 @@ func (s *Service) materializeRelease(
 	now := time.Now().UTC()
 	versionRow := &model.ConfigReleaseVersion{
 		SnapshotID:           snapshotID,
+		ScopeID:              pipelineRow.ScopeID,
 		EnvironmentKey:       scopeRow.EnvironmentKey,
 		PipelineKey:          pipelineRow.PipelineKey,
 		Version:              version,
@@ -246,6 +279,7 @@ func (s *Service) materializeRelease(
 		return releaseInternalError(err)
 	}
 	event := &model.ConfigReleaseEvent{
+		ScopeID:            pipelineRow.ScopeID,
 		EventType:          model.ReleaseEventCreate,
 		RequestID:          requestID,
 		RequestFingerprint: fingerprint,
@@ -321,10 +355,11 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 	if err != nil {
 		return nil, err
 	}
+	expectedScopeID := strings.TrimSpace(input.ExpectedScopeID)
 	ctx, cancel := context.WithTimeout(ctx, writeGateTotalTimeout)
 	defer cancel()
 
-	fingerprint := releaseFingerprint("activate", environmentKey, pipelineKey, version,
+	fingerprint := releaseFingerprint("activate", environmentKey, pipelineKey, expectedScopeID, version,
 		strconv.FormatInt(expectedRevision, 10), reason)
 
 	var (
@@ -340,6 +375,13 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			if event.RequestFingerprint != fingerprint {
 				return releaseRequestConflictError("request_id was already used with different fields")
 			}
+			activeScope, scopeErr := db.ScopeIsActive(gateCtx, txLogic.db, event.ScopeID)
+			if scopeErr != nil {
+				return releaseInternalError(scopeErr)
+			}
+			if !activeScope {
+				return scopeDeletedError("release request belongs to a deleted scope")
+			}
 			active, err := s.loadActive(gateCtx, txLogic, environmentKey, pipelineKey)
 			if err != nil {
 				return err
@@ -353,17 +395,9 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			}
 			return nil
 		}
-		if _, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, environmentKey); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return releaseScopeNotFoundError(environmentKey, pipelineKey)
-			}
-			return releaseInternalError(err)
-		}
-		if _, err := txLogic.pipelineDAO.GetByKey(gateCtx, txLogic.db, environmentKey, pipelineKey); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return releaseScopeNotFoundError(environmentKey, pipelineKey)
-			}
-			return releaseInternalError(err)
+		pipelineRow, err := resolveScopeForWrite(gateCtx, txLogic, environmentKey, pipelineKey, expectedScopeID)
+		if err != nil {
+			return err
 		}
 		target, err := txLogic.releaseDAO.GetVersionByScopeAndName(gateCtx, txLogic.db, environmentKey, pipelineKey, version)
 		if err != nil {
@@ -425,6 +459,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			return releaseActiveRevisionError(expectedRevision, latest)
 		}
 		event := &model.ConfigReleaseEvent{
+			ScopeID:            pipelineRow.ScopeID,
 			EventType:          model.ReleaseEventActivate,
 			RequestID:          requestID,
 			RequestFingerprint: fingerprint,
@@ -444,6 +479,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			return releaseInternalError(err)
 		}
 		active := &ReleaseActiveInfo{
+			ScopeID:       pipelineRow.ScopeID,
 			SnapshotID:    target.SnapshotID,
 			Version:       target.Version,
 			Revision:      expectedRevision + 1,
@@ -668,6 +704,7 @@ func (s *Service) activeInfoFromHead(ctx context.Context, l *Logic, head *model.
 		changedAt = head.ChangedAt.UTC().Format(time.RFC3339)
 	}
 	return &ReleaseActiveInfo{
+		ScopeID:       head.ScopeID,
 		SnapshotID:    versionRow.SnapshotID,
 		Version:       versionRow.Version,
 		Revision:      head.Revision,
@@ -678,19 +715,8 @@ func (s *Service) activeInfoFromHead(ctx context.Context, l *Logic, head *model.
 }
 
 func (s *Service) assertReleaseScopeExists(ctx context.Context, l *Logic, environmentKey, pipelineKey string) error {
-	if _, err := l.environmentDAO.GetByKey(ctx, l.db, environmentKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return releaseScopeNotFoundError(environmentKey, pipelineKey)
-		}
-		return releaseInternalError(err)
-	}
-	if _, err := l.pipelineDAO.GetByKey(ctx, l.db, environmentKey, pipelineKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return releaseScopeNotFoundError(environmentKey, pipelineKey)
-		}
-		return releaseInternalError(err)
-	}
-	return nil
+	_, err := resolveScopeByKeys(ctx, l, environmentKey, pipelineKey)
+	return err
 }
 
 // verifyReleaseComplete 校验版本 payload 摘要与全部资源清单行可读且 SHA 一致。
@@ -732,6 +758,7 @@ func releaseMetaFromVersion(row *model.ConfigReleaseVersion) ReleaseVersionMeta 
 	}
 	sort.Strings(external)
 	return ReleaseVersionMeta{
+		ScopeID:              row.ScopeID,
 		SnapshotID:           row.SnapshotID,
 		EnvironmentKey:       row.EnvironmentKey,
 		PipelineKey:          row.PipelineKey,
@@ -753,6 +780,65 @@ func releaseMetaFromVersion(row *model.ConfigReleaseVersion) ReleaseVersionMeta 
 }
 
 // validateReleaseTransitionInput 校验创建／切换请求的公共输入。
+// allocateReleaseVersion ensures the per-scope head exists and claims N+1 in
+// the caller's transaction. A rollback also rolls the counter back.
+func allocateReleaseVersion(ctx context.Context, txLogic *Logic,
+	environmentKey, pipelineKey, scopeID string) (int64, error) {
+	if err := txLogic.releaseDAO.EnsureHeadByScope(ctx, txLogic.db, scopeID,
+		environmentKey, pipelineKey); err != nil {
+		return 0, releaseInternalError(err)
+	}
+	number, err := txLogic.releaseDAO.AllocateVersionNumber(ctx, txLogic.db, scopeID)
+	switch {
+	case err == nil:
+		return number, nil
+	case errors.Is(err, db.ErrReleaseNumberExhausted):
+		return 0, releaseVersionExhaustedError()
+	case errors.Is(err, db.ErrReleaseNumberConflict):
+		return 0, releaseInternalError(err)
+	case errors.Is(err, db.ErrReleaseHeadMissing):
+		return 0, releaseInternalError(err)
+	default:
+		return 0, releaseInternalError(err)
+	}
+}
+
+// validateReleaseCreateInput mirrors activation validation but permits an
+// empty version, which means the server allocates one.
+func validateReleaseCreateInput(environmentKey, pipelineKey, versionName, expectedRevisionRaw, requestID, reason string) (string, string, string, string, string, int64, error) {
+	environmentKey = strings.TrimSpace(environmentKey)
+	pipelineKey = strings.TrimSpace(pipelineKey)
+	if environmentKey == "" || pipelineKey == "" {
+		return "", "", "", "", "", 0, releaseInvalidRequestError("environment_key and pipeline_key are required")
+	}
+	if len(environmentKey) > 191 || len(pipelineKey) > 191 {
+		return "", "", "", "", "", 0, releaseInvalidRequestError("scope keys must not exceed 191 characters")
+	}
+	versionName = strings.TrimSpace(versionName)
+	if versionName != "" {
+		if !releaseVersionRegexp.MatchString(versionName) {
+			return "", "", "", "", "", 0, releaseInvalidRequestError("version must match ^[a-z0-9][a-z0-9._-]{0,63}$")
+		}
+		switch versionName {
+		case releaseVersionReservedActive, releaseVersionReservedCurrent, releaseVersionReservedLatest:
+			return "", "", "", "", "", 0, releaseInvalidRequestError(fmt.Sprintf("version %q is reserved", versionName))
+		}
+	}
+	requestID = strings.TrimSpace(requestID)
+	if _, err := uuid.Parse(requestID); err != nil {
+		return "", "", "", "", "", 0, releaseInvalidRequestError("request_id must be a UUID")
+	}
+	reason, validReason := normalizeOptionalReason(reason)
+	if !validReason {
+		return "", "", "", "", "", 0, releaseInvalidRequestError("reason must not exceed 500 characters after trimming")
+	}
+	expectedRevision, err := parseReleaseRevision(expectedRevisionRaw)
+	if err != nil {
+		return "", "", "", "", "", 0, err
+	}
+	return environmentKey, pipelineKey, versionName, reason, requestID, expectedRevision, nil
+}
+
 func validateReleaseTransitionInput(environmentKey, pipelineKey, versionName, expectedRevisionRaw, requestID, reason string) (string, string, string, string, string, int64, error) {
 	environmentKey = strings.TrimSpace(environmentKey)
 	pipelineKey = strings.TrimSpace(pipelineKey)

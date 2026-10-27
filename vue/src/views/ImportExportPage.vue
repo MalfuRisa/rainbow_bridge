@@ -8,8 +8,10 @@ import { FolderDown, FolderUp } from 'lucide-vue-next'
 import ExportFunctionality from '@/components/ImportExport/ExportFunctionality.vue'
 import ImportFunctionality from '@/components/ImportExport/ImportFunctionality.vue'
 import { transferApi, type ExportTreeEnvironment } from '@/lib/api/transfer'
+import { useEnvironmentStore } from '@/stores/environment'
 
 const exportTree = ref<ExportTreeEnvironment[]>([])
+const environments = useEnvironmentStore()
 const isLoadingTree = ref(true)
 const treeError = ref('')
 
@@ -21,7 +23,8 @@ const loadExportTree = async () => {
   isLoadingTree.value = true
   treeError.value = ''
   try {
-    const tree = await transferApi.getExportTree()
+    const [tree] = await Promise.all([transferApi.getExportTree(), environments.fetchOverview()])
+    if (environments.error) throw new Error(environments.error)
     exportTree.value = tree
   } catch (err) {
     treeError.value = err instanceof Error ? err.message : '加载导出内容失败'

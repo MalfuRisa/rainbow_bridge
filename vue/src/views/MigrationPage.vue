@@ -16,6 +16,7 @@ import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
 import { isSessionError } from '@/lib/api/http'
 import { toast } from 'vue-sonner'
 import type { ConfigItem, ConfigType } from '@/lib/types'
+import { captureScope, scopeIdFor, type ScopeTarget } from '@/lib/scope'
 
 type MigrationStatus = 'idle' | 'previewing' | 'migrating' | 'success' | 'error'
 
@@ -43,15 +44,19 @@ const previewData = ref<MigrationConfig[]>([])
 const overwriteConflicts = ref(false)
 const sourceConfigs = ref<ConfigItem[]>([])
 const previewed = ref(false)
+const previewScopes = ref<{ source: ScopeTarget; target: ScopeTarget } | null>(null)
+const sourceScopeId = computed(() => scopeIdFor(sourceEnvKey.value, sourcePipelineKey.value))
+const targetScopeId = computed(() => scopeIdFor(targetEnvKey.value, targetPipelineKey.value))
 let previewBatch = 0
 onUnmounted(() => { previewBatch += 1 })
 
-watch([sourceEnvKey, sourcePipelineKey, targetEnvKey, targetPipelineKey], () => {
+watch([sourceEnvKey, sourcePipelineKey, targetEnvKey, targetPipelineKey, sourceScopeId, targetScopeId], () => {
   previewBatch += 1
   previewData.value = []
   sourceConfigs.value = []
   selectedConfigs.value = []
   previewed.value = false
+  previewScopes.value = null
   overwriteConflicts.value = false
   status.value = 'idle'
 })
@@ -128,6 +133,7 @@ const handlePreview = async () => {
   const batch = ++previewBatch
 
   try {
+    previewScopes.value = { source: captureScope(sourceEnvKey.value, sourcePipelineKey.value), target: captureScope(targetEnvKey.value, targetPipelineKey.value) }
     const [sourceList, targetMap] = await Promise.all([
       fetchSourceConfigs(sourceEnvKey.value, sourcePipelineKey.value),
       fetchTargetConfigs(targetEnvKey.value, targetPipelineKey.value),
@@ -166,7 +172,11 @@ const getSelectedResourceKeys = (): string[] => {
 }
 
 const executeMigration = async (resourceKeys: string[]) => {
+  if (!previewScopes.value) throw new Error('范围已变化，请重新预览迁移。')
+  const { source, target } = previewScopes.value
   return transferApi.migrate({
+    sourceExpectedEnvironmentId: source.environmentId, sourceExpectedScopeId: source.scopeId,
+    targetExpectedEnvironmentId: target.environmentId, targetExpectedScopeId: target.scopeId,
     sourceEnvironmentKey: sourceEnvKey.value,
     sourcePipelineKey: sourcePipelineKey.value,
     targetEnvironmentKey: targetEnvKey.value,
@@ -208,19 +218,22 @@ const handleMigrate = async () => {
   }
 
   status.value = 'migrating'
+  const batch = previewBatch
 
   try {
     const selectedResourceKeys = getSelectedResourceKeys()
     const result = await executeMigration(selectedResourceKeys)
+    if (batch !== previewBatch) return
     handleMigrationResult(result)
   } catch (error) {
+    if (batch !== previewBatch) return
     if (isSessionError(error)) return
     status.value = 'error'
     if (isFreezeBlockedError(error)) {
       await freezeStore.loadStatus(targetEnvKey.value, targetPipelineKey.value)
       toast.error(freezeErrorMessage(error))
     } else {
-      toast.error('迁移失败，请重试')
+      toast.error(error instanceof Error ? error.message : '迁移失败，请重试')
     }
   }
 }

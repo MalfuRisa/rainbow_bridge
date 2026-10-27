@@ -7,28 +7,32 @@ import (
 
 // 发布版本相关 machine-readable error_type(见 PRD §7.1)。
 const (
-	ErrTypeReleaseInvalidRequest     = "RELEASE_INVALID_REQUEST"
-	ErrTypeReleaseScopeNotFound      = "RELEASE_SCOPE_NOT_FOUND"
-	ErrTypeReleaseVersionNotFound    = "RELEASE_VERSION_NOT_FOUND"
-	ErrTypeReleaseVersionDeleted     = "RELEASE_VERSION_DELETED"
-	ErrTypeReleaseDeleteActive       = "RELEASE_DELETE_ACTIVE"
-	ErrTypeReleaseNotActive          = "RELEASE_NOT_ACTIVE"
-	ErrTypeReleaseAssetNotFound      = "RELEASE_ASSET_NOT_FOUND"
-	ErrTypeReleaseSourceNotFrozen    = "RELEASE_SOURCE_NOT_FROZEN"
-	ErrTypeReleaseSourceRevision     = "RELEASE_SOURCE_REVISION_CONFLICT"
-	ErrTypeReleaseVersionExists      = "RELEASE_VERSION_EXISTS"
-	ErrTypeReleaseRequestConflict    = "RELEASE_REQUEST_CONFLICT"
-	ErrTypeReleaseActiveRevision     = "RELEASE_ACTIVE_REVISION_CONFLICT"
-	ErrTypeReleaseActiveUnchanged    = "RELEASE_ACTIVE_UNCHANGED"
-	ErrTypeReleaseResourceInvalid    = "RELEASE_RESOURCE_INVALID"
-	ErrTypeReleaseScopeHasVersions   = "RELEASE_SCOPE_HAS_VERSIONS"
-	ErrTypeReleaseLimitExceeded      = "RELEASE_LIMIT_EXCEEDED"
-	ErrTypeReleaseStorageUnsupported = "RELEASE_STORAGE_UNSUPPORTED"
-	ErrTypeReleaseIncomplete         = "RELEASE_INCOMPLETE"
-	ErrTypeReleaseSnapshotMismatch   = "RELEASE_SNAPSHOT_MISMATCH"
-	ErrTypeReleaseExportTimeout      = "RELEASE_EXPORT_TIMEOUT"
-	ErrTypeReleaseInternalError      = "RELEASE_INTERNAL_ERROR"
-	ErrTypeReleaseStorageError       = "RELEASE_STORAGE_ERROR"
+	ErrTypeReleaseInvalidRequest      = "RELEASE_INVALID_REQUEST"
+	ErrTypeReleaseScopeNotFound       = "RELEASE_SCOPE_NOT_FOUND"
+	ErrTypeReleaseVersionNotFound     = "RELEASE_VERSION_NOT_FOUND"
+	ErrTypeReleaseVersionDeleted      = "RELEASE_VERSION_DELETED"
+	ErrTypeReleaseDeleteActive        = "RELEASE_DELETE_ACTIVE"
+	ErrTypeReleaseNotActive           = "RELEASE_NOT_ACTIVE"
+	ErrTypeReleaseAssetNotFound       = "RELEASE_ASSET_NOT_FOUND"
+	ErrTypeReleaseSourceNotFrozen     = "RELEASE_SOURCE_NOT_FROZEN"
+	ErrTypeReleaseSourceRevision      = "RELEASE_SOURCE_REVISION_CONFLICT"
+	ErrTypeReleaseVersionExists       = "RELEASE_VERSION_EXISTS"
+	ErrTypeReleaseVersionAutoAssigned = "RELEASE_VERSION_AUTO_ASSIGNED"
+	ErrTypeReleaseVersionExhausted    = "RELEASE_VERSION_SEQUENCE_EXHAUSTED"
+	ErrTypeReleaseRequestConflict     = "RELEASE_REQUEST_CONFLICT"
+	ErrTypeReleaseActiveRevision      = "RELEASE_ACTIVE_REVISION_CONFLICT"
+	ErrTypeReleaseActiveUnchanged     = "RELEASE_ACTIVE_UNCHANGED"
+	ErrTypeReleaseResourceInvalid     = "RELEASE_RESOURCE_INVALID"
+	ErrTypeReleaseScopeHasVersions    = "RELEASE_SCOPE_HAS_VERSIONS"
+	ErrTypeReleaseLimitExceeded       = "RELEASE_LIMIT_EXCEEDED"
+	ErrTypeReleaseStorageUnsupported  = "RELEASE_STORAGE_UNSUPPORTED"
+	ErrTypeReleaseIncomplete          = "RELEASE_INCOMPLETE"
+	ErrTypeReleaseSnapshotMismatch    = "RELEASE_SNAPSHOT_MISMATCH"
+	ErrTypeReleaseCompareBaseline     = "RELEASE_COMPARE_BASELINE_MISMATCH"
+	ErrTypeReleaseCompareTimeout      = "RELEASE_COMPARE_TIMEOUT"
+	ErrTypeReleaseExportTimeout       = "RELEASE_EXPORT_TIMEOUT"
+	ErrTypeReleaseInternalError       = "RELEASE_INTERNAL_ERROR"
+	ErrTypeReleaseStorageError        = "RELEASE_STORAGE_ERROR"
 )
 
 // ReleaseError 携带 HTTP 状态、业务 code 与 error_type,供 HTTP 层统一映射。
@@ -41,6 +45,7 @@ type ReleaseError struct {
 	Issues       []ReleaseResourceIssue
 	Limits       *ReleaseLimitInfo
 	LatestActive *ReleaseActiveInfo
+	Side         string
 }
 
 func (e *ReleaseError) Error() string {
@@ -99,8 +104,29 @@ func releaseVersionExistsError(environmentKey, pipelineKey, version string) *Rel
 	return newReleaseError(409, ErrTypeReleaseVersionExists, fmt.Sprintf("version %s already exists in scope %s/%s", version, environmentKey, pipelineKey))
 }
 
+func releaseVersionAutoAssignedError() *ReleaseError {
+	return newReleaseError(400, ErrTypeReleaseVersionAutoAssigned,
+		"version is assigned automatically; omit version when creating a release")
+}
+
+func releaseVersionExhaustedError() *ReleaseError {
+	return newReleaseError(409, ErrTypeReleaseVersionExhausted,
+		"release version number sequence is exhausted for this scope")
+}
+
 func releaseRequestConflictError(message string) *ReleaseError {
 	return newReleaseError(409, ErrTypeReleaseRequestConflict, message)
+}
+
+func releaseCompareBaselineMismatchError(latest *ReleaseActiveInfo) *ReleaseError {
+	err := newReleaseError(409, ErrTypeReleaseCompareBaseline,
+		"expected_active_snapshot_id does not match the current active snapshot")
+	err.LatestActive = latest
+	return err
+}
+
+func releaseCompareTimeoutError() *ReleaseError {
+	return newReleaseError(503, ErrTypeReleaseCompareTimeout, "release comparison timed out")
 }
 
 func releaseActiveRevisionError(expected int64, latest *ReleaseActiveInfo) *ReleaseError {

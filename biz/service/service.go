@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/yi-nology/rainbow_bridge/biz/backup"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/pkg/config"
@@ -41,24 +42,28 @@ var (
 
 // FileUploadInput captures metadata and payload for asset uploads.
 type FileUploadInput struct {
-	EnvironmentKey string
-	PipelineKey    string
-	Remark         string
-	FileName       string
-	ContentType    string
-	Data           []byte
+	EnvironmentKey  string
+	ExpectedScopeID string
+	PipelineKey     string
+	Remark          string
+	FileName        string
+	ContentType     string
+	Data            []byte
 }
 
 // Service orchestrates config and asset operations using Logic.
 type Service struct {
-	logic       *Logic
-	basePath    string
-	config      *config.Config
-	redisClient *redis.Client
-	auth        *AuthSettings
-	clock       func() time.Time
-	loginRate   *authRateLimiter
-	passwordOps *authComputeLimiter
+	logic           *Logic
+	basePath        string
+	config          *config.Config
+	redisClient     *redis.Client
+	auth            *AuthSettings
+	clock           func() time.Time
+	loginRate       *authRateLimiter
+	passwordOps     *authComputeLimiter
+	backup          *backup.Manager
+	producerVersion string
+	producerCommit  string
 }
 
 func NewService(db *gorm.DB, redisClient *redis.Client, basePath string, cfg *config.Config) *Service {
@@ -70,6 +75,54 @@ func NewService(db *gorm.DB, redisClient *redis.Client, basePath string, cfg *co
 		loginRate:   newAuthRateLimiter(nil),
 		passwordOps: newAuthComputeLimiter(authPasswordConcurrent),
 	}
+}
+
+// SetProducer records build information embedded in transfer archives.
+func (s *Service) SetProducer(version, commit string) {
+	s.producerVersion = version
+	s.producerCommit = commit
+}
+
+// SetBackupManager attaches the whole-instance backup coordinator when the
+// deployment supports it.
+func (s *Service) SetBackupManager(manager *backup.Manager) {
+	s.backup = manager
+}
+
+// BackupManager returns the backup coordinator, or nil when unavailable.
+func (s *Service) BackupManager() *backup.Manager {
+	if s == nil {
+		return nil
+	}
+	return s.backup
+}
+
+// BackupCapabilities reports the deployment support statement without
+// touching business data.
+func (s *Service) BackupCapabilities() backup.Capabilities {
+	limits := backup.DefaultLimits()
+	if s.backup != nil {
+		limits = s.backup.Limits()
+	}
+	return backup.CapabilitiesFor(s.config, limits)
+}
+
+func maintenanceActive(s *Service) bool {
+	return s != nil && s.backup != nil && s.backup.Maintenance().Active()
+}
+
+func maintenanceError() error {
+	return backup.MaintenanceError()
+}
+
+// beginBusinessWrite registers an in-flight write and rejects it while backup
+// maintenance is active. Service-layer protection is intentionally independent
+// of the HTTP middleware.
+func (s *Service) beginBusinessWrite() (func(), error) {
+	if s.backup == nil {
+		return func() {}, nil
+	}
+	return s.backup.Maintenance().BeginWrite()
 }
 
 // --------------------- Model conversion helpers ---------------------
@@ -98,6 +151,7 @@ func modelConfigToPB(cfg *model.Config) *common.ResourceConfig {
 	}
 	return &common.ResourceConfig{
 		EditRevision:   cfg.EditRevision,
+		ScopeId:        cfg.ScopeID,
 		ResourceKey:    cfg.ResourceKey,
 		Alias:          cfg.Alias,
 		Name:           cfg.Name,
@@ -129,6 +183,7 @@ func assetModelToPB(asset *model.Asset) *common.FileAsset {
 	}
 	return &common.FileAsset{
 		FileId:         asset.FileID,
+		ScopeId:        asset.ScopeID,
 		EnvironmentKey: asset.EnvironmentKey,
 		PipelineKey:    asset.PipelineKey,
 		FileName:       asset.FileName,

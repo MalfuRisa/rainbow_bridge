@@ -36,8 +36,21 @@ func List(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	scopeID := strings.TrimSpace(c.Query("scope_id"))
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, scopeID); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &asset.AssetListResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
+		c.JSON(consts.StatusInternalServerError, &asset.AssetListResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error()})
+		return
+	}
 	assets, err := svc.ListAssets(handler.EnrichContext(ctx, c), environmentKey, pipelineKey)
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &asset.AssetListResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &asset.AssetListResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -157,17 +170,27 @@ func Upload(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	expectedScopeID := strings.TrimSpace(string(c.FormValue("expected_scope_id")))
+	if expectedScopeID == "" {
+		c.JSON(400, &asset.UploadAssetResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 	input := &service.FileUploadInput{
-		EnvironmentKey: environmentKey,
-		PipelineKey:    pipelineKey,
-		Remark:         string(c.FormValue("remark")),
-		FileName:       fileHeader.Filename,
-		ContentType:    fileHeader.Header.Get("Content-Type"),
-		Data:           data,
+		EnvironmentKey:  environmentKey,
+		ExpectedScopeID: expectedScopeID,
+		PipelineKey:     pipelineKey,
+		Remark:          string(c.FormValue("remark")),
+		FileName:        fileHeader.Filename,
+		ContentType:     fileHeader.Header.Get("Content-Type"),
+		Data:            data,
 	}
 
 	assetItem, reference, err := svc.UploadAsset(handler.EnrichContext(ctx, c), input)
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &asset.UploadAssetResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &asset.UploadAssetResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
@@ -231,6 +254,10 @@ func GetFile(ctx context.Context, c *app.RequestContext) {
 
 	assetItem, path, err := svc.GetAssetFile(handler.EnrichContext(ctx, c), fileID)
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, map[string]any{"code": scopeErr.Code, "error_type": scopeErr.ErrorType, "error": scopeErr.Message})
+			return
+		}
 		if errors.Is(err, service.ErrAssetNotFound) || errors.Is(err, os.ErrNotExist) {
 			c.JSON(404, map[string]any{"code": 404, "error": "asset not found"})
 			return

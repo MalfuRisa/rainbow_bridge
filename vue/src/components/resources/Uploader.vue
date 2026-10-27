@@ -15,6 +15,7 @@ const uploading = ref(false)
 const props = defineProps<{
   selectedEnvKey: string
   selectedPipelineKey: string
+  scopeId: string
   searchTerm: string
   onSearchChange: (value: string) => void
   /** 当前范围已冻结:上传入口禁用 */
@@ -23,6 +24,7 @@ const props = defineProps<{
 }>()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
+let uploadScope = ''
 
 const handleUploadClick = () => {
   if (props.frozen) {
@@ -30,6 +32,7 @@ const handleUploadClick = () => {
     return
   }
   fileInputRef.value?.click()
+  uploadScope = props.scopeId
 }
 
 const handleFileChange = async (e: Event) => {
@@ -45,7 +48,7 @@ const handleFileChange = async (e: Event) => {
   const pipeline = props.selectedPipelineKey
   uploading.value = true
   try {
-    await assetStore.uploadAsset(file, env, pipeline)
+    await assetStore.uploadAsset(file, env, pipeline, uploadScope || props.scopeId)
   } catch (error) {
     if (isFreezeBlockedError(error)) await freezeStore.loadStatus(env, pipeline)
   } finally {

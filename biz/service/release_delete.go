@@ -12,6 +12,7 @@ import (
 )
 
 type ReleaseDeleteInput struct {
+	ExpectedScopeID    string
 	EnvironmentKey     string
 	PipelineKey        string
 	Version            string
@@ -47,7 +48,15 @@ func (s *Service) DeleteRelease(ctx context.Context, input ReleaseDeleteInput) (
 	if err != nil {
 		return nil, err
 	}
-	fingerprint := releaseFingerprint("delete", env, pipeline, version, snapshotID, reason)
+	expectedScopeID := strings.TrimSpace(input.ExpectedScopeID)
+	if expectedScopeID == "" {
+		resolved, resolveErr := resolveScopeByKeys(ctx, s.logic, env, pipeline)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		expectedScopeID = resolved.ScopeID
+	}
+	fingerprint := releaseFingerprint("delete", env, pipeline, expectedScopeID, version, snapshotID, reason)
 	var result *ReleaseDeleteResult
 	err = s.withWriteGate(ctx, func(gateCtx context.Context, l *Logic, _ *gorm.DB) error {
 		event, err := l.releaseDAO.GetEvent(gateCtx, l.db, model.ReleaseEventDelete, requestID)
@@ -58,10 +67,18 @@ func (s *Service) DeleteRelease(ctx context.Context, input ReleaseDeleteInput) (
 			if event.RequestFingerprint != fingerprint {
 				return releaseRequestConflictError("request_id was already used with different fields")
 			}
+			active, activeErr := db.ScopeIsActive(gateCtx, l.db, event.ScopeID)
+			if activeErr != nil {
+				return releaseInternalError(activeErr)
+			}
+			if !active {
+				return scopeDeletedError("release request belongs to a deleted scope")
+			}
 			result = releaseDeleteResultFrom(event, true)
 			return nil
 		}
-		if err := s.assertReleaseScopeExists(gateCtx, l, env, pipeline); err != nil {
+		pipelineRow, err := resolveScopeForWrite(gateCtx, l, env, pipeline, expectedScopeID)
+		if err != nil {
 			return err
 		}
 		target, err := l.releaseDAO.GetVersionByScopeAndName(gateCtx, l.db, env, pipeline, version)
@@ -93,6 +110,7 @@ func (s *Service) DeleteRelease(ctx context.Context, input ReleaseDeleteInput) (
 			return releaseVersionDeletedError()
 		}
 		event = &model.ConfigReleaseEvent{
+			ScopeID:   pipelineRow.ScopeID,
 			EventType: model.ReleaseEventDelete, RequestID: requestID, RequestFingerprint: fingerprint,
 			EnvironmentKey: env, PipelineKey: pipeline, SnapshotID: snapshotID, Version: version,
 			Reason: reason, Actor: identity.Username, CreatedAt: now,

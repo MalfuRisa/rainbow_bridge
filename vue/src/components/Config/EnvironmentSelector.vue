@@ -25,7 +25,6 @@ const pipelines = computed(() => selectedEnvironment.value?.pipelines || [])
 
 const handleEnvChange = (envKey: string) => {
   emit('update:selectedEnvKey', envKey)
-  emit('update:selectedPipelineKey', '')
 }
 
 const handlePipelineChange = (pipelineKey: string) => {

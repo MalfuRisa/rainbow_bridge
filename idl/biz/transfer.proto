@@ -9,6 +9,8 @@ import "common.proto";
 message ImportRequest {
   repeated common.ResourceConfig configs = 1;
   bool overwrite = 2;
+  string expected_environment_id = 3;
+  string expected_scope_id = 4;
 }
 
 // ImportSummaryItem represents a single item in the import summary.
@@ -85,6 +87,10 @@ message MigrateRequest {
   string target_pipeline_key = 4;
   repeated string resource_keys = 5;  // Optional, migrate all if empty
   bool overwrite = 6;
+  string source_expected_environment_id = 7;
+  string source_expected_scope_id = 8;
+  string target_expected_environment_id = 9;
+  string target_expected_scope_id = 10;
 }
 
 // MigrateResultItem represents the migration result for a single config.
@@ -133,6 +139,8 @@ message ExportTreePipeline {
   bool is_active = 4;
   int32 config_count = 5;
   repeated ExportTreeConfig configs = 6;
+  string scope_id = 7;
+  string environment_id = 8;
 }
 
 // ExportTreeEnvironment represents an environment in the export tree.
@@ -142,6 +150,7 @@ message ExportTreeEnvironment {
   string description = 3;
   bool is_active = 4;
   repeated ExportTreePipeline pipelines = 5;
+  string environment_id = 6;
 }
 
 // ExportTreeData is the data wrapper for export tree.
@@ -164,12 +173,68 @@ message ExportSelection {
   string environment_key = 1;
   string pipeline_key = 2;          // empty means all pipelines in this environment
   repeated string resource_keys = 3; // empty means all configs in this pipeline
+  string expected_environment_id = 4;
+  string expected_scope_id = 5;
 }
 
 // ExportSelectiveRequest is used to export selected configurations.
 message ExportSelectiveRequest {
   string format = 1;                    // "zip" or "tar.gz"
   repeated ExportSelection selections = 2;
+  string source = 3;                    // editor | active | version
+  string environment_key = 4;
+  string pipeline_key = 5;
+  string expected_scope_id = 6;
+  string version = 7;
+  string expected_snapshot_id = 8;
+  string expected_environment_id = 9;
+}
+
+// ExportResolvedScope records one source scope in the preview.
+message ExportResolvedScope {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string environment_id = 3;
+  string scope_id = 4;
+  string version = 5;
+  string snapshot_id = 6;
+}
+
+// ExportCounts is the preview count summary.
+message ExportCounts {
+  int32 configs = 1;
+  int32 assets = 2;
+  string bytes = 3; // decimal string
+}
+
+// ExportResolvedSource identifies exactly what the export selected.
+message ExportResolvedSource {
+  string kind = 1;              // editor | active | version
+  string captured_at = 2;       // RFC3339 UTC
+  string environment_key = 3;
+  string pipeline_key = 4;
+  string environment_id = 5;
+  string scope_id = 6;
+  string version = 7;
+  string snapshot_id = 8;
+  repeated ExportResolvedScope scopes = 9;
+  string producer_version = 10;
+  string producer_git_commit = 11;
+}
+
+message ExportPreviewData {
+  ExportResolvedSource resolved_source = 1;
+  ExportCounts counts = 2;
+  repeated string warnings = 3;
+  string estimated_bytes = 4; // decimal string
+}
+
+message ExportPreviewResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ExportPreviewData data = 5;
 }
 
 // ==================== Import Preview ====================
@@ -231,6 +296,10 @@ message ImportPreviewResponse {
 message ImportSelectiveRequest {
   bool overwrite = 1;
   repeated ExportSelection selections = 2;
+  string target_environment_key = 3;
+  string target_pipeline_key = 4;
+  string expected_environment_id = 5;
+  string expected_scope_id = 6;
 }
 
 // TransferService handles import and export operations.
@@ -250,6 +319,11 @@ service TransferService {
   // ExportTree returns the tree structure of environments, pipelines, and configs.
   rpc ExportTree(ExportRequest) returns (ExportTreeResponse) {
     option (api.get) = "/api/v1/transfer/export-tree";
+  }
+
+  // ExportPreview resolves the export source and counts without creating a package.
+  rpc ExportPreview(ExportSelectiveRequest) returns (ExportPreviewResponse) {
+    option (api.post) = "/api/v1/transfer/export-preview";
   }
 
   // ImportPreview previews the import file contents and detects conflicts.

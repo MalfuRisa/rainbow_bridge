@@ -8,11 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
+	"github.com/yi-nology/rainbow_bridge/biz/middleware"
 	commonpb "github.com/yi-nology/rainbow_bridge/biz/model/common"
 	envpb "github.com/yi-nology/rainbow_bridge/biz/model/environment"
 	plpb "github.com/yi-nology/rainbow_bridge/biz/model/pipeline"
@@ -34,6 +36,7 @@ const (
 type handlerFixture struct {
 	svc        *service.Service
 	engine     *server.Hertz
+	db         *gorm.DB
 	snapshotID string
 	assetID    string
 	assetBytes []byte
@@ -60,6 +63,7 @@ func newHandlerFixture(t *testing.T) *handlerFixture {
 		&model.Environment{}, &model.Pipeline{}, &model.Config{}, &model.Asset{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.ScopeLifecycleEvent{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +103,292 @@ func newHandlerFixture(t *testing.T) *handlerFixture {
 	t.Cleanup(func() { SetService(previous) })
 
 	engine := server.New()
+	engine.Use(func(ctx context.Context, c *app.RequestContext) {
+		c.Next(service.WithAdminIdentity(ctx, service.AdminIdentity{UserID: 1, Username: "admin", Role: "admin"}))
+	})
+	engine.POST("/api/v1/release/compare", Compare)
+	engine.POST("/api/v1/release/create", Create)
+	engine.GET("/api/v1/release/active", Active)
 	engine.GET("/api/v1/runtime/release", RuntimeRelease)
 	engine.GET("/api/v1/runtime/release/static", RuntimeReleaseStatic)
 	return &handlerFixture{
-		svc: svc, engine: engine, snapshotID: created.Meta.SnapshotID,
+		svc: svc, engine: engine, db: conn, snapshotID: created.Meta.SnapshotID,
 		assetID: assetIDOf(t, svc, created.Meta.SnapshotID), assetBytes: assetBytes,
+	}
+}
+
+func TestReleaseCompareHTTPContract(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	pipeline, err := fixture.svc.GetPipeline(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := fixture.svc.ReleaseActive(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil || active == nil {
+		t.Fatalf("active: %+v %v", active, err)
+	}
+	body := map[string]any{
+		"environment_key": handlerEnv, "pipeline_key": handlerPipeline,
+		"expected_scope_id": pipeline.GetScopeId(), "version": "v1.0",
+		"expected_snapshot_id":        fixture.snapshotID,
+		"expected_active_revision":    strconv.FormatInt(active.Revision, 10),
+		"expected_active_snapshot_id": active.SnapshotID,
+		"offset":                      0, "limit": 20,
+	}
+	post := func(payload map[string]any) *ut.ResponseRecorder {
+		t.Helper()
+		encoded, _ := json.Marshal(payload)
+		return ut.PerformRequest(fixture.engine.Engine, "POST", "/api/v1/release/compare",
+			&ut.Body{Body: strings.NewReader(string(encoded)), Len: len(encoded)},
+			ut.Header{Key: "Content-Type", Value: "application/json"})
+	}
+	response := post(body)
+	if response.Code != 200 {
+		t.Fatalf("compare: %d %s", response.Code, response.Body.String())
+	}
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw.Data["items"]) != "[]" {
+		t.Fatalf("items must be []: %s", response.Body.String())
+	}
+	if _, ok := raw.Data["next_offset"]; !ok || string(raw.Data["next_offset"]) != "null" {
+		t.Fatalf("next_offset must be null: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"target_is_active":true`) ||
+		!strings.Contains(response.Body.String(), `"unchanged":2`) {
+		t.Fatalf("unexpected compare body: %s", response.Body.String())
+	}
+	if len(response.Header().Peek("Cache-Control")) == 0 {
+		t.Fatal("compare must be no-store")
+	}
+
+	conflict := map[string]any{}
+	for key, value := range body {
+		conflict[key] = value
+	}
+	conflict["expected_active_revision"] = "0"
+	response = post(conflict)
+	if response.Code != 409 || !strings.Contains(response.Body.String(), `"error_type":"RELEASE_ACTIVE_REVISION_CONFLICT"`) {
+		t.Fatalf("revision conflict: %d %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"latest_active"`) {
+		t.Fatalf("conflict must include latest_active: %s", response.Body.String())
+	}
+
+	invalid := map[string]any{}
+	for key, value := range body {
+		invalid[key] = value
+	}
+	invalid["limit"] = 101
+	response = post(invalid)
+	if response.Code != 400 || !strings.Contains(response.Body.String(), `"error_type":"RELEASE_INVALID_REQUEST"`) {
+		t.Fatalf("invalid limit: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestReleaseActiveHTTPAlwaysReturnsRevisionString(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	pipeline, err := fixture.svc.GetPipeline(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(engine *server.Hertz) *ut.ResponseRecorder {
+		t.Helper()
+		return ut.PerformRequest(engine.Engine, "GET",
+			"/api/v1/release/active?environment_key="+handlerEnv+"&pipeline_key="+handlerPipeline+
+				"&scope_id="+pipeline.GetScopeId(), nil)
+	}
+	readData := func(engine *server.Hertz) (map[string]json.RawMessage, string) {
+		t.Helper()
+		response := get(engine)
+		if response.Code != 200 {
+			t.Fatalf("active: %d %s", response.Code, response.Body.String())
+		}
+		var envelope struct {
+			Data map[string]json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Data, response.Body.String()
+	}
+	normal, body := readData(fixture.engine)
+	if string(normal["active"]) == "null" {
+		t.Fatalf("expected active object: %s", body)
+	}
+	var active struct {
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(normal["active"], &active); err != nil {
+		t.Fatal(err)
+	}
+	if string(normal["active_revision"]) != `"`+active.Revision+`"` {
+		t.Fatalf("active_revision must match active.revision: %s", body)
+	}
+
+	if err := fixture.db.Model(&model.ConfigReleaseHead{}).
+		Where("scope_id = ?", pipeline.GetScopeId()).
+		Updates(map[string]any{"active_snapshot_id": "", "revision": 7}).Error; err != nil {
+		t.Fatal(err)
+	}
+	boundary, body := readData(fixture.engine)
+	if string(boundary["active"]) != "null" || string(boundary["active_revision"]) != `"7"` {
+		t.Fatalf("empty boundary state: %s", body)
+	}
+	if !strings.Contains(body, `"active_revision":"7"`) {
+		t.Fatalf("revision must be a decimal string: %s", body)
+	}
+
+	const large = int64(9007199254740993)
+	if err := fixture.db.Model(&model.ConfigReleaseHead{}).
+		Where("scope_id = ?", pipeline.GetScopeId()).
+		UpdateColumn("revision", large).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, body = readData(fixture.engine)
+	if !strings.Contains(body, `"active":null`) ||
+		!strings.Contains(body, `"active_revision":"9007199254740993"`) {
+		t.Fatalf("large revision must survive JSON text: %s", body)
+	}
+
+	unauth := server.New()
+	unauth.Use(middleware.AdminSession(fixture.svc, ""))
+	unauth.GET("/api/v1/release/active", Active)
+	response := ut.PerformRequest(unauth.Engine, "GET",
+		"/api/v1/release/active?environment_key="+handlerEnv+"&pipeline_key="+handlerPipeline, nil)
+	if response.Code != 401 {
+		t.Fatalf("unauthenticated active must be 401, got %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestReleaseCompareHTTPFixedMode(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	pipeline, err := fixture.svc.GetPipeline(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := lockAndPublish(t, fixture.svc, handlerEnv, handlerPipeline, "v2.0")
+	body := map[string]any{
+		"comparison_mode": "fixed",
+		"environment_key": handlerEnv, "pipeline_key": handlerPipeline,
+		"expected_scope_id":             pipeline.GetScopeId(),
+		"baseline_version":              "v1.0",
+		"expected_baseline_snapshot_id": fixture.snapshotID,
+		"version":                       "v2.0",
+		"expected_snapshot_id":          second.Meta.SnapshotID,
+	}
+	post := func(payload map[string]any) *ut.ResponseRecorder {
+		t.Helper()
+		encoded, _ := json.Marshal(payload)
+		return ut.PerformRequest(fixture.engine.Engine, "POST", "/api/v1/release/compare",
+			&ut.Body{Body: strings.NewReader(string(encoded)), Len: len(encoded)},
+			ut.Header{Key: "Content-Type", Value: "application/json"})
+	}
+	response := post(body)
+	if response.Code != 200 {
+		t.Fatalf("fixed compare: %d %s", response.Code, response.Body.String())
+	}
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw.Data["comparison_mode"]) != `"fixed"` ||
+		string(raw.Data["active_revision"]) != "null" ||
+		string(raw.Data["target_is_active"]) != "null" {
+		t.Fatalf("fixed null contract: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"baseline":{"version":"v1.0"`) ||
+		!strings.Contains(response.Body.String(), `"target":{"version":"v2.0"`) {
+		t.Fatalf("fixed sides: %s", response.Body.String())
+	}
+
+	for _, field := range []string{"expected_active_revision", "expected_active_snapshot_id"} {
+		mixed := map[string]any{}
+		for key, value := range body {
+			mixed[key] = value
+		}
+		mixed[field] = ""
+		response = post(mixed)
+		if response.Code != 400 || !strings.Contains(response.Body.String(), `"error_type":"RELEASE_INVALID_REQUEST"`) {
+			t.Fatalf("mixed %s: %d %s", field, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestReleaseCreateHTTPAutoNumberAndExplicitRejection(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	pipeline, err := fixture.svc.GetPipeline(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freeze, err := fixture.svc.FreezeStatus(context.Background(), handlerEnv, handlerPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(payload map[string]any) *ut.ResponseRecorder {
+		t.Helper()
+		encoded, _ := json.Marshal(payload)
+		return ut.PerformRequest(fixture.engine.Engine, "POST", "/api/v1/release/create",
+			&ut.Body{Body: strings.NewReader(string(encoded)), Len: len(encoded)},
+			ut.Header{Key: "Content-Type", Value: "application/json"})
+	}
+	requestID := uuid.NewString()
+	body := map[string]any{
+		"environment_key": handlerEnv, "pipeline_key": handlerPipeline,
+		"expected_scope_id":        pipeline.GetScopeId(),
+		"expected_freeze_revision": strconv.FormatInt(freeze.Revision, 10),
+		"request_id":               requestID,
+		"reason":                   "自动编号 HTTP",
+	}
+	response := post(body)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"version":"v1"`) {
+		t.Fatalf("auto create: %d %s", response.Code, response.Body.String())
+	}
+	response = post(body)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"replayed":true`) ||
+		!strings.Contains(response.Body.String(), `"version":"v1"`) {
+		t.Fatalf("auto replay: %d %s", response.Code, response.Body.String())
+	}
+
+	explicit := map[string]any{}
+	for key, value := range body {
+		explicit[key] = value
+	}
+	explicit["request_id"] = uuid.NewString()
+	explicit["version"] = "v9"
+	response = post(explicit)
+	if response.Code != 400 || !strings.Contains(response.Body.String(), `"error_type":"RELEASE_VERSION_AUTO_ASSIGNED"`) {
+		t.Fatalf("explicit create must be rejected: %d %s", response.Code, response.Body.String())
+	}
+
+	// A request committed by the old client contract is still confirmed.
+	oldRequest := uuid.NewString()
+	old, err := fixture.svc.CreateRelease(service.WithAdminIdentity(context.Background(),
+		service.AdminIdentity{UserID: 1, Username: "admin", Role: "admin"}), service.ReleaseCreateInput{
+		EnvironmentKey: handlerEnv, PipelineKey: handlerPipeline, Version: "v9",
+		ExpectedScopeID:           pipeline.GetScopeId(),
+		ExpectedFreezeRevisionRaw: strconv.FormatInt(freeze.Revision, 10),
+		RequestID:                 oldRequest, Reason: "自动编号 HTTP",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]any{}
+	for key, value := range explicit {
+		legacy[key] = value
+	}
+	legacy["request_id"] = oldRequest
+	response = post(legacy)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"replayed":true`) ||
+		!strings.Contains(response.Body.String(), `"version":"v9"`) ||
+		!strings.Contains(response.Body.String(), old.Meta.SnapshotID) {
+		t.Fatalf("legacy request replay: %d %s", response.Code, response.Body.String())
 	}
 }
 

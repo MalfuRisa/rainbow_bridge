@@ -186,11 +186,13 @@ func (s *Service) importEnvironments(ctx context.Context, l *Logic, data any) er
 				return err
 			}
 			env.ID = existing.ID
+			env.EnvironmentID = existing.EnvironmentID
 			env.CreatedAt = existing.CreatedAt
 			if err := l.environmentDAO.Update(ctx, l.db, &env); err != nil {
 				return err
 			}
 		} else {
+			env.EnvironmentID = ""
 			if err := l.environmentDAO.Create(ctx, l.db, &env); err != nil {
 				return err
 			}
@@ -225,11 +227,15 @@ func (s *Service) importPipelines(ctx context.Context, l *Logic, data any) error
 				return err
 			}
 			pipe.ID = existing.ID
+			pipe.ScopeID = existing.ScopeID
+			pipe.EnvironmentID = existing.EnvironmentID
 			pipe.CreatedAt = existing.CreatedAt
 			if err := l.pipelineDAO.Update(ctx, l.db, &pipe); err != nil {
 				return err
 			}
 		} else {
+			pipe.ScopeID = ""
+			pipe.EnvironmentID = ""
 			if err := l.pipelineDAO.Create(ctx, l.db, &pipe); err != nil {
 				return err
 			}
@@ -365,6 +371,16 @@ func (s *Service) MigrateConfigs(ctx context.Context, req *transfer.MigrateReque
 		if err := txLogic.ensurePipelineUnlocked(gateCtx, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
 			return err
 		}
+		if req.SourceExpectedScopeId != "" {
+			if _, err := requireScopeIdentity(gateCtx, txLogic, req.SourceEnvironmentKey, req.SourcePipelineKey, req.SourceExpectedScopeId); err != nil {
+				return err
+			}
+		}
+		if req.TargetExpectedScopeId != "" {
+			if _, err := requireScopeIdentity(gateCtx, txLogic, req.TargetEnvironmentKey, req.TargetPipelineKey, req.TargetExpectedScopeId); err != nil {
+				return err
+			}
+		}
 		// 协调内复查存在性(TOCTOU)
 		if err := s.ensureEnvironmentExists(gateCtx, txLogic, req.SourceEnvironmentKey); err != nil {
 			return fmt.Errorf("source environment not found: %w", err)
@@ -489,6 +505,7 @@ func (s *Service) GetExportTree(ctx context.Context) (*transfer.ExportTreeData, 
 		}
 
 		treeEnv := &transfer.ExportTreeEnvironment{
+			EnvironmentId:   env.EnvironmentID,
 			EnvironmentKey:  env.EnvironmentKey,
 			EnvironmentName: env.EnvironmentName,
 			Description:     env.Description,
@@ -504,12 +521,14 @@ func (s *Service) GetExportTree(ctx context.Context) (*transfer.ExportTreeData, 
 			}
 
 			treePipe := &transfer.ExportTreePipeline{
-				PipelineKey:  pipe.GetPipelineKey(),
-				PipelineName: pipe.GetPipelineName(),
-				Description:  pipe.GetDescription(),
-				IsActive:     pipe.GetIsActive(),
-				ConfigCount:  int32(len(configs)), // #nosec G115 -- count will not exceed int32
-				Configs:      make([]*transfer.ExportTreeConfig, 0),
+				ScopeId:       pipe.GetScopeId(),
+				EnvironmentId: pipe.GetEnvironmentId(),
+				PipelineKey:   pipe.GetPipelineKey(),
+				PipelineName:  pipe.GetPipelineName(),
+				Description:   pipe.GetDescription(),
+				IsActive:      pipe.GetIsActive(),
+				ConfigCount:   int32(len(configs)), // #nosec G115 -- count will not exceed int32
+				Configs:       make([]*transfer.ExportTreeConfig, 0),
 			}
 
 			// Add config details
@@ -977,6 +996,20 @@ func (s *Service) ImportConfigsSelectiveWithResult(ctx context.Context, data []b
 	for _, sel := range selections {
 		if sel == nil {
 			return nil, errors.New("nil selection")
+		}
+		if sel.ExpectedEnvironmentId != "" && sel.EnvironmentKey != "" {
+			env, err := resolveEnvironmentByKey(ctx, s.logic, sel.EnvironmentKey)
+			if err != nil {
+				return nil, err
+			}
+			if env.EnvironmentID != sel.ExpectedEnvironmentId {
+				return nil, scopeIdentityConflict("environment_key now identifies a different generation")
+			}
+		}
+		if sel.ExpectedScopeId != "" && sel.EnvironmentKey != "" && sel.PipelineKey != "" {
+			if err := s.ValidateReadScope(ctx, sel.EnvironmentKey, sel.PipelineKey, sel.ExpectedScopeId); err != nil {
+				return nil, err
+			}
 		}
 	}
 	selected := func(env, pipe, key string) bool {

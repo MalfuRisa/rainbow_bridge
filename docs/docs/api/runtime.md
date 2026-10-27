@@ -155,13 +155,15 @@ GET /api/v1/release/asset/{snapshot_id}/{asset_id}
 
 | 接口 | 范围 | 行为 |
 | --- | --- | --- |
-| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头 | 当前生效快照；保留旧 config 字段并增加版本元数据 |
-| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数 | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
+| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头，可选 query scope_id | 当前生效快照；保留旧 config 字段并增加版本元数据 |
+| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
 | GET `/api/v1/runtime/overview` | 无 | 环境/渠道列表，不能当成生效版本配置 |
 
 旧 config 的 data 为 snapshot_id、version、source_freeze_revision、active_revision、payload_sha256、selection_mode、environment、configs。每项 config 额外保留 environment_key、pipeline_key；object/keyvalue 返回 JSON，其余 content 为字符串。旧接口不提供 raw，也不承诺 activated_at。
 
-旧 config/static 明确传 `version`、`expected_snapshot_id` 或 `content_format` 均返回 400，不能以为它们已支持新接口的选择参数。需要固定读取、raw 或固定导出时使用新接口。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
+旧 config/static 的 `scope_id` 现在真正生效：空串或 trim 后为空按当前有效范围读取；非空必须是 UUID 并校验为当前代。正确 pin 仍只跟随 active，切版后仍读新 active；它固定的是范围代身份，不是发布快照。非空非法 UUID 400 `SCOPE_INVALID_REQUEST`，从未存在 404 `SCOPE_NOT_FOUND`，不是当前代 409 `SCOPE_IDENTITY_CONFLICT`，已删除/同名重建后的旧 ID 410 `SCOPE_DELETED`。静态错误返回 JSON，不返回 ZIP 附件。
+
+旧 config/static 明确传 `version`、`expected_snapshot_id` 或 `content_format` 仍返回 400，不能以为它们已支持新接口的版本选择参数。需要固定读取、raw 或固定导出时使用新接口。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
 
 ## 7. 错误与缓存
 
@@ -179,7 +181,12 @@ GET /api/v1/release/asset/{snapshot_id}/{asset_id}
 | HTTP | error_type | 调用方处理 |
 | --- | --- | --- |
 | 400 | RELEASE_INVALID_REQUEST | 补范围、合法 version/content_format 或有效 UUID |
+| 400 | SCOPE_INVALID_REQUEST | 旧 config/static 的 scope_id 不是 UUID |
 | 404 | RELEASE_SCOPE_NOT_FOUND | 核对环境和渠道 |
+| 404 | SCOPE_NOT_FOUND | 旧接口指定的 scope_id 从未存在 |
+| 409 | SCOPE_IDENTITY_CONFLICT | scope_id 不是请求环境/渠道的当前代 |
+| 410 | SCOPE_DELETED | scope_id 已删除，包括同名重建后的旧代 |
+| 404 | API_NOT_FOUND | 未知 API 路由；纯 API 和完整应用均为 JSON，不回退 SPA |
 | 404 | RELEASE_NOT_ACTIVE | 管理员尚未切换生效版本 |
 | 404 | RELEASE_VERSION_NOT_FOUND / RELEASE_ASSET_NOT_FOUND | 核对版本或资源标识 |
 | 409 | RELEASE_SNAPSHOT_MISMATCH | 固定导出目标与先前读取结果不符，核对范围和 ID |

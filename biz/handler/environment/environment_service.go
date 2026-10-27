@@ -5,6 +5,8 @@ package environment
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -58,10 +60,14 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	created, fetchErr := svc.GetEnvironment(handler.EnrichContext(ctx, c), req.Environment.GetEnvironmentKey())
+	if fetchErr != nil {
+		created = req.Environment
+	}
 	c.JSON(consts.StatusOK, &environment.EnvironmentResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: &environment.EnvironmentData{Environment: req.Environment},
+		Data: &environment.EnvironmentData{Environment: created},
 	})
 }
 
@@ -86,8 +92,16 @@ func Update(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedEnvironmentId()) == "" {
+		c.JSON(400, &environment.EnvironmentResponse{Code: 400, Msg: "error", Error: "expected_environment_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 
-	if err := svc.UpdateEnvironment(handler.EnrichContext(ctx, c), req.Environment); err != nil {
+	if err := svc.UpdateEnvironmentWithIdentity(handler.EnrichContext(ctx, c), req.Environment, req.GetExpectedEnvironmentId()); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &environment.EnvironmentResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if freezeErr, ok := service.AsFreezeError(err); ok {
 			c.JSON(freezeErr.HTTPStatus, &environment.EnvironmentResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
 			return
@@ -104,10 +118,14 @@ func Update(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	updated, fetchErr := svc.GetEnvironment(handler.EnrichContext(ctx, c), req.Environment.GetEnvironmentKey())
+	if fetchErr != nil {
+		updated = req.Environment
+	}
 	c.JSON(consts.StatusOK, &environment.EnvironmentResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: &environment.EnvironmentData{Environment: req.Environment},
+		Data: &environment.EnvironmentData{Environment: updated},
 	})
 }
 
@@ -132,8 +150,17 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedEnvironmentId()) == "" {
+		c.JSON(400, &environment.DeleteEnvironmentResponse{Code: 400, Msg: "error", Error: "expected_environment_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 
-	if err := svc.DeleteEnvironment(handler.EnrichContext(ctx, c), req.EnvironmentKey); err != nil {
+	result, err := svc.DeleteEnvironmentWithIdentity(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.GetExpectedEnvironmentId())
+	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &environment.DeleteEnvironmentResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		if releaseErr, ok := service.AsReleaseError(err); ok {
 			c.JSON(releaseErr.HTTPStatus, &environment.DeleteEnvironmentResponse{Code: int32(releaseErr.Code), Msg: "error", Error: releaseErr.Message, ErrorType: releaseErr.ErrorType})
 			return
@@ -157,6 +184,15 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &environment.DeleteEnvironmentResponse{
 		Code: consts.StatusOK,
 		Msg:  "OK",
+		Data: &environment.DeleteEnvironmentData{
+			Deleted:       true,
+			EnvironmentId: result.EnvironmentID,
+			DeletedAt:     result.DeletedAt.UTC().Format(time.RFC3339),
+			Pipelines:     int32(result.Pipelines),
+			Configs:       int32(result.Configs),
+			Assets:        int32(result.Assets),
+			Versions:      int32(result.Versions),
+		},
 	})
 }
 

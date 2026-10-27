@@ -646,16 +646,21 @@ func TestReleaseParentDeleteProtection(t *testing.T) {
 	if _, err := fixture.create(t, "v1.0", "1", ""); err != nil {
 		t.Fatal(err)
 	}
-	// 解锁:即使 unlocked 也必须拒绝删除
+	// 版本历史不再阻止删除;删除后版本保留为逻辑删除历史
 	if _, err := svc.UnlockFreeze(ctx, "qa_prod", "main", "删除保护", "1"); err != nil {
 		t.Fatal(err)
 	}
-	err := svc.DeletePipeline(ctx, "qa_prod", "main")
-	requireReleaseErrorType(t, err, ErrTypeReleaseScopeHasVersions)
-	err = svc.DeleteEnvironment(ctx, "qa_prod")
-	requireReleaseErrorType(t, err, ErrTypeReleaseScopeHasVersions)
+	if err := svc.DeletePipeline(ctx, "qa_prod", "main"); err != nil {
+		t.Fatalf("unlocked scope with versions must be deletable: %v", err)
+	}
+	if err := svc.DeleteEnvironment(ctx, "qa_prod"); err != nil {
+		t.Fatalf("environment with no live pipelines must be deletable: %v", err)
+	}
+	if _, err := svc.ReleaseVersions(ctx, "qa_prod", "main", 1, ""); err == nil {
+		t.Fatal("deleted scope must no longer be listed")
+	}
 
-	// 无版本范围沿用旧删除行为
+	// 无版本范围同样可删除
 	seedFreezeScope(t, svc, "qa_plain", "main")
 	if err := svc.DeletePipeline(ctx, "qa_plain", "main"); err != nil {
 		t.Fatalf("delete without versions must keep old behavior: %v", err)
@@ -710,11 +715,11 @@ func TestReleaseValidationAndListPagination(t *testing.T) {
 	if _, err := svc.ReleaseVersions(ctx, "qa_prod", "main", 1, "0"); err == nil {
 		t.Fatal("zero cursor must be rejected")
 	}
-	// 范围不存在
+	// 范围不存在 → 404 SCOPE_NOT_FOUND
 	_, err = svc.ReleaseVersions(ctx, "no_such_env", "main", 1, "")
-	requireReleaseErrorType(t, err, ErrTypeReleaseScopeNotFound)
+	requireScopeErrorType(t, err, ErrTypeScopeNotFound)
 	_, err = svc.ReleaseActive(ctx, "qa_prod", "no_such_pipeline")
-	requireReleaseErrorType(t, err, ErrTypeReleaseScopeNotFound)
+	requireScopeErrorType(t, err, ErrTypeScopeNotFound)
 }
 
 // --------------------- 工具 ---------------------

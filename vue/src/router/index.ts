@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import { safeReturnTo } from '@/lib/auth/redirect'
 
 const routes: RouteRecordRaw[] = [
+  { path: '/backups', name: 'Backups', component: () => import('@/views/BackupsPage.vue') },
   { path: '/login', name: 'Login', component: () => import('@/views/LoginPage.vue') },
   {
     path: '/',

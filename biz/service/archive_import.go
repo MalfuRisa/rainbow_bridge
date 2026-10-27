@@ -9,10 +9,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/transfer"
@@ -43,9 +46,18 @@ type importTargetChecks struct {
 // 整包校验 → 冻结复查(含包准备阶段将修改的环境／渠道) → 环境／渠道准备 → 配置提交 → 资源恢复。
 // 配置可提交而部分资源失败的部分成功协议保留;协调释放发生在资源处理结果确定之后。
 func (s *Service) ImportArchiveWithResult(ctx context.Context, data []byte, format, targetEnv, targetPipeline string, selected func(string, string, string) bool, overwrite bool) (*ArchiveImportOutcome, error) {
+	return s.ImportArchiveWithIdentity(ctx, data, format, targetEnv, targetPipeline, "", "", selected, overwrite)
+}
+
+// ImportArchiveWithIdentity validates the target generation once inside the
+// write gate and binds the whole import to it.
+func (s *Service) ImportArchiveWithIdentity(ctx context.Context, data []byte, format, targetEnv, targetPipeline,
+	expectedEnvironmentID, expectedScopeID string, selected func(string, string, string) bool,
+	overwrite bool) (*ArchiveImportOutcome, error) {
 	archive, err := readConfigArchive(data, format)
 	if err != nil {
-		return nil, err
+		return nil, newTransferExportError(400, ErrTypeTransferInvalidRequest,
+			"invalid transfer archive: "+err.Error())
 	}
 	configs, sourceScopes, err := collectImportConfigs(archive, selected, targetEnv, targetPipeline)
 	if err != nil {
@@ -72,14 +84,30 @@ func (s *Service) ImportArchiveWithResult(ctx context.Context, data []byte, form
 		createdFiles []createdResourceFile
 	)
 	err = s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
-		// 整包校验在所有写入之前
-		if _, err := txLogic.prepareConfigImport(gateCtx, models); err != nil {
-			return err
-		}
 		if err := ensureImportTargetsUnlocked(gateCtx, txLogic, checks); err != nil {
 			return err
 		}
+		if expectedEnvironmentID != "" && targetEnv != "" {
+			if _, err := requireEnvironmentIdentity(gateCtx, txLogic, targetEnv, expectedEnvironmentID); err != nil {
+				return err
+			}
+		}
+		if expectedScopeID != "" && targetEnv != "" && targetPipeline != "" {
+			if _, err := requireScopeIdentity(gateCtx, txLogic, targetEnv, targetPipeline, expectedScopeID); err != nil {
+				return err
+			}
+		}
 		if err := s.prepareImportMetadata(gateCtx, txLogic, archive, selected, targetEnv, targetPipeline); err != nil {
+			return err
+		}
+		if archive.transferV2 && targetEnv != "" && targetPipeline != "" {
+			scopeID, err := configdb.ActiveScopeID(gateCtx, txLogic.db, targetEnv, targetPipeline)
+			if err != nil {
+				return err
+			}
+			models, plan = remapV2ImportResources(models, plan, scopeID)
+		}
+		if _, err := txLogic.prepareConfigImport(gateCtx, models); err != nil {
 			return err
 		}
 		writtenConfigs, err := txLogic.importConfigs(gateCtx, models, overwrite)
@@ -482,6 +510,52 @@ func buildResourceRestorePlan(archive *configArchive, configs []*common.Resource
 		plan = append(plan, resourceRestorePlan{meta: meta, archivePath: entry, data: archive.files[entry], missingMetadata: !found || meta.FileName == "" || meta.EnvironmentKey == "" || meta.PipelineKey == "", outsideScope: found && !scopes[[2]string{byID[id].EnvironmentKey, byID[id].PipelineKey}]})
 	}
 	return plan, nil
+}
+
+// remapV2ImportResources gives every imported resource a target-scope identity
+// and rewrites config references. Legacy archives keep their original IDs.
+func remapV2ImportResources(models []model.Config, plan []resourceRestorePlan, targetScopeID string) ([]model.Config, []resourceRestorePlan) {
+	mapping := make(map[string]string, len(plan))
+	for i := range plan {
+		oldID := plan[i].meta.FileID
+		if oldID == "" {
+			continue
+		}
+		newID := stableTransferImportFileID(targetScopeID, oldID)
+		mapping[oldID] = newID
+		plan[i].meta.FileID = newID
+	}
+	if len(mapping) == 0 {
+		return models, plan
+	}
+	rewriteURL := regexp.MustCompile(`(/api/v1/asset/file/)([a-zA-Z0-9\-]+)`)
+	rewrite := func(value string) string {
+		value = assetRefRegexp.ReplaceAllStringFunc(value, func(match string) string {
+			oldID := strings.TrimPrefix(match, assetScheme)
+			if newID, ok := mapping[oldID]; ok {
+				return assetScheme + newID
+			}
+			return match
+		})
+		return rewriteURL.ReplaceAllStringFunc(value, func(match string) string {
+			parts := rewriteURL.FindStringSubmatch(match)
+			if len(parts) == 3 {
+				if newID, ok := mapping[parts[2]]; ok {
+					return parts[1] + newID
+				}
+			}
+			return match
+		})
+	}
+	for i := range models {
+		models[i].Content = rewrite(models[i].Content)
+	}
+	return models, plan
+}
+
+func stableTransferImportFileID(targetScopeID, archiveFileID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL,
+		[]byte("rainbow-transfer-import-v2|"+targetScopeID+"|"+archiveFileID)).String()
 }
 
 func splitResourceEntry(name string) []string {

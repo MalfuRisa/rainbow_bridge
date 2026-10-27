@@ -1,11 +1,15 @@
 import { apiClient } from './client'
 import { toSnakeCase } from '../utils'
+import { assertEnvironment, assertScope, type ScopeTarget } from '@/lib/scope'
+import { exportTransfer } from './transfer-export'
 import type {
   ApiResourceConfig,
   ImportSummary,
 } from './types'
 
 export interface ImportJsonData {
+  expected_environment_id?: string
+  expected_scope_id?: string
   configs: ApiResourceConfig[]
   overwrite?: boolean
   environment_mapping?: Record<string, string>
@@ -13,6 +17,10 @@ export interface ImportJsonData {
 }
 
 export interface MigrateParams {
+  sourceExpectedEnvironmentId: string
+  sourceExpectedScopeId: string
+  targetExpectedEnvironmentId: string
+  targetExpectedScopeId: string
   sourceEnvironmentKey: string
   sourcePipelineKey: string
   targetEnvironmentKey: string
@@ -53,6 +61,8 @@ export interface ExportTreeConfig {
 }
 
 export interface ExportTreePipeline {
+  scope_id: string
+  environment_id: string
   pipeline_key: string
   pipeline_name: string
   description: string
@@ -62,6 +72,7 @@ export interface ExportTreePipeline {
 }
 
 export interface ExportTreeEnvironment {
+  environment_id: string
   environment_key: string
   environment_name: string
   description: string
@@ -81,12 +92,15 @@ export interface ExportTreeResponse {
 }
 
 export interface ExportSelection {
+  expected_environment_id?: string
+  expected_scope_id?: string
   environment_key: string
   pipeline_key?: string
   resource_keys?: string[]
 }
 
 export interface ExportSelectiveParams {
+  source: 'editor'
   format: 'zip' | 'tar.gz'
   selections: ExportSelection[]
 }
@@ -142,15 +156,28 @@ export const transferApi = {
     return resp.data || null
   },
 
-  importFile: async (file: File): Promise<ImportSummary | null> => {
+  importFile: async (file: File, target?: ScopeTarget, overwrite = false): Promise<ImportSummary | null> => {
     const formData = new FormData()
     formData.append('archive', file)
+    if (target) {
+      assertEnvironment(target.environmentKey, target.environmentId)
+      assertScope(target.environmentKey, target.pipelineKey, target.scopeId)
+      formData.append('environment_key', target.environmentKey)
+      formData.append('pipeline_key', target.pipelineKey)
+      formData.append('expected_environment_id', target.environmentId)
+      formData.append('expected_scope_id', target.scopeId)
+    }
+    formData.append('overwrite', String(overwrite))
 
     const resp = await apiClient.upload<ImportSummary>('/api/v1/transfer/import', formData)
     return resp.data || null
   },
 
   migrate: async (params: MigrateParams): Promise<MigrateSummary | null> => {
+    assertEnvironment(params.sourceEnvironmentKey, params.sourceExpectedEnvironmentId)
+    assertEnvironment(params.targetEnvironmentKey, params.targetExpectedEnvironmentId)
+    assertScope(params.sourceEnvironmentKey, params.sourcePipelineKey, params.sourceExpectedScopeId)
+    assertScope(params.targetEnvironmentKey, params.targetPipelineKey, params.targetExpectedScopeId)
     const snakeParams = toSnakeCase(params) as Record<string, unknown>
     const resp = await apiClient.post<MigrateSummary>('/api/v1/transfer/migrate', snakeParams)
     return resp.data || null
@@ -162,9 +189,7 @@ export const transferApi = {
   },
 
   exportSelective: async (params: ExportSelectiveParams): Promise<Blob> => {
-    return apiClient.download('/api/v1/transfer/export', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
-    })
+    return (await exportTransfer(params)).blob
   },
 
   importPreview: async (file: File): Promise<ImportPreviewData | null> => {
@@ -180,6 +205,11 @@ export const transferApi = {
     selections: ExportSelection[],
     overwrite: boolean
   ): Promise<ImportSummary | null> => {
+    if (!selections.length) throw new Error('请选择要导入的配置。')
+    for (const selection of selections) {
+      if (selection.expected_environment_id) assertEnvironment(selection.environment_key, selection.expected_environment_id)
+      if (selection.pipeline_key && selection.expected_scope_id) assertScope(selection.environment_key, selection.pipeline_key, selection.expected_scope_id)
+    }
     const formData = new FormData()
     formData.append('file', file)
     formData.append('selections', JSON.stringify(selections))

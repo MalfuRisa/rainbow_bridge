@@ -1,6 +1,6 @@
 # API 接口文档
 
-虹桥计划提供完整的 RESTful API 接口，用于配置管理、资源分发和版本发布。本文对应 Fork 的 main_v1 当前功能。
+虹桥计划提供完整的 RESTful API 接口，用于配置管理、资源分发和版本发布。本文对应 Fork 的 main_v1 当前功能。范围身份/删除重建见 [范围身份、删除与同名重建](scope-identity.md)；发布差异与集中发布流程见 [发布差异与集中发布流程](release-compare.md)；导出来源见 [导出来源与迁移归档](transfer-export.md)；整机业务备份、上传校验与重启恢复见 [整机业务备份与恢复 API](backup.md)。
 
 ## 📚 接口概览
 
@@ -597,13 +597,17 @@ GET /api/v1/release/asset/{snapshot_id}/{asset_id}
 
 | 接口 | 范围 | 行为 |
 | --- | --- | --- |
-| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头 | 当前生效快照；保留旧 config 字段并增加版本元数据 |
-| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数 | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
+| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头，可选 query scope_id | 当前生效快照；保留旧 config 字段并增加版本元数据 |
+| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
 | GET `/api/v1/runtime/overview` | 无 | 环境/渠道列表，不能当成生效版本配置 |
 
 旧 config 的 data 为 snapshot_id、version、source_freeze_revision、active_revision、payload_sha256、selection_mode、environment、configs。每项 config 额外保留 environment_key、pipeline_key；object/keyvalue 返回 JSON，其余 content 为字符串。旧接口不提供 raw，也不承诺 activated_at。
 
-旧 config/static 明确传 `version`、`expected_snapshot_id` 或 `content_format` 均返回 400，不能以为它们已支持新接口的选择参数。需要固定读取、raw 或固定导出时使用新接口。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
+旧 config/static 的 `scope_id` 现在真正生效：空串或 trim 后为空按当前有效范围读取；非空必须是 UUID 并校验为当前代。非空非法 UUID 400 `SCOPE_INVALID_REQUEST`，从未存在 404 `SCOPE_NOT_FOUND`，不是当前代 409 `SCOPE_IDENTITY_CONFLICT`，已删除/同名重建后的旧 ID 410 `SCOPE_DELETED`；静态错误返回 JSON，不返回 ZIP。
+
+旧 config/static 明确传 `version`、`expected_snapshot_id` 或 `content_format` 仍返回 400，不能以为它们已支持新接口的版本选择参数。需要固定读取、raw 或固定导出时使用新接口。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
+
+未知 API（`/api` 段边界）在纯 API 与完整应用模式均返回 HTTP 404 JSON `API_NOT_FOUND`、`Cache-Control:no-store`；正常 SPA 页面、JS/CSS 与资源下载不受影响。重复部署前缀后的 `/api` 同样 404，不会执行真实 handler。
 
 
 ### 配置迁移 API
@@ -811,12 +815,16 @@ revision 过期返回 409 FREEZE_REVISION_CONFLICT，重复当前状态返回 40
 | --- | --- | --- |
 | GET `/api/v1/release/list` | environment_key、pipeline_key、limit、before_id | items（每项 meta/is_active）、has_more、next_before_id、独立 active |
 | GET `/api/v1/release/detail` | environment_key、pipeline_key、version | meta、configs、assets、active |
-| GET `/api/v1/release/active` | environment_key、pipeline_key | active；未设置时 HTTP 200，active=null |
+| GET `/api/v1/release/active` | environment_key、pipeline_key、可选 scope_id | active + 始终存在的 active_revision；未设置时 HTTP 200，active=null |
 | GET `/api/v1/release/history` | environment_key、pipeline_key、limit、before_event_id | items、has_more、next_before_event_id |
 
 limit 缺省 20、最大 100；游标是接口返回的十进制字符串。版本列表按创建倒序，不显示逻辑删除项；active 独立于当前页，不应假设当前页必然包含生效版本。详情 configs 的 content 始终是字符串；assets/external_references 等空数组按实际显式 JSON 返回 `[]`。
 
 meta 包含 snapshot_id、version、environment_key、pipeline_key、环境/渠道名、source_freeze_revision、creation_request_id、config_count、asset_count、asset_bytes、payload_sha256、manifest_sha256、external_references、reason、actor、created_at。active 包含 snapshot_id、version、revision、changed_at、changed_by、changed_reason。
+
+##### 生效状态读取
+
+`GET /api/v1/release/active` 的 `data` 始终包含 `active_revision` 字符串，即使 `active:null`。没有 head 时为 `"0"`；head 存在但指针为空时返回真实 revision，包括非零兼容边界值；有 active 时与 `active.revision` 相同。字段不经数字或 float64 转换，不写库；冲突后重新查询并重新比较/确认。
 
 #### 创建版本
 
@@ -826,14 +834,16 @@ meta 包含 snapshot_id、version、environment_key、pipeline_key、环境/渠�
 {
   "environment_key":"default",
   "pipeline_key":"default",
-  "version":"v1.0",
+  "expected_scope_id":"11111111-1111-4111-8111-111111111111",
   "expected_freeze_revision":"1",
   "request_id":"41111111-2222-4333-8444-555555555555",
   "reason":""
 }
 ```
 
-expected_freeze_revision 必须使用锁定后响应中的 revision，不能使用锁定前的值。版本名满足 `^[a-z0-9][a-z0-9._-]{0,63}$`，同一范围不可重名；创建不可变快照，但不会切换 active。成功 data 为 `{meta,replayed}`。
+expected_freeze_revision 必须使用锁定后响应中的 revision，不能使用锁定前的值。新请求不提交 version：省略或空串都由后端在该 `(environment, pipeline)` scope 内自动分配 `v1`、`v2`……；非空 version 返回 400 `RELEASE_VERSION_AUTO_ASSIGNED`。auto 请求的 request_id 只绑定原始字段，重放返回同一 snapshot 和版本，不再消耗编号。历史手填版本的已提交 request_id 仍按原指纹确认并返回旧版本。创建不可变快照，但不会切换 active；成功 data 为 `{meta,replayed}`，前端必须使用 `meta.version` 的实际编号继续 compare/activate。
+
+版本号按 scope 独立递增，删除版本或切回旧版不降低计数；旧名 `v1.0`、`test-1` 等原样保留且不参与自动序列。`config_release_head.last_version_number` 在启动时按所有历史规范版本（含已删）回填，迁移幂等。达到 int64 上限后返回 409 `RELEASE_VERSION_SEQUENCE_EXHAUSTED`，不会回绕。
 
 源必须已锁定。发布检查会拒绝无法固定的嵌入媒体等资源问题，返回 409 RELEASE_RESOURCE_INVALID 和 resource_issues；普通超链接与嵌入媒体的规则不同，不能把提示的外部链接都理解为已复制进快照。当前不支持从 MinIO 源创建新快照，返回 503 RELEASE_STORAGE_UNSUPPORTED，不承诺真实多副本或远程存储部署已验证。
 

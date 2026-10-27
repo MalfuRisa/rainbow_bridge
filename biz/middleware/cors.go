@@ -55,7 +55,7 @@ func CORS(cfg *config.CORSConfig, trustedOrigins []string, basePath string) app.
 			}
 			c.Response.Header.Set("Access-Control-Allow-Methods", allowMethods)
 			c.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, X-Client-Version")
-			c.Response.Header.Set("Access-Control-Expose-Headers", "Content-Disposition, X-Rainbow-Snapshot-Id, X-Rainbow-Version")
+			c.Response.Header.Set("Access-Control-Expose-Headers", "Content-Disposition, X-Rainbow-Snapshot-Id, X-Rainbow-Version, X-Rainbow-Backup-Sha256, X-Rainbow-Export-Source")
 			if method == consts.MethodOptions {
 				c.AbortWithStatus(consts.StatusNoContent)
 				return
@@ -68,7 +68,7 @@ func CORS(cfg *config.CORSConfig, trustedOrigins []string, basePath string) app.
 		c.Response.Header.Set("Access-Control-Allow-Headers", allowHeaders)
 		c.Response.Header.Set("Access-Control-Allow-Credentials", allowCredentials)
 		// 版本静态导出需要跨域读取这两项版本校验头与下载文件名;仅暴露响应头,不放宽来源
-		c.Response.Header.Set("Access-Control-Expose-Headers", "Content-Disposition, X-Rainbow-Snapshot-Id, X-Rainbow-Version")
+		c.Response.Header.Set("Access-Control-Expose-Headers", "Content-Disposition, X-Rainbow-Snapshot-Id, X-Rainbow-Version, X-Rainbow-Backup-Sha256, X-Rainbow-Export-Source")
 
 		// Handle preflight requests
 		if string(c.Request.Method()) == consts.MethodOptions {

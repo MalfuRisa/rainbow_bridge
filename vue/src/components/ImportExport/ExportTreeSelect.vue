@@ -46,6 +46,7 @@ function calculateSelectionsFromChecked(
     if (envChecked) {
       selections.push({
         environment_key: envKey,
+        expected_environment_id: env.environment_id,
         pipeline_key: '',
         resource_keys: [],
       })
@@ -58,7 +59,9 @@ function calculateSelectionsFromChecked(
         if (pipeChecked) {
           selections.push({
             environment_key: envKey,
+        expected_environment_id: env.environment_id,
             pipeline_key: pipe.pipeline_key,
+            expected_scope_id: pipe.scope_id,
             resource_keys: [],
           })
         } else {
@@ -69,7 +72,9 @@ function calculateSelectionsFromChecked(
           if (selectedConfigs.length > 0) {
             selections.push({
               environment_key: envKey,
+        expected_environment_id: env.environment_id,
               pipeline_key: pipe.pipeline_key,
+            expected_scope_id: pipe.scope_id,
               resource_keys: selectedConfigs,
             })
           }

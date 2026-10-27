@@ -41,6 +41,7 @@ var (
 
 // ReleaseStaticExportInput 固定导出页面已展示的版本快照;不重新读取 active。
 type ReleaseStaticExportInput struct {
+	ExpectedScopeID    string
 	EnvironmentKey     string
 	PipelineKey        string
 	Version            string
@@ -80,11 +81,15 @@ func (s *Service) ReleaseStaticExport(ctx context.Context, input ReleaseStaticEx
 	if _, err := uuid.Parse(expectedSnapshot); err != nil {
 		return nil, releaseInvalidRequestError("expected_snapshot_id must be a snapshot UUID")
 	}
+	scope, err := resolveReadScope(ctx, s.logic, environmentKey, pipelineKey, input.ExpectedScopeID)
+	if err != nil {
+		return nil, err
+	}
 	// 服从更短的调用方期限
 	ctx, cancel := context.WithTimeout(ctx, releaseExportTotalTimeout)
 	defer cancel()
 
-	plan, err := s.buildReleaseStaticPlan(ctx, environmentKey, pipelineKey, versionName, expectedSnapshot)
+	plan, err := s.buildReleaseStaticPlan(ctx, scope, versionName, expectedSnapshot)
 	if err != nil {
 		// 期限内失败才是内部/业务错误;已超时或已取消统一按导出超时表达
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -112,20 +117,21 @@ func (s *Service) ReleaseStaticExport(ctx context.Context, input ReleaseStaticEx
 	}, nil
 }
 
-// buildReleaseStaticPlan 固定范围与版本行,核对页面展示的 snapshot 标识与两类摘要。
-func (s *Service) buildReleaseStaticPlan(ctx context.Context, environmentKey, pipelineKey, versionName, expectedSnapshot string) (*releaseStaticExportPlan, error) {
-	if err := s.assertReleaseScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
-		return nil, err
-	}
-	row, err := s.logic.releaseDAO.GetVersionByScopeAndName(ctx, s.logic.db, environmentKey, pipelineKey, versionName)
+// buildReleaseStaticPlan 固定捕获到的范围与版本行,核对页面展示的 snapshot 标识与两类摘要。
+func (s *Service) buildReleaseStaticPlan(ctx context.Context, scope *model.Pipeline,
+	versionName, expectedSnapshot string) (*releaseStaticExportPlan, error) {
+	row, err := s.logic.releaseDAO.GetVersionByScopeIDAndName(ctx, s.logic.db, scope.ScopeID, versionName)
 	if err != nil {
 		if db.IsReleaseNotFound(err) {
-			return nil, releaseVersionNotFoundError(environmentKey, pipelineKey, versionName)
+			return nil, releaseVersionNotFoundError(scope.EnvironmentKey, scope.PipelineKey, versionName)
 		}
 		return nil, releaseInternalError(err)
 	}
+	if row.ScopeID != scope.ScopeID {
+		return nil, releaseIncompleteError("release version belongs to another scope generation")
+	}
 	if row.SnapshotID != expectedSnapshot {
-		return nil, releaseSnapshotMismatchError(environmentKey, pipelineKey, versionName, expectedSnapshot, row.SnapshotID)
+		return nil, releaseSnapshotMismatchError(scope.EnvironmentKey, scope.PipelineKey, versionName, expectedSnapshot, row.SnapshotID)
 	}
 	if row.DeletedAt != nil {
 		return nil, releaseVersionDeletedError()
@@ -455,9 +461,15 @@ func releaseStaticFileName(snapshotID, version string) string {
 	return fmt.Sprintf("release-%s-%s.zip", snapshotID, name)
 }
 
-// ExportActiveReleasePackage 供旧 runtime 静态导出使用:本次请求内解析一次生效版本,
-// 按该快照捕获导出计划并复用发布构包器;不做第二次 active 解析,也不读编辑区。
+// ExportActiveReleasePackage 供旧 runtime 静态导出使用;空 pin 保持原调用兼容。
 func (s *Service) ExportActiveReleasePackage(ctx context.Context, environmentKey, pipelineKey string) (result *ReleaseStaticExportResult, err error) {
+	return s.ExportActiveReleasePackageWithScope(ctx, environmentKey, pipelineKey, "")
+}
+
+// ExportActiveReleasePackageWithScope 在本次请求内先捕获范围代身份,再按该 scope 的
+// head 固定一次生效版本并复用发布构包器;不按 env/pipeline 重新解析另一代。
+func (s *Service) ExportActiveReleasePackageWithScope(ctx context.Context,
+	environmentKey, pipelineKey, requestedScopeID string) (result *ReleaseStaticExportResult, err error) {
 	environmentKey = strings.TrimSpace(environmentKey)
 	pipelineKey = strings.TrimSpace(pipelineKey)
 	if environmentKey == "" || pipelineKey == "" {
@@ -470,10 +482,18 @@ func (s *Service) ExportActiveReleasePackage(ctx context.Context, environmentKey
 			err = releaseExportContextError(ctx.Err())
 		}
 	}()
-	if err := s.assertReleaseScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
+	scopeID, err := normalizeLegacyScopeID(requestedScopeID)
+	if err != nil {
 		return nil, err
 	}
-	head, err := s.logic.releaseDAO.GetHead(ctx, s.logic.db, environmentKey, pipelineKey)
+	scope, err := resolveReadScope(ctx, s.logic, environmentKey, pipelineKey, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	if hook := releaseRuntimeScopeHookForTest; hook != nil {
+		hook(scope.ScopeID)
+	}
+	head, err := s.logic.releaseDAO.GetHeadByScopeID(ctx, s.logic.db, scope.ScopeID)
 	if err != nil {
 		return nil, releaseInternalError(err)
 	}
@@ -489,6 +509,9 @@ func (s *Service) ExportActiveReleasePackage(ctx context.Context, environmentKey
 	}
 	if row.DeletedAt != nil {
 		return nil, releaseIncompleteError("active snapshot has been deleted")
+	}
+	if row.ScopeID != scope.ScopeID {
+		return nil, releaseIncompleteError("active snapshot belongs to another scope generation")
 	}
 	plan, err := s.buildReleaseStaticPlanFromVersion(ctx, row)
 	if err != nil {

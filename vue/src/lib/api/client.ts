@@ -3,6 +3,8 @@ import { ApiError, ErrorType, handleApiError } from './error'
 import { apiURL } from './url'
 import { fetchApi, isSessionError, StaleSessionError, isSessionBoundRequest } from './http'
 import { sessionGeneration } from '../auth/session'
+import { operationMessage } from './messages'
+import { isScopeError, scopeProblem } from '@/lib/scope'
 export { getBasePath } from './url'
 
 export interface RequestOptions {
@@ -23,6 +25,8 @@ async function readJson<T>(response: Response): Promise<ApiResponse<T>> {
   if (code !== undefined && code !== 0 && code !== 200) {
     const error = new ApiError(code, body.error || (operationFailed ? operation.msg : body.msg) || '操作失败', '', ErrorType.API)
     error.errorType = body.error_type ?? ''
+    error.message = operationMessage(error.errorType, error.message)
+    if (isScopeError(error)) scopeProblem.value = error.message
     error.payload = body as unknown as Record<string, unknown>
     throw error
   }
@@ -78,17 +82,31 @@ export class ApiClient {
   upload<T>(path: string, data: FormData, options: RequestOptions = {}) {
     return this.send<T>(path, { method: 'POST', body: data, headers: options.headers }, options)
   }
-  async download(path: string, init: RequestInit = {}): Promise<Blob> {
+  async downloadArchive(path: string, init: RequestInit = {}) {
     const batch = sessionGeneration()
     const response = await fetchApi(apiURL(path), init)
     const contentType = response.headers.get('content-type') ?? ''
-    if (!contentType.includes('application/zip') && !contentType.includes('application/gzip')) {
+    if (contentType.includes('json') || contentType.includes('text/')) {
       throw new ApiError(502, '导出响应不是有效的归档文件，请重试')
     }
     const blob = await response.blob()
     if (batch !== sessionGeneration()) throw new StaleSessionError()
     if (!blob.size) throw new ApiError(502, '导出文件为空，请重试')
-    return blob
+    const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+    if (batch !== sessionGeneration()) throw new StaleSessionError()
+    if (!((signature[0] === 0x50 && signature[1] === 0x4b && signature[2] === 3 && signature[3] === 4) ||
+      (signature[0] === 0x1f && signature[1] === 0x8b))) throw new ApiError(502, '下载内容不是有效的 ZIP 或 GZIP 文件')
+    const disposition = response.headers.get('content-disposition') || ''
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+    const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition)
+    let filename = plain?.[1] || plain?.[2]?.trim() || ''
+    if (encoded) { try { filename = decodeURIComponent(encoded) } catch { /* Keep plain filename. */ } }
+    filename = filename.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    return { blob, filename, source: response.headers.get('x-rainbow-export-source') || '',
+      snapshotId: response.headers.get('x-rainbow-snapshot-id') || '', version: response.headers.get('x-rainbow-version') || '' }
+  }
+  async download(path: string, init: RequestInit = {}): Promise<Blob> {
+    return (await this.downloadArchive(path, init)).blob
   }
 }
 export const apiClient = new ApiClient()

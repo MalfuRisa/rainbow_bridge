@@ -29,10 +29,15 @@ func (s *Service) FreezeStatus(ctx context.Context, environmentKey, pipelineKey 
 	if err := s.assertFreezeScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
 		return nil, err
 	}
+	pipeline, err := resolveScopeByKeys(ctx, s.logic, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, err
+	}
 	state, err := s.logic.freezeStateOrUnlocked(ctx, environmentKey, pipelineKey)
 	if err != nil {
 		return nil, freezeInternalError(err)
 	}
+	state.ScopeID = pipeline.ScopeID
 	return freezeStatusFromState(state, s.adminAccountAvailable(ctx)), nil
 }
 
@@ -63,6 +68,7 @@ func (s *Service) FreezeHistory(ctx context.Context, environmentKey, pipelineKey
 	items := make([]FreezeEventData, 0, len(events))
 	for _, event := range events {
 		items = append(items, FreezeEventData{
+			ScopeID:   event.ScopeID,
 			EventID:   event.ID,
 			EventType: event.EventType,
 			FromState: event.FromState,
@@ -84,22 +90,34 @@ func (s *Service) FreezeHistory(ctx context.Context, environmentKey, pipelineKey
 
 // LockFreeze 在管理凭据验证通过后锁定范围;锁定前执行受管资源检查。
 func (s *Service) LockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw string) (*FreezeStatusData, error) {
+	return s.LockFreezeWithIdentity(ctx, environmentKey, pipelineKey, reason, expectedRevisionRaw, "")
+}
+
+func (s *Service) LockFreezeWithIdentity(ctx context.Context, environmentKey, pipelineKey, reason,
+	expectedRevisionRaw, expectedScopeID string) (*FreezeStatusData, error) {
 	return s.applyFreezeTransition(ctx, freezeTransitionInput{
 		environmentKey:      environmentKey,
 		pipelineKey:         pipelineKey,
 		reason:              reason,
 		expectedRevisionRaw: expectedRevisionRaw,
+		expectedScopeID:     expectedScopeID,
 		desiredState:        model.FreezeStateLocked,
 	})
 }
 
 // UnlockFreeze 在可信管理员身份验证通过后解除冻结。
 func (s *Service) UnlockFreeze(ctx context.Context, environmentKey, pipelineKey, reason, expectedRevisionRaw string) (*FreezeStatusData, error) {
+	return s.UnlockFreezeWithIdentity(ctx, environmentKey, pipelineKey, reason, expectedRevisionRaw, "")
+}
+
+func (s *Service) UnlockFreezeWithIdentity(ctx context.Context, environmentKey, pipelineKey, reason,
+	expectedRevisionRaw, expectedScopeID string) (*FreezeStatusData, error) {
 	return s.applyFreezeTransition(ctx, freezeTransitionInput{
 		environmentKey:      environmentKey,
 		pipelineKey:         pipelineKey,
 		reason:              reason,
 		expectedRevisionRaw: expectedRevisionRaw,
+		expectedScopeID:     expectedScopeID,
 		desiredState:        model.FreezeStateUnlocked,
 	})
 }
@@ -109,6 +127,7 @@ type freezeTransitionInput struct {
 	pipelineKey         string
 	reason              string
 	expectedRevisionRaw string
+	expectedScopeID     string
 	desiredState        string
 }
 
@@ -136,7 +155,8 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 
 	var result *FreezeStatusData
 	err = s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
-		if err := s.assertFreezeScopeExists(gateCtx, txLogic, environmentKey, pipelineKey); err != nil {
+		pipeline, err := resolveScopeForWrite(gateCtx, txLogic, environmentKey, pipelineKey, input.expectedScopeID)
+		if err != nil {
 			return err
 		}
 		if err := txLogic.freezeDAO.EnsureState(gateCtx, txLogic.db, environmentKey, pipelineKey); err != nil {
@@ -188,6 +208,7 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 				latest.State, latest.Revision)
 		}
 		event := &model.ConfigFreezeEvent{
+			ScopeID:        pipeline.ScopeID,
 			EnvironmentKey: environmentKey,
 			PipelineKey:    pipelineKey,
 			EventType:      freezeEventType(input.desiredState),
@@ -203,6 +224,7 @@ func (s *Service) applyFreezeTransition(ctx context.Context, input freezeTransit
 		}
 		// 本次迁移已通过可信身份,管理账号必然存在
 		result = freezeStatusFromState(model.ConfigFreezeState{
+			ScopeID:        pipeline.ScopeID,
 			EnvironmentKey: environmentKey,
 			PipelineKey:    pipelineKey,
 			State:          input.desiredState,
@@ -323,15 +345,15 @@ func (s *Service) EnsureFreezeBootstrap(ctx context.Context) error {
 	return nil
 }
 
-// lockedScopeSet 返回当前全部 locked 范围集合(用于启动迁移等非事务场景的跳过判断)。
-func (s *Service) lockedScopeSet(ctx context.Context) (map[FreezeScopeRef]bool, error) {
+// lockedScopeSet returns locked scope identities for startup migrations.
+func (s *Service) lockedScopeSet(ctx context.Context) (map[string]bool, error) {
 	var states []model.ConfigFreezeState
 	if err := s.logic.db.WithContext(ctx).Where("state = ?", model.FreezeStateLocked).Find(&states).Error; err != nil {
 		return nil, err
 	}
-	set := make(map[FreezeScopeRef]bool, len(states))
+	set := make(map[string]bool, len(states))
 	for _, state := range states {
-		set[FreezeScopeRef{EnvironmentKey: state.EnvironmentKey, PipelineKey: state.PipelineKey}] = true
+		set[state.ScopeID] = true
 	}
 	return set, nil
 }
@@ -339,15 +361,10 @@ func (s *Service) lockedScopeSet(ctx context.Context) (map[FreezeScopeRef]bool, 
 // --------------------- 内部辅助 ---------------------
 
 func (s *Service) assertFreezeScopeExists(ctx context.Context, l *Logic, environmentKey, pipelineKey string) error {
-	if _, err := l.environmentDAO.GetByKey(ctx, l.db, environmentKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return freezeScopeNotFoundError(environmentKey, pipelineKey)
-		}
-		return freezeInternalError(err)
-	}
-	if _, err := l.pipelineDAO.GetByKey(ctx, l.db, environmentKey, pipelineKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return freezeScopeNotFoundError(environmentKey, pipelineKey)
+	_, err := resolveScopeByKeys(ctx, l, environmentKey, pipelineKey)
+	if err != nil {
+		if _, ok := AsScopeError(err); ok {
+			return err
 		}
 		return freezeInternalError(err)
 	}
@@ -360,6 +377,7 @@ func freezeStatusFromState(state model.ConfigFreezeState, adminAvailable bool) *
 		lastChangedAt = state.LastChangedAt.UTC().Format(time.RFC3339)
 	}
 	return &FreezeStatusData{
+		ScopeID:         state.ScopeID,
 		EnvironmentKey:  state.EnvironmentKey,
 		PipelineKey:     state.PipelineKey,
 		State:           state.State,

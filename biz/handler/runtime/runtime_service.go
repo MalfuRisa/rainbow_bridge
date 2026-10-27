@@ -34,7 +34,7 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, name+" is not supported here; use /api/v1/runtime/release or the fixed release export")
 		return
 	}
-	data, err := svc.RuntimeRelease(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, nil)
+	data, err := svc.RuntimeReleaseLegacy(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, c.Query("scope_id"))
 	if err != nil {
 		writeRuntimeServiceError(c, err)
 		return
@@ -53,7 +53,8 @@ func ExportStatic(ctx context.Context, c *app.RequestContext) {
 		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, name+" is not supported here; use the fixed release export")
 		return
 	}
-	result, err := svc.ExportActiveReleasePackage(handler.EnrichContext(ctx, c), environmentKey, pipelineKey)
+	result, err := svc.ExportActiveReleasePackageWithScope(handler.EnrichContext(ctx, c),
+		environmentKey, pipelineKey, c.Query("scope_id"))
 	if err != nil {
 		writeRuntimeServiceError(c, err)
 		return

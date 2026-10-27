@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { scopeIdFor } from '@/lib/scope'
 import {
   releaseApi,
   type ReleaseActivatePayload,
@@ -33,7 +34,7 @@ export const useReleaseStore = defineStore('release', () => {
   const contentEpoch = ref(0)
   let scopeEpoch = 0
 
-  const keyOf = (environmentKey: string, pipelineKey: string) => `${environmentKey}/${pipelineKey}`
+  const keyOf = (environmentKey: string, pipelineKey: string) => JSON.stringify([environmentKey, pipelineKey, scopeIdFor(environmentKey, pipelineKey)])
   const isCurrentScope = (environmentKey: string, pipelineKey: string) =>
     keyOf(environmentKey, pipelineKey) === scopeKey.value
   /** 请求是否仍属于当前范围与当前批次。 */

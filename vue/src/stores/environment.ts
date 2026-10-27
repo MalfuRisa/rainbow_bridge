@@ -14,13 +14,16 @@ import {
 import type { Environment, Pipeline } from '@/lib/types'
 import type { ApiEnvironment } from '@/lib/api/types'
 import { toast } from 'vue-sonner'
+import { registerScopes, assertEnvironment, assertScope } from '@/lib/scope'
 
 export const useEnvironmentStore = defineStore('environment', () => {
   const environments = ref<Environment[]>([])
   const pipelines = ref<Pipeline[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let overviewBatch = 0
   const reset = () => {
+    overviewBatch++
     environments.value = []
     pipelines.value = []
     loading.value = false
@@ -28,16 +31,20 @@ export const useEnvironmentStore = defineStore('environment', () => {
   }
 
   const fetchOverview = async () => {
+    const batch = ++overviewBatch
     loading.value = true
     error.value = null
     try {
       const response = await runtimeApi.overview()
+      if (batch !== overviewBatch) return
       environments.value = response.list.map(fromApiEnvironmentOverview)
+      registerScopes(environments.value)
     } catch (e) {
+      if (batch !== overviewBatch) return
       error.value = e instanceof Error ? e.message : '获取环境列表失败'
       if (!isSessionError(e)) toast.error(error.value)
     } finally {
-      loading.value = false
+      if (batch === overviewBatch) loading.value = false
     }
   }
 
@@ -82,7 +89,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const updateEnvironment = async (env: { key: string; name: string }) => {
+  const updateEnvironment = async (env: { key: string; name: string; environmentId: string }) => {
     try {
       const apiEnv = toApiEnvironment(env)
       await environmentApi.update(apiEnv as any)
@@ -95,9 +102,10 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const deleteEnvironment = async (environmentKey: string) => {
+  const deleteEnvironment = async (environmentKey: string, expectedEnvironmentId: string) => {
     try {
-      await environmentApi.delete(environmentKey)
+      assertEnvironment(environmentKey, expectedEnvironmentId)
+      await environmentApi.delete(environmentKey, { expectedEnvironmentId })
       await fetchOverview()
       toast.success('环境删除成功')
     } catch (e) {
@@ -107,9 +115,9 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const createPipeline = async (environmentKey: string, pipeline: { key: string; name: string }) => {
+  const createPipeline = async (environmentKey: string, pipeline: { key: string; name: string }, expectedEnvironmentId: string) => {
     try {
-      const apiPipeline = toApiPipeline(pipeline, environmentKey)
+      const apiPipeline = toApiPipeline({ ...pipeline, environmentId: expectedEnvironmentId }, environmentKey)
       await pipelineApi.create(apiPipeline as any)
       await fetchOverview()
       toast.success('渠道创建成功')
@@ -120,7 +128,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const updatePipeline = async (environmentKey: string, pipeline: { key: string; name: string }) => {
+  const updatePipeline = async (environmentKey: string, pipeline: { key: string; name: string; scopeId: string }) => {
     try {
       const apiPipeline = toApiPipeline(pipeline, environmentKey)
       await pipelineApi.update(apiPipeline as any)
@@ -133,9 +141,10 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const deletePipeline = async (environmentKey: string, pipelineKey: string) => {
+  const deletePipeline = async (environmentKey: string, pipelineKey: string, expectedScopeId: string) => {
     try {
-      await pipelineApi.delete(pipelineKey, { environmentKey })
+      assertScope(environmentKey, pipelineKey, expectedScopeId)
+      await pipelineApi.delete(pipelineKey, { environmentKey, expectedScopeId })
       await fetchOverview()
       toast.success('渠道删除成功')
     } catch (e) {

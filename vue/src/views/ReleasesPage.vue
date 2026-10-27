@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
+import { useScopeSelection } from '@/composables/useScopeSelection'
 import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
 import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ArrowRightLeft, ChevronDown, Eye, History, Loader2, PackagePlus, RefreshCw, ArrowUpRight } from 'lucide-vue-next'
 import EnvironmentChannelSelector from '@/components/resources/EnvironmentChannelSelector.vue'
 import CreateReleaseDialog from '@/components/release/CreateReleaseDialog.vue'
-import ActivateReleaseDialog from '@/components/release/ActivateReleaseDialog.vue'
+import ReleaseReviewDialog from '@/components/release/ReleaseReviewDialog.vue'
+import FixedReleaseCompareDialog from '@/components/release/FixedReleaseCompareDialog.vue'
+import type { CompareTarget } from '@/lib/api/release-compare'
 import ReleaseHistoryDialog from '@/components/release/ReleaseHistoryDialog.vue'
 import ReleaseDetailDialog from '@/components/release/ReleaseDetailDialog.vue'
 import DeleteReleaseDialog, { type DeleteTarget } from '@/components/release/DeleteReleaseDialog.vue'
@@ -21,7 +24,6 @@ import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
 import { releaseRuntimeURL } from '@/lib/api/release'
 
-const route = useRoute()
 const router = useRouter()
 const environmentStore = useEnvironmentStore()
 const freezeStore = useFreezeStore()
@@ -33,7 +35,7 @@ let targetEpoch = 0
 async function openDelete(version: string, snapshotId: string) {
   const epoch = ++targetEpoch
   const scope = { environmentKey: selectedEnvKey.value, pipelineKey: selectedPipelineKey.value }
-  const target = { ...scope, version, snapshotId, environmentName: selectedEnvironment.value?.name, pipelineName: selectedPipeline.value?.name }
+  const target = { ...scope, scopeId: selectedScopeId.value, version, snapshotId, environmentName: selectedEnvironment.value?.name, pipelineName: selectedPipeline.value?.name }
   // Reopening an abandoned operation always rechecks list/active first.
   await releaseStore.refreshScope(scope.environmentKey, scope.pipelineKey)
   if (epoch !== targetEpoch || selectedEnvKey.value !== scope.environmentKey || selectedPipelineKey.value !== scope.pipelineKey) return
@@ -43,25 +45,20 @@ async function openDelete(version: string, snapshotId: string) {
   deleteOpen.value = true
 }
 
-const envPipelineModel = ref({ envKey: '', pipelineKey: '' })
+const { envPipelineModel, selectedEnvKey, selectedPipelineKey, selectedScopeId, initialize } = useScopeSelection(() => environmentStore.environments)
 const createOpen = ref(false)
 const historyOpen = ref(false)
+const compareOpen = ref(false)
 const detailVersion = ref('')
 const detailOpen = ref(false)
-const activateTarget = ref('')
+const activateTarget = ref<CompareTarget | null>(null)
 const activateOpen = ref(false)
 
-onMounted(() => {
-  environmentStore.fetchOverview()
-  const env = typeof route.query.env === 'string' ? route.query.env : ''
-  const pipeline = typeof route.query.pipeline === 'string' ? route.query.pipeline : ''
-  if (env && pipeline) {
-    envPipelineModel.value = { envKey: env, pipelineKey: pipeline }
-  }
+onMounted(async () => {
+  await environmentStore.fetchOverview()
+  if (!environmentStore.error) initialize()
 })
 
-const selectedEnvKey = computed(() => envPipelineModel.value.envKey)
-const selectedPipelineKey = computed(() => envPipelineModel.value.pipelineKey)
 const hasScope = computed(() => Boolean(selectedEnvKey.value && selectedPipelineKey.value))
 
 const selectedEnvironment = computed(() => environmentStore.environments.find((env) => env.key === selectedEnvKey.value))
@@ -71,10 +68,10 @@ const freezeStatus = computed(() => freezeStore.statusFor(selectedEnvKey.value, 
 const frozen = computed(() => freezeStatus.value?.state === 'locked')
 
 watch(
-  [selectedEnvKey, selectedPipelineKey],
+  [selectedEnvKey, selectedPipelineKey, selectedScopeId],
   ([envKey, pipelineKey]) => {
     targetEpoch++
-    createOpen.value = false; activateOpen.value = false; detailOpen.value = false
+    createOpen.value = false; activateOpen.value = false; detailOpen.value = false; compareOpen.value = false
     historyOpen.value = false; deleteOpen.value = false; deleteTarget.value = null
     if (envKey && pipelineKey) {
       freezeStore.loadStatus(envKey, pipelineKey)
@@ -88,7 +85,7 @@ watch(
 )
 watch(() => auth.user?.id, () => {
   targetEpoch++
-  createOpen.value = false; activateOpen.value = false; detailOpen.value = false
+  createOpen.value = false; activateOpen.value = false; detailOpen.value = false; compareOpen.value = false
   historyOpen.value = false; deleteOpen.value = false; deleteTarget.value = null
 })
 
@@ -104,8 +101,23 @@ const openDetail = (version: string) => {
 }
 
 const openActivate = (version: string) => {
-  activateTarget.value = version
+  const meta = releaseStore.items.find(item => item.meta.version === version)?.meta
+  if (!meta) return
+  activateTarget.value = { version: meta.version, snapshot_id: meta.snapshot_id }
   activateOpen.value = true
+}
+function openPublish() {
+  activateTarget.value = null
+  activateOpen.value = true
+}
+function publishCompared(target: CompareTarget) {
+  compareOpen.value = false
+  activateTarget.value = { ...target }
+  activateOpen.value = true
+}
+function refreshPublishing() {
+  releaseStore.refreshScope(selectedEnvKey.value, selectedPipelineKey.value)
+  freezeStore.loadStatus(selectedEnvKey.value, selectedPipelineKey.value)
 }
 
 const formatTime = (value: string) => {
@@ -120,11 +132,13 @@ const formatTime = (value: string) => {
     <div class="spectrum-operations spectrum-release-page">
     <!-- §2.1: active business version first; editable/frozen source second; immutable
          version catalog third. Create is primary; switch and history stay secondary. -->
-    <SpectrumPageHeader eyebrow="RELEASES / FROM SNAPSHOT TO LIVE" title="版本发布" description="创建版本后，需切换生效。">
+    <SpectrumPageHeader eyebrow="RELEASES / FROM SNAPSHOT TO LIVE" title="版本发布" description="审阅差异，再确认生效。">
       <div v-if="hasScope" class="spectrum-release-actions">
         <Button size="sm" variant="ghost" @click="releaseStore.refreshScope(selectedEnvKey, selectedPipelineKey)"><RefreshCw class="w-4 h-4 mr-1" />刷新</Button>
         <Button size="sm" variant="outline" @click="historyOpen = true"><History class="w-4 h-4 mr-1" />操作记录</Button>
-        <Button size="sm" @click="createOpen = true"><PackagePlus class="w-4 h-4 mr-1" />创建版本</Button>
+        <Button size="sm" variant="outline" :disabled="!releaseStore.items.length" @click="compareOpen = true"><ArrowRightLeft class="w-4 h-4 mr-1" />版本比较</Button>
+        <Button size="sm" variant="outline" @click="createOpen = true"><PackagePlus class="w-4 h-4 mr-1" />创建版本</Button>
+        <Button size="sm" @click="openPublish"><ArrowUpRight class="w-4 h-4 mr-1" />发布配置</Button>
       </div>
     </SpectrumPageHeader>
     <Card class="spectrum-panel spectrum-scope-panel">
@@ -148,7 +162,7 @@ const formatTime = (value: string) => {
           <div class="spectrum-release-editing">
             <p class="spectrum-eyebrow">编辑区</p>
             <div class="spectrum-release-source-status"><span class="spectrum-state-pill" :class="frozen ? 'is-frozen' : 'is-idle'">{{ frozen ? '已冻结' : freezeStatus ? '可编辑' : '状态待确认' }}</span></div>
-            <p>{{ frozen ? '可创建版本。' : freezeStatus ? '先前往配置管理锁版，再创建版本。' : '请刷新冻结状态后再创建版本。' }}</p>
+            <p>{{ frozen ? '可创建候选版本。' : freezeStatus ? '发布时可在此锁版并创建候选版本。' : '请刷新冻结状态后再创建版本。' }}</p>
           </div>
     </section>
 
@@ -164,7 +178,7 @@ const formatTime = (value: string) => {
           <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
         <div v-else-if="releaseStore.items.length === 0" class="text-center py-10 text-muted-foreground text-sm">
-          暂无版本:先锁版,再点击“创建版本”
+          暂无版本，点击“发布配置”准备首个版本。
         </div>
         <template v-else>
           <div class="spectrum-table">
@@ -197,6 +211,7 @@ const formatTime = (value: string) => {
                         <Eye class="w-4 h-4 mr-1" />
                         查看
                       </Button>
+                      <Button variant="ghost" size="sm" @click="openActivate(item.meta.version)">查看差异</Button>
                       <Button v-if="!item.is_active" variant="outline" size="sm" @click="openActivate(item.meta.version)">
                         <ArrowRightLeft class="w-4 h-4 mr-1" />
                         {{ releaseStore.isOlderThanActive(item.meta.version) ? '切回此版本' : '切换生效版本' }}
@@ -252,7 +267,12 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
     <RouterLink v-if="hasScope" class="spectrum-quiet-link mt-6" :to="{ path: '/config', query: { env: selectedEnvKey, pipeline: selectedPipelineKey } }">返回当前范围的配置工作区 <ArrowUpRight :size="14" /></RouterLink>
 
     <DeleteReleaseDialog :open="deleteOpen" :target="deleteTarget" @update:open="deleteOpen = $event" />
+    <FixedReleaseCompareDialog :key="`compare-${selectedScopeId}`" :open="compareOpen" :environment-key="selectedEnvKey" :pipeline-key="selectedPipelineKey" :scope-id="selectedScopeId"
+      :scope-name="`${selectedEnvironment?.name || selectedEnvKey} / ${selectedPipeline?.name || selectedPipelineKey}`" :items="releaseStore.items" :has-more="releaseStore.hasMore" :list-loading="releaseStore.loading" :list-error="releaseStore.error"
+      @update:open="compareOpen = $event" @publish="publishCompared" @load-more="releaseStore.loadMore(selectedEnvKey, selectedPipelineKey)" />
     <CreateReleaseDialog
+      :key="`create-${selectedScopeId}`"
+      :scope-id="selectedScopeId"
       :open="createOpen"
       :environment-key="selectedEnvKey"
       :pipeline-key="selectedPipelineKey"
@@ -260,20 +280,27 @@ Headers: x-environment: &lt;环境&gt;   x-pipeline: &lt;渠道&gt;</pre>
       :pipeline-name="selectedPipeline?.name"
       @update:open="createOpen = $event"
     />
-    <ActivateReleaseDialog
+    <ReleaseReviewDialog
+      :key="`activate-${selectedScopeId}`"
+      :scope-id="selectedScopeId"
       :open="activateOpen"
       :environment-key="selectedEnvKey"
       :pipeline-key="selectedPipelineKey"
-      :target-version="activateTarget"
+      :environment-name="selectedEnvironment?.name"
+      :pipeline-name="selectedPipeline?.name"
+      :target="activateTarget"
       @update:open="activateOpen = $event"
+      @changed="refreshPublishing"
     />
     <ReleaseHistoryDialog
+      :key="`history-${selectedScopeId}`"
       :open="historyOpen"
       :environment-key="selectedEnvKey"
       :pipeline-key="selectedPipelineKey"
       @update:open="historyOpen = $event"
     />
     <ReleaseDetailDialog
+      :key="`detail-${selectedScopeId}`"
       :open="detailOpen"
       :environment-key="selectedEnvKey"
       :pipeline-key="selectedPipelineKey"

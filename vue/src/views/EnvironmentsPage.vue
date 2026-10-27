@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, GitBranch, ArrowUpRight, Layers, Loader2, Lock } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useFreezeStore } from '@/stores/freeze'
+import { reactive } from 'vue'
+import { useScopeDeletion } from '@/composables/useScopeDeletion'
 import type { Environment } from '@/lib/types'
 
 const environmentStore = useEnvironmentStore()
@@ -25,9 +27,9 @@ const savingEnvironment = ref(false)
 const savingPipeline = ref(false)
 const envSaveError = ref('')
 const pipelineSaveError = ref('')
-const deleteTarget = ref<{ kind: 'environment' | 'pipeline'; key: string; name: string } | null>(null)
-const deleteError = ref('')
-const deleting = ref(false)
+const deletion = reactive(useScopeDeletion())
+const pipelineEnvironmentId = ref('')
+watch(isPipelineDialogOpen, open => { if (open) pipelineEnvironmentId.value = selectedEnv.value?.environmentId || '' })
 const channelCount = computed(() => environmentStore.environments.reduce((sum, env) => sum + env.pipelines.length, 0))
 
 const displayPipelines = computed(() => selectedEnv.value?.pipelines || [])
@@ -56,6 +58,7 @@ watch(() => environmentStore.environments, (envs) => {
   if (selectedEnv.value) {
     const updated = envs.find((e) => e.key === selectedEnv.value?.key)
     if (updated) {
+      if (updated.environmentId !== selectedEnv.value.environmentId) { isPipelineDialogOpen.value = false; pipelineFormData.value = { key: '', name: '' } }
       selectedEnv.value = updated
     } else {
       selectedEnv.value = null
@@ -78,26 +81,12 @@ const handleAddEnv = async () => {
   }
 }
 
-const handleDeleteEnv = async (key: string) => {
-  try {
-    await environmentStore.deleteEnvironment(key)
-    if (selectedEnv.value?.key === key) selectedEnv.value = null
-    return true
-  } catch {
-    // 含冻结渠道的环境会被服务端拒绝;刷新状态让禁用原因可见(错误提示由请求层展示)
-    if (selectedEnv.value) {
-      await freezeStore.loadMany(selectedEnv.value.pipelines.map((pipeline) => ({ environmentKey: selectedEnv.value!.key, pipelineKey: pipeline.key })))
-    }
-    return false
-  }
-}
-
 const handleAddPipeline = async () => {
   if (savingPipeline.value || !selectedEnv.value || !pipelineFormData.value.key || !pipelineFormData.value.name) return
   savingPipeline.value = true
   pipelineSaveError.value = ''
   try {
-    await environmentStore.createPipeline(selectedEnv.value.key, { ...pipelineFormData.value })
+    await environmentStore.createPipeline(selectedEnv.value.key, { ...pipelineFormData.value }, pipelineEnvironmentId.value)
     pipelineFormData.value = { key: '', name: '' }
     isPipelineDialogOpen.value = false
   } catch (error) {
@@ -107,35 +96,6 @@ const handleAddPipeline = async () => {
   }
 }
 
-const handleDeletePipeline = async (pipelineKey: string) => {
-  if (!selectedEnv.value) return
-  try {
-    await environmentStore.deletePipeline(selectedEnv.value.key, pipelineKey)
-    return true
-  } catch {
-    await freezeStore.loadStatus(selectedEnv.value.key, pipelineKey)
-    return false
-  }
-}
-
-const requestDelete = (kind: 'environment' | 'pipeline', key: string, name: string) => {
-  deleteTarget.value = { kind, key, name }
-  deleteError.value = ''
-}
-
-const confirmDelete = async () => {
-  const target = deleteTarget.value
-  if (!target || deleting.value) return
-  deleting.value = true
-  deleteError.value = ''
-  try {
-    const ok = target.kind === 'environment' ? await handleDeleteEnv(target.key) : await handleDeletePipeline(target.key)
-    if (ok) deleteTarget.value = null
-    else deleteError.value = '删除未完成，请检查冻结状态后重试。'
-  } finally {
-    deleting.value = false
-  }
-}
 </script>
 
 <template>
@@ -209,7 +169,7 @@ const confirmDelete = async () => {
           <div v-else class="space-y-2">
             <div
               v-for="env in environmentStore.environments"
-              :key="env.key"
+              :key="env.environmentId"
               class="spectrum-env-row"
               :class="{ 'is-selected': selectedEnv?.key === env.key }"
             >
@@ -232,7 +192,7 @@ const confirmDelete = async () => {
                   :disabled="environmentStore.loading || envHasLockedPipeline(env)"
                   :title="envHasLockedPipeline(env) ? '包含已冻结渠道的环境不可删除' : undefined"
                   :aria-label="`删除环境 ${env.name}`"
-                  @click.stop="requestDelete('environment', env.key, env.name)"
+                  @click.stop="deletion.request('environment', env.key, env.name)"
                 >
                   <Loader2 v-if="environmentStore.loading" class="w-4 h-4 animate-spin" />
                   <Trash2 v-else class="w-4 h-4 text-destructive" />
@@ -310,7 +270,7 @@ const confirmDelete = async () => {
           <div v-if="selectedEnv" class="space-y-2">
             <div
               v-for="pipeline in displayPipelines"
-              :key="pipeline.key"
+              :key="pipeline.scopeId"
               class="spectrum-channel-row"
             >
               <div>
@@ -332,7 +292,7 @@ const confirmDelete = async () => {
                   :disabled="environmentStore.loading || pipelineLocked(selectedEnv.key, pipeline.key)"
                   :title="pipelineLocked(selectedEnv.key, pipeline.key) ? `已冻结:${pipelineFreezeReason(selectedEnv.key, pipeline.key) || '该渠道不可删除'}` : undefined"
                   :aria-label="`删除渠道 ${pipeline.name}`"
-                  @click="requestDelete('pipeline', pipeline.key, pipeline.name)"
+                  @click="deletion.request('pipeline', pipeline.key, pipeline.name, selectedEnv.key)"
                 >
                   <Loader2 v-if="environmentStore.loading" class="w-4 h-4 animate-spin" />
                   <Trash2 v-else class="w-4 h-4 text-destructive" />
@@ -347,8 +307,17 @@ const confirmDelete = async () => {
         </CardContent>
       </Card>
     </div>
-    <Dialog :open="Boolean(deleteTarget)" @update:open="open => { if (!open && !deleting) deleteTarget = null }">
-      <DialogContent><DialogHeader><DialogTitle>{{ deleteTarget?.kind === 'environment' ? '删除环境' : '删除渠道' }}</DialogTitle><DialogDescription>将删除 {{ deleteTarget?.name }}（{{ deleteTarget?.key }}）。此操作不可撤销，请确认目标范围。</DialogDescription></DialogHeader><p v-if="deleteError" role="alert" class="text-sm text-destructive">{{ deleteError }}</p><DialogFooter><Button variant="outline" :disabled="deleting" @click="deleteTarget = null">取消</Button><Button variant="destructive" :disabled="deleting" @click="confirmDelete">{{ deleting ? '删除中…' : '确认删除' }}</Button></DialogFooter></DialogContent>
+    <Dialog :open="Boolean(deletion.target)" @update:open="open => { if (!open && !deletion.deleting) deletion.target = null }">
+      <DialogContent>
+        <DialogHeader><DialogTitle>{{ deletion.target?.kind === 'environment' ? '删除环境' : '删除渠道' }} · {{ deletion.target?.name }}</DialogTitle>
+          <DialogDescription>范围内的配置、资源和发布版本将从正常使用中移除，当前生效配置也将停止提供。同名重建会得到一个空的新范围。</DialogDescription>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">需先解锁{{ deletion.target?.kind === 'environment' ? '全部有效渠道' : '该渠道' }}。此处不提供撤销或回收站恢复。</p>
+        <p v-if="deletion.invalid" role="alert" class="text-sm text-destructive">原对象已删除或重新创建，请关闭后重新选择。</p>
+        <p v-else-if="deletion.error" role="alert" class="text-sm text-destructive">{{ deletion.error }}</p>
+        <Button v-if="deletion.uncertain" variant="outline" :disabled="environmentStore.loading" @click="deletion.verify">刷新环境并核对</Button>
+        <DialogFooter><Button variant="outline" :disabled="deletion.deleting" @click="deletion.target = null">取消</Button><Button variant="destructive" :disabled="deletion.deleting || deletion.uncertain || deletion.invalid" @click="deletion.confirm">{{ deletion.deleting ? '删除中…' : '确认删除' }}</Button></DialogFooter>
+      </DialogContent>
     </Dialog>
     </div>
   </SpectrumLayout>

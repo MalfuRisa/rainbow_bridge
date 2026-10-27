@@ -1,4 +1,4 @@
-const paths = new Set(['/', '/config', '/environments', '/resources', '/migration', '/import-export', '/releases'])
+const paths = new Set(['/', '/config', '/environments', '/resources', '/migration', '/import-export', '/releases', '/backups'])
 export function safeReturnTo(value: unknown): string {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') ||
       /[\\\u0000-\u0020]/.test(value)) return '/config'

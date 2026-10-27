@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { ReleaseDeletePayload } from '@/lib/api/release'
 
 export interface DeleteTarget {
+  scopeId: string
   environmentKey: string; pipelineKey: string; version: string; snapshotId: string
   environmentName?: string; pipelineName?: string
 }
@@ -53,6 +54,7 @@ async function submit(confirm = false) {
   const selected = { ...target.value }
   const payload = confirm && pending.value ? pending.value : Object.freeze({
     environment_key: selected.environmentKey, pipeline_key: selected.pipelineKey,
+    expected_scope_id: selected.scopeId,
     version: selected.version, expected_snapshot_id: selected.snapshotId,
     request_id: crypto.randomUUID(), reason: reason.value.trim(),
   })
@@ -77,6 +79,9 @@ async function submit(confirm = false) {
       RELEASE_SNAPSHOT_MISMATCH: '目标版本信息已变化，请刷新后重新选择',
       RELEASE_REQUEST_CONFLICT: '本次请求信息冲突，请重新发起操作',
       RELEASE_VERSION_DELETED: '该版本已被删除',
+      SCOPE_IDENTITY_CONFLICT: '该范围已重新创建，请刷新后重新选择。',
+      SCOPE_DELETED: '该范围已删除，请刷新后重新选择。',
+      SCOPE_INVALID_REQUEST: '范围信息不完整，请刷新环境数据。',
     }
     error.value = messages[kind] || (cause instanceof Error ? cause.message : '删除失败，请重试')
     const terminal = Boolean(messages[kind]) || (cause instanceof ApiError && cause.code === 404)

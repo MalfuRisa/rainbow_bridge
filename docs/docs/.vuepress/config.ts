@@ -105,6 +105,10 @@ export default defineUserConfig({
           text: 'API 接口',
           children: [
             '/api/',
+            '/api/scope-identity',
+            '/api/transfer-export',
+            '/api/release-compare',
+            '/api/backup',
           ],
         },
       ],

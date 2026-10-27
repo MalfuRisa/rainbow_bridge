@@ -1,4 +1,5 @@
 export interface Environment {
+  environmentId: string
   id: string
   key: string
   name: string
@@ -6,6 +7,8 @@ export interface Environment {
 }
 
 export interface Pipeline {
+  environmentId: string
+  scopeId: string
   id: string
   key: string
   name: string
@@ -83,6 +86,7 @@ export const CONFIG_TYPE_META: Record<ConfigType, { label: string; color: string
 }
 
 export interface ConfigItem {
+  scopeId: string
   editRevision?: string
   id: string
   name: string

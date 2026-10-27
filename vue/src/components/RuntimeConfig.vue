@@ -23,6 +23,7 @@ import { Copy, Check, RefreshCw, Download, Loader2, AlertTriangle, PackageOpen }
 import SpectrumImagePreview from '@/components/spectrum/SpectrumImagePreview.vue'
 import ConfigContentPreview from '@/components/Config/ConfigContentPreview.vue'
 import { useRuntimeOverview } from '@/composables/useRuntimeOverview'
+import { useScopeSelection } from '@/composables/useScopeSelection'
 import { useActiveRelease } from '@/composables/useActiveRelease'
 import { CONFIG_TYPE_META, type ConfigType } from '@/lib/types'
 import { toast } from 'vue-sonner'
@@ -33,8 +34,7 @@ const emit = defineEmits<{ viewChange: [value: ActiveReleaseView | null] }>()
 const environmentStore = useRuntimeOverview()
 const { state, view, errorMessage, exporting, exportError, load, reset, exportShown } = useActiveRelease()
 
-const selectedEnv = ref<string>('')
-const selectedPipeline = ref<string>('')
+const { selectedEnvKey: selectedEnv, selectedPipelineKey: selectedPipeline, selectedScopeId, initialize } = useScopeSelection(() => environmentStore.environments)
 const copiedId = ref<string | null>(null)
 const imagePreview = ref<{ url: string; name: string } | null>(null)
 
@@ -65,13 +65,12 @@ const activatedAtText = computed(() => {
 })
 
 /** 范围变化(含清空)都开启新批次;未选齐范围不发请求。 */
-watch([selectedEnv, selectedPipeline], ([environmentKey, pipelineKey]) => {
-  void load(environmentKey, pipelineKey)
+watch([selectedEnv, selectedPipeline, selectedScopeId], ([environmentKey, pipelineKey, scopeId]) => {
+  void load(environmentKey, pipelineKey, scopeId)
 })
 
 const handleEnvChange = (value: string) => {
   selectedEnv.value = value
-  selectedPipeline.value = ''
 }
 
 const handlePipelineChange = (value: string) => {
@@ -80,7 +79,7 @@ const handlePipelineChange = (value: string) => {
 
 const handleRefresh = () => {
   if (hasScope.value) {
-    void load(selectedEnv.value, selectedPipeline.value)
+    void load(selectedEnv.value, selectedPipeline.value, selectedScopeId.value)
   }
 }
 
@@ -109,8 +108,9 @@ const previewImage = (url: string, name: string) => {
   imagePreview.value = { url, name }
 }
 
-onMounted(() => {
-  environmentStore.fetchOverview()
+onMounted(async () => {
+  await environmentStore.fetchOverview()
+  initialize()
 })
 
 onUnmounted(() => {

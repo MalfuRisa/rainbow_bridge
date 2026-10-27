@@ -16,6 +16,7 @@ const (
 
 // ReleaseActiveInfo 是一个范围的生效指针快照。
 type ReleaseActiveInfo struct {
+	ScopeID       string
 	SnapshotID    string
 	Version       string
 	Revision      int64
@@ -26,6 +27,7 @@ type ReleaseActiveInfo struct {
 
 // ReleaseVersionMeta 是版本元数据(不含 payload 正文)。
 type ReleaseVersionMeta struct {
+	ScopeID              string
 	SnapshotID           string
 	EnvironmentKey       string
 	PipelineKey          string
@@ -140,6 +142,7 @@ type releasePayload struct {
 
 // ReleaseRuntimeConfig 是版本 runtime 的组装结果。
 type ReleaseRuntimeConfig struct {
+	ScopeID              string
 	ActivatedAt          string // RFC3339 UTC; only for the active selection resolved by this read
 	SnapshotID           string
 	Version              string

@@ -2,6 +2,7 @@ import { BaseApiService } from './base-api'
 import { apiClient } from './client'
 import { toCamelCase, toSnakeCase } from '../utils'
 import type { Pipeline } from './types'
+import { assertEnvironment, assertScope } from '@/lib/scope'
 
 class PipelineApiService extends BaseApiService<Pipeline> {
   protected baseUrl = '/api/v1/pipeline'
@@ -36,8 +37,10 @@ class PipelineApiService extends BaseApiService<Pipeline> {
   // 重写create方法，因为需要环境key参数
   async create(data: Pipeline): Promise<{ [key: string]: Pipeline | null }> {
     const snakeCaseData = toSnakeCase(data) as any
+    assertEnvironment(snakeCaseData.environment_key, snakeCaseData.environment_id)
     const payload = {
       environment_key: snakeCaseData.environment_key,
+      expected_environment_id: snakeCaseData.environment_id,
       pipeline: snakeCaseData
     }
     const resp = await apiClient.post<{ [key: string]: any }>(`${this.baseUrl}/create`, payload)
@@ -50,8 +53,10 @@ class PipelineApiService extends BaseApiService<Pipeline> {
   // 重写update方法，因为需要环境key参数
   async update(data: Pipeline): Promise<{ [key: string]: Pipeline | null }> {
     const snakeCaseData = toSnakeCase(data) as any
+    assertScope(snakeCaseData.environment_key, snakeCaseData.pipeline_key, snakeCaseData.scope_id)
     const payload = {
       environment_key: snakeCaseData.environment_key,
+      expected_scope_id: snakeCaseData.scope_id,
       pipeline: snakeCaseData
     }
     const resp = await apiClient.post<{ [key: string]: any }>(`${this.baseUrl}/update`, payload)

@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -32,8 +34,9 @@ func archiveEntryName(raw string) (string, error) {
 }
 
 type configArchive struct {
-	metadata map[string]any
-	files    map[string][]byte
+	metadata   map[string]any
+	files      map[string][]byte
+	transferV2 bool
 }
 
 func readConfigArchive(data []byte, format string) (*configArchive, error) {
@@ -116,10 +119,91 @@ func readConfigArchive(data []byte, format string) (*configArchive, error) {
 	}
 	delete(entries, "configs.json")
 	archive := &configArchive{metadata: metadata, files: entries}
+	if err := validateArchiveFormat(archive); err != nil {
+		return nil, err
+	}
+	if err := validateV2Resources(archive); err != nil {
+		return nil, err
+	}
 	if _, err := buildResourceRestorePlan(archive, nil, nil, "", ""); err != nil {
 		return nil, err
 	}
 	return archive, nil
+}
+
+func validateArchiveFormat(archive *configArchive) error {
+	raw, ok := archive.metadata["archive_format"]
+	if !ok || raw == nil || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		return nil
+	}
+	format, _ := raw.(string)
+	switch format {
+	case transferArchiveFormatV2:
+		archive.transferV2 = true
+		if source, ok := archive.metadata["export_source"].(map[string]any); ok {
+			kind, _ := source["kind"].(string)
+			switch kind {
+			case TransferSourceEditor, TransferSourceActive, TransferSourceVersion:
+			default:
+				return errors.New("unknown export_source.kind in transfer archive")
+			}
+		}
+		return nil
+	case "rainbow-business-backup-v1":
+		return errors.New("business backup package cannot be imported as a transfer archive")
+	case "rainbow-release-static-v1":
+		return errors.New("runtime static package cannot be imported as a transfer archive")
+	default:
+		return fmt.Errorf("unsupported transfer archive format %q", format)
+	}
+}
+
+type v2ResourceEntry struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	Size     int64  `json:"size"`
+	Sha256   string `json:"sha256"`
+}
+
+func validateV2Resources(archive *configArchive) error {
+	if !archive.transferV2 {
+		return nil
+	}
+	raw, ok := archive.metadata["resources"]
+	if !ok {
+		raw, ok = archive.metadata["assets"]
+		if !ok {
+			return nil
+		}
+	}
+	encoded, err := jsonContent(raw)
+	if err != nil {
+		return err
+	}
+	var entries []v2ResourceEntry
+	if err := DecodeConfigJSON([]byte(encoded), &entries); err != nil {
+		return fmt.Errorf("invalid v2 resource summary: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.FileID == "" {
+			return errors.New("v2 resource summary file_id required")
+		}
+		entryPath := path.Join("files", entry.FileID, entry.FileName)
+		data, ok := archive.files[entryPath]
+		if !ok {
+			return fmt.Errorf("v2 resource file missing: %s", entry.FileID)
+		}
+		if entry.Size > 0 && int64(len(data)) != entry.Size {
+			return fmt.Errorf("v2 resource size mismatch: %s", entry.FileID)
+		}
+		if entry.Sha256 != "" {
+			digest := sha256.Sum256(data)
+			if hex.EncodeToString(digest[:]) != strings.ToLower(entry.Sha256) {
+				return fmt.Errorf("v2 resource digest mismatch: %s", entry.FileID)
+			}
+		}
+	}
+	return nil
 }
 
 func resourceDiskPath(fileID, fileName string) (string, string, error) {

@@ -88,17 +88,19 @@ test('完整真实发布链：编辑/上传/归档→冻结→创建/切换/切�
     await page.goto('releases' + query)
     await page.getByRole('button', { name: '创建版本', exact: true }).click()
     await expect(page.getByRole('dialog').locator('input[type=password]')).toHaveCount(0)
-    await page.locator('#release-version').fill(version)
+    await expect(page.locator('#release-version')).toHaveCount(0)
     await page.locator('#release-reason').fill('真实UI快照联调')
     await uiWrite(page, 'release/create', () => page.getByRole('dialog').getByRole('button', { name: '保存版本', exact: true }).click())
     await expect(page.getByRole('dialog')).toBeHidden()
+    await expect(page.getByRole('cell', { name: version, exact: true })).toBeVisible()
   }
   async function activate(version: string, back = false) {
     const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: version, exact: true }) })
     await row.getByRole('button', { name: back ? '切回此版本' : '切换生效版本', exact: true }).click()
     await expect(page.getByRole('dialog').locator('input[type=password]')).toHaveCount(0)
-    await page.locator('#activate-reason').fill('真实UI生效联调')
-    await uiWrite(page, 'release/activate', () => page.getByRole('dialog').getByRole('button', { name: back ? '切回此版本' : '切换生效版本', exact: true }).click())
+    await page.locator('#review-activation-note').fill('真实UI生效联调')
+    await uiWrite(page, 'release/activate', () => page.getByRole('dialog').getByRole('button', { name: `确认生效 ${version}`, exact: true }).click())
+    await page.getByRole('dialog').getByRole('button', { name: '完成', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeHidden()
   }
   await freeze(true)

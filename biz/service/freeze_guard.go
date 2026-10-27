@@ -24,6 +24,11 @@ var (
 //  3. 协调存续期内执行 fn,数据库写入必须使用传入的 txLogic/tx,整体受 60s 总期限约束;
 //  4. fn 返回错误或超时则整体回滚(审计写失败则状态不变)。
 func (s *Service) withWriteGate(ctx context.Context, fn func(ctx context.Context, txLogic *Logic, tx *gorm.DB) error) error {
+	releaseWrite, err := s.beginBusinessWrite()
+	if err != nil {
+		return err
+	}
+	defer releaseWrite()
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, writeGateTotalTimeout)
@@ -34,7 +39,7 @@ func (s *Service) withWriteGate(ctx context.Context, fn func(ctx context.Context
 	acquireCtx, cancelAcquire := context.WithTimeout(ctx, writeGateAcquireTimeout)
 	defer cancelAcquire()
 	entered := false
-	err := s.logic.db.WithContext(acquireCtx).Connection(func(connDB *gorm.DB) error {
+	err = s.logic.db.WithContext(acquireCtx).Connection(func(connDB *gorm.DB) error {
 		entered = true
 		// 阶段二:已独占连接,事务生命周期改用总期限上下文
 		tx := connDB.Session(&gorm.Session{Context: ctx}).Begin()

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/yi-nology/rainbow_bridge/biz/backup"
 	"github.com/yi-nology/rainbow_bridge/pkg/static"
 )
 
@@ -50,23 +51,46 @@ func main() {
 		log.Printf("Using BASE_PATH from build time: %s", BasePath)
 	}
 
+	// The instance lock and any pending restore switch must complete before the
+	// business database is opened, migrated or HTTP starts listening.
+	backupInstance, err := backup.Boot(cfg, backup.Producer{
+		AppVersion: Version,
+		GitCommit:  GitCommit,
+	})
+	if err != nil {
+		log.Fatalf("backup startup: %v", err)
+	}
+
 	application, err := Initialize(*configPath, BuildConfig{
 		Version:   Version,
 		GitCommit: GitCommit,
 		BuildTime: BuildTime,
 		BasePath:  effectiveBasePath,
-	})
+	}, backupInstance)
 	if err != nil {
+		if backupInstance != nil {
+			if abortErr := backupInstance.AbortInitialization(); abortErr != nil {
+				log.Printf("restore rollback after initialization failure: %v", abortErr)
+			}
+			backupInstance.Close()
+		}
 		log.Fatalf("initialize app: %v", err)
 	}
+	if backupInstance != nil {
+		backupInstance.CompleteStartup()
+		defer backupInstance.Close()
+	}
 
-	// Serve embedded frontend static files if not disabled
+	// Serve embedded frontend static files if not disabled. The API fallback is
+	// registered independently so --no-frontend has the same JSON 404 contract.
+	var spaFallback func(context.Context, *app.RequestContext)
 	if !*noFrontend {
-		setupStaticFileServer(application.H, application.BasePath)
+		spaFallback = setupStaticFileServer(application.H, application.BasePath)
 		log.Printf("Full application listening at %s (with frontend)", application.Config.Server.Address)
 	} else {
 		log.Printf("API server listening at %s (no frontend)", application.Config.Server.Address)
 	}
+	setupHTTPFallback(application.H, application.BasePath, spaFallback)
 
 	if application.BasePath != "" {
 		log.Printf("Server base path: %s", application.BasePath)
@@ -75,11 +99,11 @@ func main() {
 	application.H.Spin()
 }
 
-func setupStaticFileServer(h *server.Hertz, basePath string) {
+func setupStaticFileServer(h *server.Hertz, basePath string) func(context.Context, *app.RequestContext) {
 	webFS, err := static.WebFS()
 	if err != nil {
 		log.Printf("Warning: failed to load web files: %v", err)
-		return
+		return nil
 	}
 
 	useEmbed := static.UseEmbedFS()
@@ -90,17 +114,16 @@ func setupStaticFileServer(h *server.Hertz, basePath string) {
 	}
 
 	staticHandler := func(c context.Context, ctx *app.RequestContext) {
-		path := string(ctx.URI().Path())
+		requestPath := string(ctx.URI().Path())
+		if isAPIPath(requestPath, basePath) {
+			writeAPI404(ctx)
+			return
+		}
+		path := requestPath
 
 		// 去除 basePath 前缀（如果存在）
 		if basePath != "" {
 			path = strings.TrimPrefix(path, basePath)
-		}
-
-		// 如果路径以 /api/ 开头，跳过静态文件处理，让请求继续被 API 路由处理
-		if strings.HasPrefix(path, "/api/") {
-			writeUnknownAPI(ctx)
-			return
 		}
 
 		// 处理路径
@@ -132,32 +155,14 @@ func setupStaticFileServer(h *server.Hertz, basePath string) {
 	h.GET("/*filepath", staticHandler)
 	h.HEAD("/*filepath", staticHandler)
 
-	// 处理404请求
-	noRoute := func(c context.Context, ctx *app.RequestContext) {
-		path := string(ctx.URI().Path())
-
-		// 去除 basePath 前缀（如果存在）
-		if basePath != "" {
-			path = strings.TrimPrefix(path, basePath)
-		}
-
-		// 如果路径以 /api/ 开头，返回404
-		if strings.HasPrefix(path, "/api/") {
-			writeUnknownAPI(ctx)
-			return
-		}
-
-		// 否则返回index.html（用于SPA路由）
+	return func(c context.Context, ctx *app.RequestContext) {
 		data, err := fs.ReadFile(webFS, "index.html")
 		if err != nil {
 			ctx.Status(404)
 			return
 		}
-
 		ctx.Data(200, "text/html; charset=utf-8", data)
 	}
-
-	h.NoRoute(noRoute)
 }
 
 func getContentType(path string) string {
@@ -185,12 +190,4 @@ func getContentType(path string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-func writeUnknownAPI(ctx *app.RequestContext) {
-	if string(ctx.Method()) == "HEAD" {
-		ctx.Status(404)
-		return
-	}
-	ctx.JSON(404, map[string]any{"code": 404, "msg": "not found", "error": "not found"})
 }

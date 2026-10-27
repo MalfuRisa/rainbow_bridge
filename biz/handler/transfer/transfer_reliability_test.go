@@ -13,6 +13,8 @@ import (
 	confighandler "github.com/yi-nology/rainbow_bridge/biz/handler/config"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	configpb "github.com/yi-nology/rainbow_bridge/biz/model/config"
+	envpb "github.com/yi-nology/rainbow_bridge/biz/model/environment"
+	plpb "github.com/yi-nology/rainbow_bridge/biz/model/pipeline"
 	transferpb "github.com/yi-nology/rainbow_bridge/biz/model/transfer"
 	"github.com/yi-nology/rainbow_bridge/biz/service"
 	"gorm.io/gorm"
@@ -40,6 +42,21 @@ func TestHTTPConfigCreateAndImportSummary(t *testing.T) {
 	if err := s.EnsureFreezeBootstrap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.AddEnvironment(context.Background(), &envpb.Environment{
+		EnvironmentKey: "dev", EnvironmentName: "dev", IsActive: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddPipeline(context.Background(), "dev", &plpb.Pipeline{
+		PipelineKey: "main", PipelineName: "main", IsActive: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err := s.GetPipeline(context.Background(), "dev", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeID := pipeline.GetScopeId()
 	previous := svc
 	SetService(s)
 	confighandler.SetService(s)
@@ -62,16 +79,16 @@ func TestHTTPConfigCreateAndImportSummary(t *testing.T) {
 		}
 		return response.Body.Bytes()
 	}
-	cfg := &common.ResourceConfig{EnvironmentKey: "dev", PipelineKey: "main", Alias: "number", Type: "number", Content: "42", Description: "initial"}
+	cfg := &common.ResourceConfig{ScopeId: scopeID, EnvironmentKey: "dev", PipelineKey: "main", Alias: "number", Type: "number", Content: "42", Description: "initial"}
 	var created configpb.ConfigResponse
-	post("/api/v1/config/create", &configpb.CreateConfigRequest{Config: cfg}, &created)
+	post("/api/v1/config/create", &configpb.CreateConfigRequest{Config: cfg, ExpectedScopeId: scopeID}, &created)
 	if created.Code != 200 || created.Data == nil || created.Data.Config.Content != "42" {
 		t.Fatalf("create=%+v", &created)
 	}
 	key := created.Data.Config.ResourceKey
 	cfg.Content = "1.2"
 	cfg.Alias = "invalid"
-	post("/api/v1/config/create", &configpb.CreateConfigRequest{Config: cfg}, &created)
+	post("/api/v1/config/create", &configpb.CreateConfigRequest{Config: cfg, ExpectedScopeId: scopeID}, &created)
 	if created.Code == 200 {
 		t.Fatal("invalid number HTTP accepted")
 	}

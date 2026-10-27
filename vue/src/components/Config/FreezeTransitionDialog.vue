@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useFreezeStore } from '@/stores/freeze'
 import { useAuthStore } from '@/stores/auth'
+import { scopeIdFor } from '@/lib/scope'
 import { ApiError } from '@/lib/api/error'
 import type { FreezeResourceIssue, FreezeStatusData } from '@/lib/api/freeze'
 
@@ -31,16 +32,17 @@ const emit = defineEmits<{
 const freezeStore = useFreezeStore()
 
 // 提交前再次确认的目标范围快照:打开时固定,避免用户切换选择后锁错渠道
-const scopeSnapshot = ref({ environmentKey: '', pipelineKey: '', environmentName: '', pipelineName: '' })
+const scopeSnapshot = ref({ scopeId: '', environmentKey: '', pipelineKey: '', environmentName: '', pipelineName: '' })
 const reason = ref('')
 const auth = useAuthStore()
 const submitting = ref(false)
 const errorMessage = ref('')
+const invalidScope = ref(false)
 const latestState = ref<{ state: string; revision: string } | null>(null)
 const resourceIssues = ref<FreezeResourceIssue[]>([])
 const externalReferences = ref<string[]>([])
 
-const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey, props.mode], () => { submitting.value = false; errorMessage.value = ''; reason.value = '' })
+const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey, props.mode], () => { submitting.value = false; errorMessage.value = ''; reason.value = ''; invalidScope.value = false })
 
 const isLock = computed(() => props.mode === 'lock')
 const title = computed(() => (isLock.value ? '锁定配置范围' : '解除配置冻结'))
@@ -60,6 +62,7 @@ watch(
   (open) => {
     if (open) {
       scopeSnapshot.value = {
+        scopeId: scopeIdFor(props.environmentKey, props.pipelineKey),
         environmentKey: props.environmentKey,
         pipelineKey: props.pipelineKey,
         environmentName: props.environmentName || '',
@@ -98,7 +101,7 @@ const describeIssueReason = (value: string) => {
 }
 
 const handleSubmit = async () => {
-  if (submitting.value || !auth.authenticated) return
+  if (submitting.value || invalidScope.value || !auth.authenticated) return
   errorMessage.value = ''
   const trimmedReason = reason.value.trim()
   if (noteTooLong(trimmedReason)) {
@@ -108,6 +111,7 @@ const handleSubmit = async () => {
   const payload = {
     environment_key: scopeSnapshot.value.environmentKey,
     pipeline_key: scopeSnapshot.value.pipelineKey,
+    expected_scope_id: scopeSnapshot.value.scopeId,
     reason: trimmedReason,
     expected_revision: expectedRevision.value,
   }
@@ -128,6 +132,11 @@ const handleSubmit = async () => {
     if (!current()) return
     if (error instanceof ApiError) {
       switch (error.errorType) {
+        case 'SCOPE_INVALID_REQUEST':
+        case 'SCOPE_IDENTITY_CONFLICT':
+        case 'SCOPE_DELETED':
+          invalidScope.value = true; errorMessage.value = error.message
+          break
         case 'FREEZE_REVISION_CONFLICT':
         case 'FREEZE_STATE_UNCHANGED': {
           const payloadData = (error.payload || {}) as { latest_state?: string; latest_revision?: string }
@@ -217,7 +226,7 @@ const handleSubmit = async () => {
 
       <DialogFooter class="pt-2 border-t border-border">
         <Button variant="outline" class="h-10" @click="close">取消</Button>
-        <Button class="h-10" :disabled="submitting || !auth.authenticated" @click="handleSubmit">
+        <Button class="h-10" :disabled="submitting || invalidScope || !auth.authenticated" @click="handleSubmit">
           {{ submitting ? '提交中...' : isLock ? '确认锁定' : '确认解除' }}
         </Button>
       </DialogFooter>

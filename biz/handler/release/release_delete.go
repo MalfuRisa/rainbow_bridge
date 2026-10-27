@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -21,8 +22,13 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, releaseErrorJSON{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
 	result, err := svc.DeleteRelease(handler.EnrichContext(ctx, c), service.ReleaseDeleteInput{
-		EnvironmentKey: req.GetEnvironmentKey(), PipelineKey: req.GetPipelineKey(), Version: req.GetVersion(),
+		ExpectedScopeID: req.GetExpectedScopeId(),
+		EnvironmentKey:  req.GetEnvironmentKey(), PipelineKey: req.GetPipelineKey(), Version: req.GetVersion(),
 		ExpectedSnapshotID: req.GetExpectedSnapshotId(), RequestID: req.GetRequestId(), Reason: req.GetReason(),
 	})
 	if err != nil {

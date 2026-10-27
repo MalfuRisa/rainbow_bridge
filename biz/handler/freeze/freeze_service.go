@@ -22,6 +22,10 @@ func SetService(s *service.Service) {
 // Status .
 // @router /api/v1/freeze/status [GET]
 func Status(ctx context.Context, c *app.RequestContext) {
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id")); err != nil {
+		writeStatusError(c, err)
+		return
+	}
 	data, err := svc.FreezeStatus(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"))
 	if err != nil {
 		writeStatusError(c, err)
@@ -47,7 +51,11 @@ func Lock(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	data, err := svc.LockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision())
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &freeze.FreezeTransitionResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	data, err := svc.LockFreezeWithIdentity(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision(), req.GetExpectedScopeId())
 	if err != nil {
 		writeTransitionError(c, err)
 		return
@@ -72,7 +80,11 @@ func Unlock(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	data, err := svc.UnlockFreeze(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision())
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &freeze.FreezeTransitionResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	data, err := svc.UnlockFreezeWithIdentity(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetReason(), req.GetExpectedRevision(), req.GetExpectedScopeId())
 	if err != nil {
 		writeTransitionError(c, err)
 		return
@@ -101,6 +113,10 @@ func History(ctx context.Context, c *app.RequestContext) {
 		}
 		limit = parsed
 	}
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), c.Query("scope_id")); err != nil {
+		writeHistoryError(c, err)
+		return
+	}
 	data, err := svc.FreezeHistory(handler.EnrichContext(ctx, c), c.Query("environment_key"), c.Query("pipeline_key"), limit, c.Query("before_event_id"))
 	if err != nil {
 		writeHistoryError(c, err)
@@ -109,6 +125,7 @@ func History(ctx context.Context, c *app.RequestContext) {
 	items := make([]*freeze.FreezeEventItem, 0, len(data.Items))
 	for _, item := range data.Items {
 		items = append(items, &freeze.FreezeEventItem{
+			ScopeId:   item.ScopeID,
 			EventId:   strconv.FormatUint(uint64(item.EventID), 10),
 			EventType: item.EventType,
 			FromState: item.FromState,
@@ -137,6 +154,10 @@ func History(ctx context.Context, c *app.RequestContext) {
 // --------------------- 错误映射 ---------------------
 
 func writeStatusError(c *app.RequestContext, err error) {
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		c.JSON(scopeErr.HTTPStatus, &freeze.FreezeStatusResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+		return
+	}
 	freezeErr, ok := service.AsFreezeError(err)
 	if !ok {
 		c.JSON(consts.StatusInternalServerError, &freeze.FreezeStatusResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error(), ErrorType: service.ErrTypeFreezeInternal})
@@ -151,6 +172,10 @@ func writeStatusError(c *app.RequestContext, err error) {
 }
 
 func writeTransitionError(c *app.RequestContext, err error) {
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		c.JSON(scopeErr.HTTPStatus, &freeze.FreezeTransitionResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+		return
+	}
 	freezeErr, ok := service.AsFreezeError(err)
 	if !ok {
 		c.JSON(consts.StatusInternalServerError, &freeze.FreezeTransitionResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error(), ErrorType: service.ErrTypeFreezeInternal})
@@ -159,6 +184,7 @@ func writeTransitionError(c *app.RequestContext, err error) {
 	blocked := make([]*freeze.FreezeBlockedScope, 0, len(freezeErr.BlockedScopes))
 	for _, scope := range freezeErr.BlockedScopes {
 		blocked = append(blocked, &freeze.FreezeBlockedScope{
+			ScopeId:        scope.ScopeID,
 			EnvironmentKey: scope.EnvironmentKey,
 			PipelineKey:    scope.PipelineKey,
 			State:          scope.State,
@@ -192,6 +218,10 @@ func writeTransitionError(c *app.RequestContext, err error) {
 }
 
 func writeHistoryError(c *app.RequestContext, err error) {
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		c.JSON(scopeErr.HTTPStatus, &freeze.FreezeHistoryResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+		return
+	}
 	freezeErr, ok := service.AsFreezeError(err)
 	if !ok {
 		c.JSON(consts.StatusInternalServerError, &freeze.FreezeHistoryResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error(), ErrorType: service.ErrTypeFreezeInternal})
@@ -212,6 +242,7 @@ func statusToPB(data *service.FreezeStatusData) *freeze.FreezeStatusData {
 		return nil
 	}
 	return &freeze.FreezeStatusData{
+		ScopeId:         data.ScopeID,
 		EnvironmentKey:  data.EnvironmentKey,
 		PipelineKey:     data.PipelineKey,
 		State:           data.State,

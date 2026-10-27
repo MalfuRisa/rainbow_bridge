@@ -18,9 +18,10 @@ const (
 type ConfigReleaseVersion struct {
 	ID                   uint       `gorm:"primaryKey" json:"id"`
 	SnapshotID           string     `gorm:"size:64;uniqueIndex:uk_release_snapshot;not null" json:"snapshot_id"`
-	EnvironmentKey       string     `gorm:"uniqueIndex:uk_release_scope_version,priority:1;size:191;not null" json:"environment_key"`
-	PipelineKey          string     `gorm:"uniqueIndex:uk_release_scope_version,priority:2;size:191;not null" json:"pipeline_key"`
-	Version              string     `gorm:"uniqueIndex:uk_release_scope_version,priority:3;size:64;not null" json:"version"`
+	ScopeID              string     `gorm:"size:36;not null;default:'';index:idx_release_version_scope" json:"scope_id"`
+	EnvironmentKey       string     `gorm:"size:191;not null" json:"environment_key"`
+	PipelineKey          string     `gorm:"size:191;not null" json:"pipeline_key"`
+	Version              string     `gorm:"size:64;not null" json:"version"`
 	CreationRequestID    string     `gorm:"size:64;uniqueIndex:uk_release_request;not null" json:"creation_request_id"`
 	RequestFingerprint   string     `gorm:"size:64;not null" json:"request_fingerprint"`
 	SourceFreezeRevision int64      `gorm:"not null" json:"source_freeze_revision"`
@@ -60,16 +61,18 @@ func (ConfigReleaseAsset) TableName() string { return "config_release_asset" }
 
 // ConfigReleaseHead 是范围唯一的生效指针;revision 与指针同事务更新。
 type ConfigReleaseHead struct {
-	ID               uint       `gorm:"primaryKey" json:"id"`
-	EnvironmentKey   string     `gorm:"uniqueIndex:uk_release_head_scope,priority:1;size:191;not null" json:"environment_key"`
-	PipelineKey      string     `gorm:"uniqueIndex:uk_release_head_scope,priority:2;size:191;not null" json:"pipeline_key"`
-	ActiveSnapshotID string     `gorm:"size:64;not null;default:''" json:"active_snapshot_id"`
-	Revision         int64      `gorm:"not null;default:0" json:"revision"`
-	ChangedAt        *time.Time `json:"changed_at"`
-	ChangedBy        string     `gorm:"size:64;not null;default:''" json:"changed_by"`
-	ChangedReason    string     `gorm:"size:500;not null;default:''" json:"changed_reason"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                uint       `gorm:"primaryKey" json:"id"`
+	ScopeID           string     `gorm:"size:36;not null;default:'';index:idx_release_head_scope_id" json:"scope_id"`
+	EnvironmentKey    string     `gorm:"size:191;not null" json:"environment_key"`
+	PipelineKey       string     `gorm:"size:191;not null" json:"pipeline_key"`
+	ActiveSnapshotID  string     `gorm:"size:64;not null;default:''" json:"active_snapshot_id"`
+	Revision          int64      `gorm:"not null;default:0" json:"revision"`
+	LastVersionNumber int64      `gorm:"not null;default:0" json:"last_version_number"`
+	ChangedAt         *time.Time `json:"changed_at"`
+	ChangedBy         string     `gorm:"size:64;not null;default:''" json:"changed_by"`
+	ChangedReason     string     `gorm:"size:500;not null;default:''" json:"changed_reason"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 func (ConfigReleaseHead) TableName() string { return "config_release_head" }
@@ -80,6 +83,7 @@ type ConfigReleaseEvent struct {
 	EventType          string    `gorm:"uniqueIndex:uk_release_event_request,priority:1;size:16;not null" json:"event_type"`
 	RequestID          string    `gorm:"uniqueIndex:uk_release_event_request,priority:2;size:64;not null" json:"request_id"`
 	RequestFingerprint string    `gorm:"size:64;not null" json:"request_fingerprint"`
+	ScopeID            string    `gorm:"size:36;not null;default:'';index:idx_release_event_scope_id" json:"scope_id"`
 	EnvironmentKey     string    `gorm:"index:idx_release_event_scope,priority:1;size:191;not null" json:"environment_key"`
 	PipelineKey        string    `gorm:"index:idx_release_event_scope,priority:2;size:191;not null" json:"pipeline_key"`
 	SnapshotID         string    `gorm:"size:64;not null" json:"snapshot_id"`

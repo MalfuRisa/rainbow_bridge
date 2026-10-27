@@ -2,8 +2,10 @@
  * 冻结控制 API。统一通过会话与 CSRF 完成管理认证。
  */
 import { apiClient } from './client'
+import { readScope, assertScope } from '@/lib/scope'
 
 export interface FreezeStatusData {
+  scope_id: string
   environment_key: string
   pipeline_key: string
   state: 'unlocked' | 'locked'
@@ -46,6 +48,7 @@ export interface FreezeHistoryData {
 }
 
 export interface FreezeTransitionPayload {
+  expected_scope_id: string
   environment_key: string
   pipeline_key: string
   reason: string
@@ -56,17 +59,18 @@ export interface FreezeTransitionPayload {
 export const freezeApi = {
   /** 读取范围状态(管理会话)。 */
   async status(environmentKey: string, pipelineKey: string): Promise<FreezeStatusData> {
-    const response = await apiClient.request<FreezeStatusData>(
+    const response = await readScope(environmentKey, pipelineKey, scopeId => apiClient.request<FreezeStatusData>(
       'GET',
       '/api/v1/freeze/status',
-      { environment_key: environmentKey, pipeline_key: pipelineKey },
+      { environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId },
       { showErrorToast: false }
-    )
+    ))
     return response.data as FreezeStatusData
   },
 
   /** 锁定;身份由统一请求层处理。 */
   async lock(payload: FreezeTransitionPayload): Promise<FreezeStatusData> {
+    assertScope(payload.environment_key, payload.pipeline_key, payload.expected_scope_id)
     const response = await apiClient.request<FreezeStatusData>(
       'POST',
       '/api/v1/freeze/lock',
@@ -78,6 +82,7 @@ export const freezeApi = {
 
   /** 解除冻结;身份由统一请求层处理。 */
   async unlock(payload: FreezeTransitionPayload): Promise<FreezeStatusData> {
+    assertScope(payload.environment_key, payload.pipeline_key, payload.expected_scope_id)
     const response = await apiClient.request<FreezeStatusData>(
       'POST',
       '/api/v1/freeze/unlock',
@@ -94,17 +99,18 @@ export const freezeApi = {
     limit = 20,
     beforeEventId = ''
   ): Promise<FreezeHistoryData> {
-    const response = await apiClient.request<FreezeHistoryData>(
+    const response = await readScope(environmentKey, pipelineKey, scopeId => apiClient.request<FreezeHistoryData>(
       'GET',
       '/api/v1/freeze/history',
       {
         environment_key: environmentKey,
         pipeline_key: pipelineKey,
+        scope_id: scopeId,
         limit,
         before_event_id: beforeEventId,
       },
       { showErrorToast: false }
-    )
+    ))
     return response.data as FreezeHistoryData
   },
 }

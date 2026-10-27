@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useScopeSelection } from '@/composables/useScopeSelection'
 import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
 import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
 import { Button } from '@/components/ui/button'
@@ -21,22 +21,10 @@ import Uploader from '@/components/resources/Uploader.vue'
 const environmentStore = useEnvironmentStore()
 const assetStore = useAssetStore()
 const freezeStore = useFreezeStore()
-const route = useRoute()
 
 const searchTerm = ref('')
-const selectedEnvKey = ref('')
-const selectedPipelineKey = ref('')
+const { selectedEnvKey, selectedPipelineKey, selectedScopeId, envPipelineModel, initialize } = useScopeSelection(() => environmentStore.environments)
 const copiedId = ref<string | null>(null)
-
-const envPipelineModel = ref({
-  envKey: selectedEnvKey.value,
-  pipelineKey: selectedPipelineKey.value
-})
-
-watch(envPipelineModel, (newValue) => {
-  selectedEnvKey.value = newValue.envKey
-  selectedPipelineKey.value = newValue.pipelineKey
-}, { deep: true })
 
 // 预览相关状态
 const previewImage = ref<string>('')
@@ -45,15 +33,14 @@ const isPreviewOpen = ref(false)
 
 onMounted(async () => {
   await environmentStore.fetchOverview()
-  const env = environmentStore.environments.find(item => item.key === route.query.env)
-  if (env?.pipelines.some(item => item.key === route.query.pipeline)) {
-    envPipelineModel.value = { envKey: env.key, pipelineKey: String(route.query.pipeline) }
-  }
+  if (!environmentStore.error) initialize()
 })
 onUnmounted(() => assetStore.resetAssets())
 
 // 监听环境和渠道变化
-watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
+watch([selectedEnvKey, selectedPipelineKey, selectedScopeId], ([envKey, pipelineKey]) => {
+  isPreviewOpen.value = false
+  previewImage.value = ''
   if (envKey && pipelineKey) {
     assetStore.fetchAssets(envKey, pipelineKey)
     freezeStore.loadStatus(envKey, pipelineKey)
@@ -118,6 +105,8 @@ const handleSearchChange = (value: string) => {
           <CardTitle class="text-lg">资源列表 <span v-if="selectedEnvKey && selectedPipelineKey && !assetStore.loading" class="ml-3 text-xs text-muted-foreground font-normal">{{ assetStore.assets.length }} 份资源</span></CardTitle>
           <!-- 上传功能组件 -->
           <Uploader
+            :key="selectedScopeId"
+            :scope-id="selectedScopeId"
             :selectedEnvKey="selectedEnvKey"
             :selectedPipelineKey="selectedPipelineKey"
             :searchTerm="searchTerm"

@@ -4,8 +4,11 @@
 import { apiClient, getBasePath } from './client'
 import { ApiError, ErrorType } from './error'
 import { fetchApi } from './http'
+import { readScope, assertScope } from '@/lib/scope'
+import { parseReleaseActiveState, type ReleaseActiveState } from './release-active-state'
 
 export interface ReleaseVersionMeta {
+  scope_id: string
   snapshot_id: string
   environment_key: string
   pipeline_key: string
@@ -26,6 +29,7 @@ export interface ReleaseVersionMeta {
 }
 
 export interface ReleaseActiveInfo {
+  scope_id: string
   snapshot_id: string
   version: string
   revision: string
@@ -102,15 +106,18 @@ export interface ReleaseResourceIssue {
 }
 
 export interface ReleaseCreatePayload {
+  expected_scope_id: string
   environment_key: string
   pipeline_key: string
-  version: string
+  /** New creates omit this; retained only for replaying an old manual intent. */
+  version?: string
   expected_freeze_revision: string
   request_id: string
   reason: string
 }
 
 export interface ReleaseActivatePayload {
+  expected_scope_id: string
   environment_key: string
   pipeline_key: string
   version: string
@@ -120,6 +127,7 @@ export interface ReleaseActivatePayload {
 }
 
 export interface ReleaseDeletePayload {
+  expected_scope_id: string
   environment_key: string
   pipeline_key: string
   version: string
@@ -140,7 +148,15 @@ export interface ReleaseDeleteResult {
 
 
 export const releaseApi = {
+  async activeState(environmentKey: string, pipelineKey: string): Promise<ReleaseActiveState> {
+    return readScope(environmentKey, pipelineKey, async scopeId => {
+      const response = await apiClient.request<unknown>('GET', '/api/v1/release/active',
+        { environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId }, { showErrorToast: false })
+      return parseReleaseActiveState(response.data, scopeId)
+    })
+  },
   async delete(payload: ReleaseDeletePayload): Promise<ReleaseDeleteResult> {
+    assertScope(payload.environment_key, payload.pipeline_key, payload.expected_scope_id)
     const response = await apiClient.request<ReleaseDeleteResult>('POST', '/api/v1/release/delete',
       { ...payload }, { showErrorToast: false })
     const data = response.data
@@ -154,47 +170,42 @@ export const releaseApi = {
     return data
   },
   async list(environmentKey: string, pipelineKey: string, beforeId = ''): Promise<ReleaseListData> {
-    const response = await apiClient.request<ReleaseListData>(
+    const response = await readScope(environmentKey, pipelineKey, scopeId => apiClient.request<ReleaseListData>(
       'GET',
       '/api/v1/release/list',
-      { environment_key: environmentKey, pipeline_key: pipelineKey, limit: 20, before_id: beforeId },
+      { environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId, limit: 20, before_id: beforeId },
       { showErrorToast: false },
-    )
+    ))
     return response.data as ReleaseListData
   },
 
   async detail(environmentKey: string, pipelineKey: string, version: string): Promise<ReleaseDetailData> {
-    const response = await apiClient.request<ReleaseDetailData>(
+    const response = await readScope(environmentKey, pipelineKey, scopeId => apiClient.request<ReleaseDetailData>(
       'GET',
       '/api/v1/release/detail',
-      { environment_key: environmentKey, pipeline_key: pipelineKey, version },
+      { environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId, version },
       { showErrorToast: false },
-    )
+    ))
     return response.data as ReleaseDetailData
   },
 
   async active(environmentKey: string, pipelineKey: string): Promise<ReleaseActiveInfo | null> {
-    const response = await apiClient.request<{ active: ReleaseActiveInfo | null }>(
-      'GET',
-      '/api/v1/release/active',
-      { environment_key: environmentKey, pipeline_key: pipelineKey },
-      { showErrorToast: false },
-    )
-    return response.data?.active ?? null
+    return (await releaseApi.activeState(environmentKey, pipelineKey)).active
   },
 
   async history(environmentKey: string, pipelineKey: string, beforeEventId = ''): Promise<ReleaseHistoryData> {
-    const response = await apiClient.request<ReleaseHistoryData>(
+    const response = await readScope(environmentKey, pipelineKey, scopeId => apiClient.request<ReleaseHistoryData>(
       'GET',
       '/api/v1/release/history',
-      { environment_key: environmentKey, pipeline_key: pipelineKey, limit: 20, before_event_id: beforeEventId },
+      { environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId, limit: 20, before_event_id: beforeEventId },
       { showErrorToast: false },
-    )
+    ))
     return response.data as ReleaseHistoryData
   },
 
   /** 创建版本(不切换生效);身份由统一请求层处理。 */
   async create(payload: ReleaseCreatePayload): Promise<{ meta: ReleaseVersionMeta; replayed: boolean }> {
+    assertScope(payload.environment_key, payload.pipeline_key, payload.expected_scope_id)
     const response = await apiClient.request<{ meta: ReleaseVersionMeta; replayed: boolean }>(
       'POST',
       '/api/v1/release/create',
@@ -210,6 +221,7 @@ export const releaseApi = {
     active: ReleaseActiveInfo | null
     version: string
   }> {
+    assertScope(payload.environment_key, payload.pipeline_key, payload.expected_scope_id)
     const response = await apiClient.request<{
       operation: { request_id: string; replayed: boolean; applied_revision: string }
       active: ReleaseActiveInfo | null
@@ -343,11 +355,12 @@ function parseRuntimeReleaseRaw(
 export async function fetchActiveReleaseRaw(
   environmentKey: string,
   pipelineKey: string,
+  scopeId?: string,
 ): Promise<RuntimeReleaseRawData> {
-  const response = await apiClient.request<unknown>(
+  const response = await readScope(environmentKey, pipelineKey, id => apiClient.request<unknown>(
     'GET',
     '/api/v1/runtime/release',
-    { content_format: 'raw' },
+    { content_format: 'raw', scope_id: id },
     {
       headers: {
         'x-environment': environmentKey,
@@ -355,7 +368,7 @@ export async function fetchActiveReleaseRaw(
       },
       showErrorToast: false,
     },
-  )
+  ), scopeId)
   return parseRuntimeReleaseRaw(response, environmentKey, pipelineKey)
 }
 
@@ -395,8 +408,12 @@ export async function exportShownSnapshot(
   pipelineKey: string,
   version: string,
   snapshotId: string,
+  scopeId: string,
 ): Promise<StaticSnapshotPackage> {
-  const response = await fetchApi(snapshotExportURL(environmentKey, pipelineKey, version, snapshotId), {
+  assertScope(environmentKey, pipelineKey, scopeId)
+  const url = new URL(snapshotExportURL(environmentKey, pipelineKey, version, snapshotId))
+  url.searchParams.set('scope_id', scopeId)
+  const response = await fetchApi(url, {
     method: 'GET',
     headers: {
       'x-environment': environmentKey,
@@ -416,6 +433,7 @@ export async function exportShownSnapshot(
     throw incompatibleResponse('导出响应的版本标识与页面展示的不一致')
   }
   const blob = await response.blob()
+  assertScope(environmentKey, pipelineKey, scopeId)
   const fileName =
     fileNameFromDisposition(response.headers.get('content-disposition') ?? '') ||
     `release-${snapshotId}-${version}.zip`

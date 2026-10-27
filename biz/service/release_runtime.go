@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 )
@@ -13,26 +14,65 @@ import (
 // 读取快照内容之前调用,用于构造"读取途中发生切换"的确定性时序。默认 nil,生产不启用。
 var releaseReadPauseHookForTest func(snapshotID string)
 
+// releaseRuntimeScopeHookForTest 仅测试使用:范围身份捕获之后、head/版本读取之前调用。
+// 用于证明身份捕获后同 key 删除重建不会让旧 pin 改读新代。
+var releaseRuntimeScopeHookForTest func(scopeID string)
+
 // RuntimeRelease 读取版本快照:未指定 version 时跟随生效指针,指定时固定读该版本。
 // 不回退到编辑区、最新创建版本或其他版本;所有完整性校验失败返回 503。
 // 每个响应内部版本一致:active 只解析一次,后续校验与渲染都基于这一行快照。
 func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKey string, versionParam *string) (*ReleaseRuntimeConfig, error) {
+	return s.RuntimeReleaseWithScope(ctx, environmentKey, pipelineKey, versionParam, "")
+}
+
+// RuntimeReleaseLegacy preserves the old config endpoint: an empty or
+// whitespace-only scope_id means no pin, but a non-empty value must be a UUID
+// before the shared read-scope validation runs.
+func (s *Service) RuntimeReleaseLegacy(ctx context.Context, environmentKey, pipelineKey, requestedScopeID string) (*ReleaseRuntimeConfig, error) {
+	if strings.TrimSpace(environmentKey) == "" || strings.TrimSpace(pipelineKey) == "" {
+		return nil, releaseInvalidRequestError("x-environment and x-pipeline headers are required")
+	}
+	scopeID, err := normalizeLegacyScopeID(requestedScopeID)
+	if err != nil {
+		return nil, err
+	}
+	return s.RuntimeReleaseWithScope(ctx, environmentKey, pipelineKey, nil, scopeID)
+}
+
+func normalizeLegacyScopeID(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if _, err := uuid.Parse(value); err != nil {
+		return "", scopeInvalidRequest("scope_id must be a UUID")
+	}
+	return value, nil
+}
+
+// RuntimeReleaseWithScope optionally pins the caller to the scope_id it saw.
+// The captured pipeline identity is used for every following head/version read.
+func (s *Service) RuntimeReleaseWithScope(ctx context.Context, environmentKey, pipelineKey string,
+	versionParam *string, requestedScopeID string) (*ReleaseRuntimeConfig, error) {
 	environmentKey = strings.TrimSpace(environmentKey)
 	pipelineKey = strings.TrimSpace(pipelineKey)
 	if environmentKey == "" || pipelineKey == "" {
 		return nil, releaseInvalidRequestError("x-environment and x-pipeline headers are required")
 	}
-	if err := s.assertReleaseScopeExists(ctx, s.logic, environmentKey, pipelineKey); err != nil {
+	scope, err := resolveReadScope(ctx, s.logic, environmentKey, pipelineKey, requestedScopeID)
+	if err != nil {
 		return nil, err
+	}
+	if hook := releaseRuntimeScopeHookForTest; hook != nil {
+		hook(scope.ScopeID)
 	}
 	selection := model.ReleaseSelectionActive
 	var activeRevision *int64
 	var activatedAt string
 	var versionRow *model.ConfigReleaseVersion
-	var err error
 	if versionParam == nil {
 		// 一次请求只解析一次 active_snapshot_id
-		head, err := s.logic.releaseDAO.GetHead(ctx, s.logic.db, environmentKey, pipelineKey)
+		head, err := s.logic.releaseDAO.GetHeadByScopeID(ctx, s.logic.db, scope.ScopeID)
 		if err != nil {
 			return nil, releaseInternalError(err)
 		}
@@ -57,13 +97,16 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 			return nil, releaseInvalidRequestError("version must not be empty when provided")
 		}
 		selection = model.ReleaseSelectionFixed
-		versionRow, err = s.logic.releaseDAO.GetVersionByScopeAndName(ctx, s.logic.db, environmentKey, pipelineKey, versionName)
+		versionRow, err = s.logic.releaseDAO.GetVersionByScopeIDAndName(ctx, s.logic.db, scope.ScopeID, versionName)
 		if err != nil {
 			if db.IsReleaseNotFound(err) {
 				return nil, releaseVersionNotFoundError(environmentKey, pipelineKey, versionName)
 			}
 			return nil, releaseInternalError(err)
 		}
+	}
+	if versionRow.ScopeID != scope.ScopeID {
+		return nil, releaseIncompleteError("release version belongs to another scope generation")
 	}
 
 	if versionRow.DeletedAt != nil {
@@ -98,6 +141,7 @@ func (s *Service) RuntimeRelease(ctx context.Context, environmentKey, pipelineKe
 		})
 	}
 	return &ReleaseRuntimeConfig{
+		ScopeID:              scope.ScopeID,
 		ActivatedAt:          activatedAt,
 		SnapshotID:           versionRow.SnapshotID,
 		Version:              versionRow.Version,
@@ -166,6 +210,13 @@ func (s *Service) ReleaseAssetDownload(ctx context.Context, snapshotID, assetID 
 	}
 	if version.DeletedAt != nil {
 		return "", nil, releaseVersionDeletedError()
+	}
+	active, err := db.ScopeIsActive(ctx, s.logic.db, version.ScopeID)
+	if err != nil {
+		return "", nil, releaseInternalError(err)
+	}
+	if !active {
+		return "", nil, scopeDeletedError("release asset belongs to a deleted scope")
 	}
 	asset, err := s.logic.releaseDAO.GetAsset(ctx, s.logic.db, snapshotID, assetID)
 	if err != nil {

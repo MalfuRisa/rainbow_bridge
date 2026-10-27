@@ -18,6 +18,7 @@ const props = defineProps<{
   open: boolean
   environmentKey: string
   pipelineKey: string
+  scopeId: string
   targetVersion: string
 }>()
 
@@ -28,7 +29,7 @@ const emit = defineEmits<{
 
 const releaseStore = useReleaseStore()
 
-const scopeSnapshot = ref({ environmentKey: '', pipelineKey: '' })
+const scopeSnapshot = ref({ scopeId: '', environmentKey: '', pipelineKey: '' })
 const reason = ref('')
 const auth = useAuthStore()
 const submitting = ref(false)
@@ -46,7 +47,7 @@ const expectedRevision = computed(() => {
   return releaseStore.active?.revision ?? '0'
 })
 
-const startAttempt = useDialogAttempt(() => [props.open, props.environmentKey, props.pipelineKey, props.targetVersion], () => { submitting.value = false; errorMessage.value = ''; pendingPayload.value = null; retryAvailable.value = false; targetDeleted.value = false })
+const startAttempt = useDialogAttempt(() => [props.open, props.scopeId, props.environmentKey, props.pipelineKey, props.targetVersion], () => { submitting.value = false; errorMessage.value = ''; pendingPayload.value = null; retryAvailable.value = false; targetDeleted.value = false })
 
 /** 表单是否仍然等于首次提交的请求(目标/原因/范围未改)。 */
 const retryMatchesPending = computed(() => {
@@ -66,7 +67,7 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
-      scopeSnapshot.value = { environmentKey: props.environmentKey, pipelineKey: props.pipelineKey }
+      scopeSnapshot.value = { scopeId: props.scopeId, environmentKey: props.environmentKey, pipelineKey: props.pipelineKey }
       reason.value = ''
       submitting.value = false
       errorMessage.value = ''
@@ -96,6 +97,7 @@ const submit = async (reuseRequestId: boolean) => {
     payload = {
       environment_key: scopeSnapshot.value.environmentKey,
       pipeline_key: scopeSnapshot.value.pipelineKey,
+      expected_scope_id: scopeSnapshot.value.scopeId,
       version: props.targetVersion,
       expected_active_revision: expectedRevision.value,
       request_id: crypto.randomUUID(),
@@ -121,6 +123,12 @@ const submit = async (reuseRequestId: boolean) => {
     if (error instanceof ApiError) {
       const payload = (error.payload || {}) as { latest_active?: { version: string; revision: string } }
       switch (error.errorType) {
+        case 'SCOPE_INVALID_REQUEST':
+        case 'SCOPE_IDENTITY_CONFLICT':
+        case 'SCOPE_DELETED':
+          targetDeleted.value = true; pendingPayload.value = null; retryAvailable.value = false
+          errorMessage.value = error.message
+          break
         case 'RELEASE_ACTIVE_REVISION_CONFLICT': {
           const latest = payload.latest_active
           latestActive.value = latest ? { version: latest.version, revision: latest.revision } : null

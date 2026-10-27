@@ -22,6 +22,7 @@ type FreezeScopeRef struct {
 
 // FreezeStatusData 是状态查询与锁定/解锁操作的提交结果。
 type FreezeStatusData struct {
+	ScopeID         string
 	EnvironmentKey  string
 	PipelineKey     string
 	State           string
@@ -34,6 +35,7 @@ type FreezeStatusData struct {
 
 // FreezeEventData 是历史查询的单项。
 type FreezeEventData struct {
+	ScopeID   string
 	EventID   uint
 	EventType string
 	FromState string

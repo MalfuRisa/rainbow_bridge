@@ -33,9 +33,10 @@ func TestActiveRuntimeExportPinsPlanAcrossSwitchAndDelete(t *testing.T) {
 		result *ReleaseStaticExportResult
 		err    error
 	}
+	scopeID := scopeIDFor(t, f.svc, "qa_prod", "main")
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := f.svc.ExportActiveReleasePackage(adminTestContext(), "qa_prod", "main")
+		result, err := f.svc.ExportActiveReleasePackageWithScope(adminTestContext(), "qa_prod", "main", scopeID)
 		done <- outcome{result, err}
 	}()
 	select {

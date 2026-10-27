@@ -41,6 +41,7 @@ func newFreezeService(t *testing.T) *Service {
 		&model.Environment{}, &model.Pipeline{}, &model.Config{}, &model.Asset{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.ScopeLifecycleEvent{},
 		&model.AuthUser{}, &model.AuthSession{},
 	); err != nil {
 		t.Fatal(err)
@@ -75,6 +76,15 @@ func seedFreezeScope(t *testing.T, svc *Service, environmentKey, pipelineKey str
 	}); err != nil && !errors.Is(err, ErrPipelineKeyExists) {
 		t.Fatalf("add pipeline %s/%s: %v", environmentKey, pipelineKey, err)
 	}
+}
+
+func requireScopeErrorType(t *testing.T, err error, errorType string) *ScopeError {
+	t.Helper()
+	scopeErr, ok := AsScopeError(err)
+	if !ok || scopeErr.ErrorType != errorType {
+		t.Fatalf("expected scope error %s, got %v", errorType, err)
+	}
+	return scopeErr
 }
 
 func requireFreezeErrorType(t *testing.T, err error, errorType string) *FreezeError {
@@ -220,11 +230,11 @@ func TestFreezeAdminCredentialAndValidation(t *testing.T) {
 	_, err = svc.LockFreeze(ctx, "qa_prod", "main", "原因", "abc")
 	requireFreezeErrorType(t, err, ErrTypeFreezeInvalidRevision)
 
-	// 不存在的范围 → 404
+	// 不存在的范围 → 404 SCOPE_NOT_FOUND
 	_, err = svc.LockFreeze(ctx, "no_such_env", "main", "原因", "0")
-	requireFreezeErrorType(t, err, ErrTypeFreezeScopeNotFound)
+	requireScopeErrorType(t, err, ErrTypeScopeNotFound)
 	_, err = svc.FreezeStatus(ctx, "qa_prod", "no_such_pipeline")
-	requireFreezeErrorType(t, err, ErrTypeFreezeScopeNotFound)
+	requireScopeErrorType(t, err, ErrTypeScopeNotFound)
 
 	// 全程无状态变化与伪审计
 	current, err := svc.FreezeStatus(ctx, "qa_prod", "main")

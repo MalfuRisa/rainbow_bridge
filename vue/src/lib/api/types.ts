@@ -18,6 +18,7 @@ export interface ListData<T> {
 
 // 蛇形命名接口（用于API响应）
 export interface ApiEnvironment {
+  environment_id: string
   environment_key: string
   environment_name: string
   description: string
@@ -26,6 +27,8 @@ export interface ApiEnvironment {
 }
 
 export interface ApiPipeline {
+  environment_id: string
+  scope_id: string
   environment_key: string
   pipeline_key: string
   pipeline_name: string
@@ -35,6 +38,7 @@ export interface ApiPipeline {
 }
 
 export interface ApiResourceConfig {
+  scope_id: string
   edit_revision?: string
   resource_key: string
   alias: string
@@ -49,6 +53,7 @@ export interface ApiResourceConfig {
 }
 
 export interface ApiFileAsset {
+  scope_id: string
   file_id: string
   environment_key: string
   pipeline_key: string
@@ -60,18 +65,22 @@ export interface ApiFileAsset {
 }
 
 export interface ApiPipelineOverview {
+  scope_id: string
+  environment_id: string
   pipeline_key: string
   pipeline_name: string
 }
 
 export interface ApiEnvironmentOverview {
+  environment_id: string
   environment_key: string
   environment_name: string
-  pipelines: ApiPipelineOverview[]
+  pipelines: ApiPipelineOverview[] | null
 }
 
 // 驼峰命名接口（用于前端代码）
 export interface Environment {
+  environmentId: string
   environmentKey: string
   environmentName: string
   description: string
@@ -80,6 +89,8 @@ export interface Environment {
 }
 
 export interface Pipeline {
+  environmentId: string
+  scopeId: string
   environmentKey: string
   pipelineKey: string
   pipelineName: string
@@ -89,6 +100,7 @@ export interface Pipeline {
 }
 
 export interface ResourceConfig {
+  scopeId: string
   editRevision?: string
   resourceKey: string
   alias: string
@@ -103,6 +115,7 @@ export interface ResourceConfig {
 }
 
 export interface FileAsset {
+  scopeId: string
   fileId: string
   environmentKey: string
   pipelineKey: string
@@ -114,14 +127,17 @@ export interface FileAsset {
 }
 
 export interface PipelineOverview {
+  scopeId: string
+  environmentId: string
   pipelineKey: string
   pipelineName: string
 }
 
 export interface EnvironmentOverview {
+  environmentId: string
   environmentKey: string
   environmentName: string
-  pipelines: PipelineOverview[]
+  pipelines: PipelineOverview[] | null
 }
 
 export interface RuntimeConfigData {

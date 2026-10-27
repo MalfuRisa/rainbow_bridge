@@ -35,14 +35,14 @@ test('首页保留三栏介绍、真实版本和范围入口，桌面深浅主�
     ],
   }))
   await page.goto('./')
-  await expect(page.locator('.spectrum-snapshot-label')).toHaveText('发布快照')
-  await expect(page.locator('.spectrum-snapshot strong')).toHaveText('快照')
-  await expect(page.locator('.runtime-summary')).toHaveCount(0)
+  await expect(page.locator('.spectrum-snapshot-label')).toHaveText('当前生效')
+  await expect(page.locator('.spectrum-snapshot strong')).toHaveText('v3')
+  await expect(page.locator('.runtime-summary')).toContainText('配置 4 项')
   await expect.poll(() => page.locator('.spectrum-bridge-artwork').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0)
   for (const text of ['按范围，管理内容', '用快照，保留版本', '由你，决定何时生效']) {
     await expect(page.getByRole('heading', { name: text, exact: true })).toBeVisible()
   }
-  await capture(page, 'home-idle-1440-light')
+  await capture(page, 'home-default-1440-light')
   await selectScope(page)
   await expect(page.locator('.spectrum-snapshot-label')).toHaveText('当前生效')
   await expect(page.locator('.spectrum-snapshot strong')).toHaveText('v3')
@@ -163,7 +163,7 @@ test('桥脚沿拱向上点亮、倒影同步，900ms 内完成且入口无需�
   await expect(page.getByRole('heading', { name: '配置管理', exact: true })).toBeVisible()
 })
 
-test('API 能力在未登录未选范围时可读，完整路径可复制且无调用副作用', async ({ page, context, baseURL }) => {
+test('API 能力在未登录时可读，复制路径不会额外调用业务接口', async ({ page, context, baseURL }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   const mock = await mockApi(page)
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -223,8 +223,9 @@ test('API 能力在未登录未选范围时可读，完整路径可复制且无�
   await expect(panel).toBeHidden()
   await page.keyboard.press('Tab')
   await expect(page.locator('summary').filter({ hasText: '关于虹桥计划' })).toBeFocused()
-  const allowedReads = new Set(['auth/me', 'runtime/overview', 'version', 'version/latest'])
+  const allowedReads = new Set(['auth/me', 'runtime/overview', 'runtime/release', 'version', 'version/latest'])
   expect(mock.requests.every(request => request.method() === 'GET' && allowedReads.has(new URL(request.url()).pathname.split('/api/v1/')[1]))).toBe(true)
+  expect(mock.count('runtime/release')).toBe(1) // Automatic scope selection only; copying has no side effects.
 })
 
 test('API 能力复制被拒绝时提示手动复制，完整路径仍可选择', async ({ page }) => {

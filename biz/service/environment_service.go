@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	envpb "github.com/yi-nology/rainbow_bridge/biz/model/environment"
 	"gorm.io/gorm"
@@ -15,21 +16,21 @@ var (
 	ErrEnvironmentKeyExists   = errors.New("environment_key already exists")
 )
 
-// AddEnvironment creates a new environment with default pipeline.
+// AddEnvironment creates a new environment generation and its default pipeline.
+// A key whose old generation was deleted can be created again with fresh
+// internal identities.
 func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) error {
 	if env == nil || env.GetEnvironmentKey() == "" {
 		return ErrEnvironmentKeyRequired
 	}
-
 	entity := &model.Environment{
+		EnvironmentID:   uuid.NewString(),
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
 		Description:     env.GetDescription(),
 		SortOrder:       int(env.GetSortOrder()),
 		IsActive:        env.GetIsActive(),
 	}
-
-	// 在写协调事务内完成:存在性检查 → 创建环境 → 创建默认渠道 → 补建渠道冻结状态行
 	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
 		exists, err := txLogic.environmentDAO.ExistsByKey(gateCtx, txLogic.db, entity.EnvironmentKey)
 		if err != nil {
@@ -42,6 +43,8 @@ func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) er
 			return err
 		}
 		defaultPipeline := &model.Pipeline{
+			ScopeID:        uuid.NewString(),
+			EnvironmentID:  entity.EnvironmentID,
 			EnvironmentKey: entity.EnvironmentKey,
 			PipelineKey:    "default",
 			PipelineName:   "默认渠道",
@@ -56,12 +59,11 @@ func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) er
 	})
 }
 
-// UpdateEnvironment updates an existing environment.
-func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment) error {
+// UpdateEnvironment updates the live generation selected by expected id.
+func (s *Service) UpdateEnvironmentWithIdentity(ctx context.Context, env *envpb.Environment, expectedEnvironmentID string) error {
 	if env == nil || env.GetEnvironmentKey() == "" {
 		return ErrEnvironmentKeyRequired
 	}
-
 	entity := &model.Environment{
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
@@ -69,74 +71,53 @@ func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment)
 		SortOrder:       int(env.GetSortOrder()),
 		IsActive:        env.GetIsActive(),
 	}
-	// 环境内存在 locked 渠道时整体拒绝(名称/激活状态变化不作用于冻结范围)
 	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
-		if _, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, entity.EnvironmentKey); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrEnvironmentNotFound
-			}
+		current, err := resolveEnvironmentForWrite(gateCtx, txLogic, entity.EnvironmentKey, expectedEnvironmentID)
+		if err != nil {
 			return err
 		}
 		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, entity.EnvironmentKey); err != nil {
 			return err
 		}
+		entity.EnvironmentID = current.EnvironmentID
 		return txLogic.environmentDAO.Update(gateCtx, txLogic.db, entity)
 	})
 }
 
-// DeleteEnvironment deletes an environment by key.
-func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) error {
-	if environmentKey == "" {
+// UpdateEnvironment is the internal/test convenience wrapper; management
+// handlers must call UpdateEnvironmentWithIdentity so a stale page cannot
+// modify a recreated generation.
+func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment) error {
+	if env == nil {
 		return ErrEnvironmentKeyRequired
 	}
-
-	// 冻结状态与审计记录在父级删除后保留(不随删除清除)。
-	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
-		if _, err := txLogic.environmentDAO.GetByKey(gateCtx, txLogic.db, environmentKey); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrEnvironmentNotFound
-			}
-			return err
-		}
-		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, environmentKey); err != nil {
-			return err
-		}
-		// 环境内存在已提交版本时拒绝删除
-		versionCount, err := txLogic.releaseDAO.CountVersionsByEnvironment(gateCtx, txLogic.db, environmentKey)
-		if err != nil {
-			return err
-		}
-		if versionCount > 0 {
-			return releaseScopeHasVersionsError(environmentKey, "*")
-		}
-		return txLogic.environmentDAO.Delete(gateCtx, txLogic.db, environmentKey)
-	})
+	return s.UpdateEnvironmentWithIdentity(ctx, env, "")
 }
 
-// GetEnvironment returns an environment by key.
+// DeleteEnvironment is the internal/test convenience wrapper.
+func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) error {
+	_, err := s.DeleteEnvironmentWithIdentity(ctx, environmentKey, "")
+	return err
+}
+
+// GetEnvironment returns the live generation by key.
 func (s *Service) GetEnvironment(ctx context.Context, environmentKey string) (*envpb.Environment, error) {
 	if environmentKey == "" {
 		return nil, ErrEnvironmentKeyRequired
 	}
-
-	entity, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, environmentKey)
+	env, err := resolveEnvironmentByKey(ctx, s.logic, environmentKey)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrEnvironmentNotFound
-		}
 		return nil, err
 	}
-
-	return modelEnvironmentToPB(entity), nil
+	return modelEnvironmentToPB(env), nil
 }
 
-// ListEnvironments returns all environments with optional active filter.
+// ListEnvironments returns live environments.
 func (s *Service) ListEnvironments(ctx context.Context, isActive *bool) ([]*envpb.Environment, error) {
 	entities, err := s.logic.environmentDAO.List(ctx, s.logic.db, isActive, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-
 	return environmentSliceToPB(entities), nil
 }
 
@@ -145,6 +126,7 @@ func modelEnvironmentToPB(env *model.Environment) *envpb.Environment {
 		return nil
 	}
 	return &envpb.Environment{
+		EnvironmentId:   env.EnvironmentID,
 		EnvironmentKey:  env.EnvironmentKey,
 		EnvironmentName: env.EnvironmentName,
 		Description:     env.Description,

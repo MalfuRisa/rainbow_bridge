@@ -44,6 +44,7 @@ func (s *Service) migrateOneConfig(gateCtx context.Context, txLogic *Logic, srcC
 	newCfg.ID = 0
 	newCfg.EnvironmentKey = req.TargetEnvironmentKey
 	newCfg.PipelineKey = req.TargetPipelineKey
+	newCfg.ScopeID = ""
 	newCfg.ResourceKey = uuid.NewString()
 	if existing != nil {
 		// overwrite:保留目标主键、resource_key 与 alias,只更新内容与资源

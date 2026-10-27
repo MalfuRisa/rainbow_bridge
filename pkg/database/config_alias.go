@@ -13,26 +13,32 @@ import (
 const ConfigAliasIndex = "uk_config_active_alias"
 
 type AliasConflict struct {
-	EnvironmentKey string   `json:"environment_key"`
-	PipelineKey    string   `json:"pipeline_key"`
+	ScopeID        string   `json:"scope_id"`
+	EnvironmentKey string   `json:"environment_key,omitempty"`
+	PipelineKey    string   `json:"pipeline_key,omitempty"`
 	Alias          string   `json:"alias"`
 	ResourceKeys   []string `json:"resource_keys"`
 }
 
 // CheckConfigAliases is read-only; it never chooses or deletes a winner.
 func CheckConfigAliases(ctx context.Context, db *gorm.DB) ([]AliasConflict, error) {
-	var groups []AliasConflict
-	err := db.WithContext(ctx).Table("resource_config").Select("environment_key, pipeline_key, alias").Where("deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''").Group("environment_key, pipeline_key, alias").Having("COUNT(*) > 1").Scan(&groups).Error
+	var groups []struct {
+		ScopeID string
+		Alias   string
+	}
+	err := db.WithContext(ctx).Table("resource_config").Select("scope_id, alias").Where("deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''").Group("scope_id, alias").Having("COUNT(*) > 1").Scan(&groups).Error
 	if err != nil {
 		return nil, err
 	}
-	for i := range groups {
-		g := &groups[i]
-		if err := db.WithContext(ctx).Table("resource_config").Where("deleted_at IS NULL AND environment_key = ? AND pipeline_key = ? AND alias = ?", g.EnvironmentKey, g.PipelineKey, g.Alias).Order("resource_key").Pluck("resource_key", &g.ResourceKeys).Error; err != nil {
+	conflicts := make([]AliasConflict, 0, len(groups))
+	for _, group := range groups {
+		conflict := AliasConflict{ScopeID: group.ScopeID, Alias: group.Alias}
+		if err := db.WithContext(ctx).Table("resource_config").Where("deleted_at IS NULL AND scope_id = ? AND alias = ?", conflict.ScopeID, conflict.Alias).Order("resource_key").Pluck("resource_key", &conflict.ResourceKeys).Error; err != nil {
 			return nil, err
 		}
+		conflicts = append(conflicts, conflict)
 	}
-	return groups, nil
+	return conflicts, nil
 }
 
 func PrepareConfigAliasConstraint(ctx context.Context, db *gorm.DB) error {
@@ -46,7 +52,7 @@ func PrepareConfigAliasConstraint(ctx context.Context, db *gorm.DB) error {
 	}
 	switch db.Dialector.Name() {
 	case "sqlite":
-		const ddl = "CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(environment_key, pipeline_key, alias) WHERE deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''"
+		const ddl = "CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(scope_id, alias) WHERE deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''"
 		var existing string
 		if err := db.Raw("SELECT sql FROM sqlite_master WHERE type='index' AND name=?", ConfigAliasIndex).Scan(&existing).Error; err != nil {
 			return err
@@ -60,7 +66,7 @@ func PrepareConfigAliasConstraint(ctx context.Context, db *gorm.DB) error {
 		}
 		return db.WithContext(ctx).Exec(ddl).Error
 	case "postgres":
-		const ddl = "CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(environment_key, pipeline_key, alias) WHERE deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''"
+		const ddl = "CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(scope_id, alias) WHERE deleted_at IS NULL AND alias IS NOT NULL AND alias <> ''"
 		var definition string
 		if err := db.Raw("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='resource_config' AND indexname=?", ConfigAliasIndex).Scan(&definition).Error; err != nil {
 			return err
@@ -71,10 +77,9 @@ func PrepareConfigAliasConstraint(ctx context.Context, db *gorm.DB) error {
 				Valid     bool
 				Predicate string
 			}
-			err := db.Raw(`SELECT i.indisunique AND i.indisvalid AND i.indnatts=3
-    AND pg_get_indexdef(i.indexrelid,1,true)='environment_key'
-    AND pg_get_indexdef(i.indexrelid,2,true)='pipeline_key'
-    AND pg_get_indexdef(i.indexrelid,3,true)='alias' AS valid,
+			err := db.Raw(`SELECT i.indisunique AND i.indisvalid AND i.indnatts=2
+    AND pg_get_indexdef(i.indexrelid,1,true)='scope_id'
+    AND pg_get_indexdef(i.indexrelid,2,true)='alias' AS valid,
     pg_get_expr(i.indpred,i.indrelid) AS predicate
     FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
     JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -103,7 +108,7 @@ func prepareMySQLConfigAlias(ctx context.Context, db *gorm.DB) error {
 		ColumnName, ColumnType, CharacterSetName, CollationName string
 		CharacterMaximumLength                                  *int64
 	}
-	if err := db.Raw("SELECT column_name,column_type,character_set_name,collation_name,character_maximum_length FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='resource_config' AND column_name IN ('environment_key','pipeline_key','alias')").Scan(&columns).Error; err != nil {
+	if err := db.Raw("SELECT column_name,column_type,character_set_name,collation_name,character_maximum_length FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='resource_config' AND column_name IN ('scope_id','alias')").Scan(&columns).Error; err != nil {
 		return err
 	}
 	var aliasType, charset, collation string
@@ -119,7 +124,7 @@ func prepareMySQLConfigAlias(ctx context.Context, db *gorm.DB) error {
 			collation = c.CollationName
 		}
 	}
-	if len(columns) != 3 || bytes > 3072 {
+	if len(columns) != 2 || bytes > 3072 {
 		return fmt.Errorf("MySQL full alias identity exceeds supported 3072-byte index budget (%d); no fields truncated; review bounded schema migration", bytes)
 	}
 	var expr string
@@ -148,8 +153,8 @@ func prepareMySQLConfigAlias(ctx context.Context, db *gorm.DB) error {
 		return err
 	}
 	if len(indexes) > 0 {
-		expected := []string{"environment_key", "pipeline_key", "active_config_alias"}
-		if len(indexes) != 3 {
+		expected := []string{"scope_id", "active_config_alias"}
+		if len(indexes) != 2 {
 			return fmt.Errorf("unexpected MySQL index %s", ConfigAliasIndex)
 		}
 		for i, c := range indexes {
@@ -159,5 +164,5 @@ func prepareMySQLConfigAlias(ctx context.Context, db *gorm.DB) error {
 		}
 		return nil
 	}
-	return db.WithContext(ctx).Exec("CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(environment_key,pipeline_key,active_config_alias)").Error
+	return db.WithContext(ctx).Exec("CREATE UNIQUE INDEX uk_config_active_alias ON resource_config(scope_id,active_config_alias)").Error
 }

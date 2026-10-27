@@ -22,7 +22,7 @@ func TestConfigAliasUpgrade(t *testing.T) {
 			if err := db.AutoMigrate(&model.Config{}); err != nil {
 				t.Fatal(err)
 			}
-			row := model.Config{EnvironmentKey: "dev", PipelineKey: "main", Alias: "a", ResourceKey: "one"}
+			row := model.Config{ScopeID: "scope-dev", EnvironmentKey: "dev", PipelineKey: "main", Alias: "a", ResourceKey: "one"}
 			if err := db.Create(&row).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -68,15 +68,17 @@ func TestConfigAliasUpgrade(t *testing.T) {
 			}
 			row.ID = 0
 			row.Alias = "a"
+			row.ScopeID = "scope-prod"
 			row.EnvironmentKey = "prod"
 			row.ResourceKey = "prod"
 			if err := db.Create(&row).Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Where("environment_key='dev' AND alias='a'").Delete(&model.Config{}).Error; err != nil {
+			if err := db.Where("scope_id='scope-dev' AND alias='a'").Delete(&model.Config{}).Error; err != nil {
 				t.Fatal(err)
 			}
 			row.ID = 0
+			row.ScopeID = "scope-dev"
 			row.EnvironmentKey = "dev"
 			row.ResourceKey = "replacement"
 			if err := db.Create(&row).Error; err != nil {

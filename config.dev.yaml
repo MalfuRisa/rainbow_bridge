@@ -16,6 +16,11 @@ redis:
 storage:
   type: "local"
 
+# 整机业务备份(第一版仅 SQLite + 本地存储 + Redis 关闭):
+# backup:
+#   enabled: true
+#   control_dir: "D:/RainbowBridge-control/local-dev"
+
 # 内网环境:版本检查接口不请求 GitHub
 intranet:
   enabled: true

@@ -12,8 +12,9 @@ const (
 // 该表只保存业务状态;admin_configured 由运行配置计算,不落库。
 type ConfigFreezeState struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
-	EnvironmentKey string     `gorm:"uniqueIndex:uk_freeze_scope,priority:1;size:191;not null" json:"environment_key"`
-	PipelineKey    string     `gorm:"uniqueIndex:uk_freeze_scope,priority:2;size:191;not null" json:"pipeline_key"`
+	ScopeID        string     `gorm:"size:36;not null;default:'';index:idx_freeze_state_scope" json:"scope_id"`
+	EnvironmentKey string     `gorm:"size:191;not null" json:"environment_key"`
+	PipelineKey    string     `gorm:"size:191;not null" json:"pipeline_key"`
 	State          string     `gorm:"size:16;not null;default:unlocked" json:"state"`
 	Revision       int64      `gorm:"not null;default:0" json:"revision"`
 	LastChangedAt  *time.Time `json:"last_changed_at"`
@@ -28,6 +29,7 @@ func (ConfigFreezeState) TableName() string { return "config_freeze_state" }
 // ConfigFreezeEvent 为追加式审计记录;普通导入与父级删除都不清除它。
 type ConfigFreezeEvent struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
+	ScopeID        string    `gorm:"size:36;not null;default:'';index:idx_freeze_event_scope_id" json:"scope_id"`
 	EnvironmentKey string    `gorm:"index:idx_freeze_event_scope,priority:1;size:191;not null" json:"environment_key"`
 	PipelineKey    string    `gorm:"index:idx_freeze_event_scope,priority:2;size:191;not null" json:"pipeline_key"`
 	EventType      string    `gorm:"size:16;not null" json:"event_type"` // lock | unlock

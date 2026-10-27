@@ -41,3 +41,26 @@ func (l *Logic) invalidateConfigCaches(ctx context.Context, configs []model.Conf
 		}
 	}
 }
+
+// invalidateScopeCaches drops every cached view of a deleted generation.
+// Old key-based keys are removed too so a recreated same-key scope cannot be
+// served a cached predecessor response.
+func (l *Logic) invalidateScopeCaches(ctx context.Context, scopeID, environmentKey, pipelineKey string) {
+	if l.redisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	patterns := []string{
+		redis.GenerateScopedConfigListPrefix(scopeID) + ":*",
+		redis.GenerateScopedConfigKey(scopeID, "*"),
+		configCacheGlobEscaper.Replace(redis.GenerateConfigListKey(environmentKey, pipelineKey)) + ":*",
+		fmt.Sprintf("rainbow_bridge:config:%s:%s:*",
+			configCacheGlobEscaper.Replace(environmentKey), configCacheGlobEscaper.Replace(pipelineKey)),
+	}
+	for _, pattern := range patterns {
+		_ = redis.DeleteByPattern(ctx, l.redisClient, pattern)
+	}
+	_ = redis.Delete(ctx, l.redisClient, redis.GenerateScopedConfigMapKey(scopeID))
+	_ = redis.Delete(ctx, l.redisClient, redis.GenerateConfigMapKey(environmentKey, pipelineKey))
+}

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { mockApi, scopeQuery, CSRF, fail, login, ok, identity } from './mock'
+import { mockApi, scopeQuery, CSRF, fail, login, ok, identity, fixtureIdentity, meta } from './mock'
 
 test('D-F03 JSON、上传、导入预览/写入与ZIP导出共用CSRF，不手填multipart边界', async ({ page }) => {
   const mock = await mockApi(page, true)
@@ -10,6 +10,7 @@ test('D-F03 JSON、上传、导入预览/写入与ZIP导出共用CSRF，不手�
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   await page.goto('resources' + scopeQuery)
+  await expect(page.getByRole('button', { name: '上传资源', exact: true })).toBeEnabled()
   await page.locator('input[type=file]').setInputFiles({ name: 'fixture.txt', mimeType: 'text/plain', buffer: Buffer.from('test') })
   await expect.poll(() => mock.count('asset/upload')).toBe(1)
   await page.goto('import-export')
@@ -27,6 +28,7 @@ test('D-F03 JSON、上传、导入预览/写入与ZIP导出共用CSRF，不手�
     expect(mock.writes(endpoint).every(request => request.headers()['x-csrf-token'] === CSRF && !request.headers()['authorization'])).toBe(true)
   }
   expect(mock.writes('asset/upload')[0].headers()['content-type']).toMatch(/^multipart\/form-data; boundary=/)
+  expect(mock.writes('asset/upload')[0].postData()).toContain(fixtureIdentity('qa', 'web'))
   expect(mock.writes('transfer/import-preview')[0].headers()['content-type']).toMatch(/^multipart\/form-data; boundary=/)
   expect(mock.requests.every(request => !new URL(request.url()).pathname.includes('/rainbow-bridge/rainbow-bridge/'))).toBe(true)
 })
@@ -43,20 +45,31 @@ test('D-F04 冻结和发布不输密钥，结果不确定时原样重发同一pa
   mock.overrides.set('release/create', route => fail(route, 503, 'RELEASE_STORAGE_BUSY'))
   await page.getByRole('button', { name: '创建版本', exact: true }).click()
   await expect(page.getByRole('dialog').locator('input[type=password]')).toHaveCount(0)
-  await page.locator('#release-version').fill('v2')
+  await expect(page.locator('#release-version')).toHaveCount(0)
   await page.locator('#release-reason').fill('创建验收版本')
   await page.getByRole('button', { name: '保存版本', exact: true }).click()
   await page.getByRole('button', { name: '确认结果', exact: true }).click()
   await expect.poll(() => mock.count('release/create')).toBe(2)
   expect(mock.writes('release/create')[0].postDataJSON()).toEqual(mock.writes('release/create')[1].postDataJSON())
+  expect(mock.writes('release/create')[0].postDataJSON()).not.toHaveProperty('version')
+  mock.overrides.set('release/create', route => ok(route, { meta, replayed: true }))
+  await page.getByRole('button', { name: '确认结果', exact: true }).click()
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await page.getByRole('button', { name: '创建版本', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   mock.overrides.set('release/activate', route => route.abort('failed'))
+  mock.overrides.set('release/compare', route => {
+    const p = route.request().postDataJSON()
+    return ok(route, { comparison_mode: 'active', scope_id: p.expected_scope_id, target: { version: p.version, snapshot_id: p.expected_snapshot_id }, baseline: null,
+      active_revision: '0', target_is_active: false, has_changes: false, summary: { added: 0, modified: 0, removed: 0, unchanged: 1 },
+      items: [], total_changes: 0, offset: 0, limit: 20, has_more: false, next_offset: null })
+  })
   await page.getByRole('button', { name: '切换生效版本', exact: true }).click()
   await expect(page.getByRole('dialog').locator('input[type=password]')).toHaveCount(0)
-  await page.locator('#activate-reason').fill('切换验收版本')
-  await page.getByRole('dialog').getByRole('button', { name: '切换生效版本', exact: true }).click()
-  await page.getByRole('button', { name: '确认结果', exact: true }).click()
+  await page.locator('#review-activation-note').fill('切换验收版本')
+  await page.getByRole('dialog').getByRole('button', { name: '确认生效 v1', exact: true }).click()
+  await page.getByRole('button', { name: '确认原请求结果', exact: true }).click()
   await expect.poll(() => mock.count('release/activate')).toBe(2)
   expect(mock.writes('release/activate')[0].postDataJSON()).toEqual(mock.writes('release/activate')[1].postDataJSON())
   for (const endpoint of ['freeze/lock', 'release/create', 'release/activate']) {
@@ -115,6 +128,8 @@ test('导出401/非归档响应不会伪装下载成功', async ({ page }) => {
   await expect(page.getByText('导出响应不是有效的归档文件，请重试', { exact: true })).toBeVisible()
   expect(downloads).toBe(0)
   mock.overrides.set('transfer/export', route => fail(route, 401, 'AUTH_REQUIRED'))
+  await page.getByRole('button', { name: '刷新并核对来源', exact: true }).click()
+  await page.getByRole('checkbox', { name: '选择环境 演示环境', exact: true }).check()
   await page.getByRole('button', { name: '导出数据', exact: true }).click()
   await expect(page.getByRole('heading', { name: '登录工作台', exact: true })).toBeVisible()
   expect(downloads).toBe(0)

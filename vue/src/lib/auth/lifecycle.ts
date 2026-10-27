@@ -9,9 +9,11 @@ import { useEnvironmentStore } from '@/stores/environment'
 import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
 import { useTransferStore } from '@/stores/transfer'
+import { clearScopeSelection } from '@/composables/useScopeSelection'
 
 export function installAuthLifecycle(pinia: Pinia, router: Router) {
   onSessionCleared(reason => {
+    if (reason === 'logout') clearScopeSelection()
     useConfigStore(pinia).resetConfigs()
     useAssetStore(pinia).resetAssets()
     useEnvironmentStore(pinia).reset()

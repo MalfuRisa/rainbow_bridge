@@ -25,6 +25,7 @@ func Register(r *server.Hertz) {
 				_release := _v1.Group("/release", _releaseMw()...)
 				_release.POST("/activate", append(_activateMw(), release.Activate)...)
 				_release.GET("/active", append(_activeMw(), release.Active)...)
+				_release.POST("/compare", release.Compare)
 				_release.POST("/create", append(_createMw(), release.Create)...)
 				_release.POST("/delete", append(_deleteMw(), release.Delete)...)
 				_release.GET("/detail", append(_detailMw(), release.Detail)...)

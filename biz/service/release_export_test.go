@@ -394,7 +394,7 @@ func TestReleaseStaticExportValidationAndMismatch(t *testing.T) {
 			in.ExpectedSnapshotID = "not-a-uuid"
 			return in
 		}, ErrTypeReleaseInvalidRequest},
-		{"unknown_scope", func(in ReleaseStaticExportInput) ReleaseStaticExportInput { in.PipelineKey = "beta"; return in }, ErrTypeReleaseScopeNotFound},
+		{"unknown_scope", func(in ReleaseStaticExportInput) ReleaseStaticExportInput { in.PipelineKey = "beta"; return in }, ErrTypeScopeNotFound},
 		{"unknown_version", func(in ReleaseStaticExportInput) ReleaseStaticExportInput { in.Version = "v9.9"; return in }, ErrTypeReleaseVersionNotFound},
 		{"snapshot_mismatch", func(in ReleaseStaticExportInput) ReleaseStaticExportInput {
 			in.ExpectedSnapshotID = uuid.NewString()
@@ -408,7 +408,11 @@ func TestReleaseStaticExportValidationAndMismatch(t *testing.T) {
 				_ = os.Remove(result.TempPath)
 				t.Fatalf("failed export must not return a file")
 			}
-			requireReleaseErrorType(t, err, tc.expect)
+			if tc.expect == ErrTypeScopeNotFound {
+				requireScopeErrorType(t, err, tc.expect)
+			} else {
+				requireReleaseErrorType(t, err, tc.expect)
+			}
 		})
 	}
 

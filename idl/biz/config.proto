@@ -8,12 +8,14 @@ import "common.proto";
 // CreateConfigRequest is used for creating a config.
 message CreateConfigRequest {
   common.ResourceConfig config = 1;
+  string expected_scope_id = 2;
 }
 
 // UpdateConfigRequest is used for updating a config.
 message UpdateConfigRequest {
   common.ResourceConfig config = 1;
   string expected_edit_revision = 2;
+  string expected_scope_id = 3;
 }
 
 // DeleteConfigRequest is used for deleting a config.
@@ -21,6 +23,7 @@ message DeleteConfigRequest {
   string environment_key = 1;
   string pipeline_key = 2;
   string resource_key = 3;
+  string expected_scope_id = 4;
 }
 
 // ListConfigRequest is used to list configs with filters.
@@ -31,6 +34,7 @@ message ListConfigRequest {
   string min_version = 4;
   string max_version = 5;
   bool is_latest = 6;
+  string scope_id = 7;
 }
 
 // ConfigDetailRequest is used to get a specific config.
@@ -38,6 +42,7 @@ message ConfigDetailRequest {
   string environment_key = 1;
   string pipeline_key = 2;
   string resource_key = 3;
+  string scope_id = 4;
 }
 
 // ConfigData is the data wrapper for a single config.
@@ -69,6 +74,7 @@ message ConfigListResponse {
   string msg = 2;
   string error = 3;
   ConfigListData data = 4;
+  string error_type = 5;
 }
 
 // ConfigDetailResponse is a unified response for config detail.
@@ -78,6 +84,7 @@ message ConfigDetailResponse {
   string msg = 2;
   string error = 3;
   ConfigData data = 4;
+  string error_type = 5;
 }
 
 // DeleteConfigResponse is a unified response for delete operation.

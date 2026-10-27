@@ -69,7 +69,7 @@ func (s *Service) MigrateToFullAssetPaths(ctx context.Context) error {
 	}
 	skippedLocked := 0
 	for _, cfg := range configs {
-		if lockedScopes[FreezeScopeRef{EnvironmentKey: cfg.EnvironmentKey, PipelineKey: cfg.PipelineKey}] {
+		if lockedScopes[cfg.ScopeID] {
 			skippedLocked++
 			fmt.Printf("asset migration: scope %s/%s locked; skipped resource_key=%s\n", cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
 			continue

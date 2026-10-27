@@ -14,6 +14,7 @@ import {
 export type ActiveReleaseState = 'idle' | 'loading' | 'ready' | 'not-active' | 'incomplete' | 'error'
 
 export interface ActiveReleaseView {
+  scopeId: string
   environmentKey: string
   pipelineKey: string
   version: string
@@ -61,7 +62,7 @@ export function useActiveRelease() {
   }
 
   /** 加载指定范围的生效版本;范围或批次变化后旧结果一律丢弃。 */
-  const load = async (environmentKey: string, pipelineKey: string): Promise<void> => {
+  const load = async (environmentKey: string, pipelineKey: string, scopeId: string): Promise<void> => {
     batchId += 1
     const batch = batchId
     currentScope = { environmentKey, pipelineKey }
@@ -80,9 +81,10 @@ export function useActiveRelease() {
     errorMessage.value = ''
     errorType.value = ''
     try {
-      const data = await fetchActiveReleaseRaw(environmentKey, pipelineKey)
+      const data = await fetchActiveReleaseRaw(environmentKey, pipelineKey, scopeId)
       if (batch !== batchId) return
       view.value = {
+        scopeId,
         environmentKey,
         pipelineKey,
         version: data.version,
@@ -130,6 +132,7 @@ export function useActiveRelease() {
         target.pipelineKey,
         target.version,
         target.snapshotId,
+        snapshot.scopeId,
       )
       if (batch !== batchId || !isCurrentScope(target.environmentKey, target.pipelineKey)) return
       const url = URL.createObjectURL(pkg.blob)

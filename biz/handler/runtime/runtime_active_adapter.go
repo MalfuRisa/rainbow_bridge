@@ -29,6 +29,7 @@ type activeRuntimeConfigJSON struct {
 	Name           string      `json:"name"`
 	EnvironmentKey string      `json:"environment_key"`
 	PipelineKey    string      `json:"pipeline_key"`
+	ScopeID        string      `json:"scope_id"`
 	Content        interface{} `json:"content"`
 	Type           string      `json:"type"`
 	Remark         string      `json:"remark"`
@@ -41,6 +42,7 @@ type activeRuntimeEnvironmentJSON struct {
 	EnvironmentName string `json:"environment_name"`
 	PipelineKey     string `json:"pipeline_key"`
 	PipelineName    string `json:"pipeline_name"`
+	ScopeID         string `json:"scope_id"`
 }
 
 type activeRuntimeDataJSON struct {
@@ -50,6 +52,7 @@ type activeRuntimeDataJSON struct {
 	ActiveRevision       string                       `json:"active_revision"`
 	PayloadSha256        string                       `json:"payload_sha256"`
 	SelectionMode        string                       `json:"selection_mode"`
+	ScopeID              string                       `json:"scope_id"`
 	Environment          activeRuntimeEnvironmentJSON `json:"environment"`
 	Configs              []activeRuntimeConfigJSON    `json:"configs"`
 }
@@ -85,6 +88,7 @@ func writeActiveRuntimeConfig(c *app.RequestContext, data *service.ReleaseRuntim
 			Name:           cfg.Name,
 			EnvironmentKey: data.EnvironmentKey,
 			PipelineKey:    data.PipelineKey,
+			ScopeID:        data.ScopeID,
 			Content:        runtimeConfigContent(service.ReleaseRuntimeConfigView(cfg)),
 			Type:           cfg.Type,
 			Remark:         cfg.Remark,
@@ -110,11 +114,13 @@ func writeActiveRuntimeConfig(c *app.RequestContext, data *service.ReleaseRuntim
 			ActiveRevision:       activeRevision,
 			PayloadSha256:        data.PayloadSha256,
 			SelectionMode:        data.SelectionMode,
+			ScopeID:              data.ScopeID,
 			Environment: activeRuntimeEnvironmentJSON{
 				EnvironmentKey:  data.EnvironmentKey,
 				EnvironmentName: data.EnvironmentName,
 				PipelineKey:     data.PipelineKey,
 				PipelineName:    data.PipelineName,
+				ScopeID:         data.ScopeID,
 			},
 			Configs: configs,
 		},
@@ -136,7 +142,10 @@ func writeRuntimeErrorJSON(c *app.RequestContext, status int, errorType, message
 func writeRuntimeServiceError(c *app.RequestContext, err error) {
 	status := consts.StatusInternalServerError
 	errorType := service.ErrTypeReleaseInternalError
-	if releaseErr, ok := service.AsReleaseError(err); ok {
+	if scopeErr, ok := service.AsScopeError(err); ok {
+		status = scopeErr.HTTPStatus
+		errorType = scopeErr.ErrorType
+	} else if releaseErr, ok := service.AsReleaseError(err); ok {
 		status = releaseErr.HTTPStatus
 		errorType = releaseErr.ErrorType
 	}

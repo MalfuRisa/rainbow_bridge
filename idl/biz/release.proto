@@ -27,6 +27,7 @@ message ReleaseVersionMeta {
   string reason = 15;
   string actor = 16;
   string created_at = 17; // RFC3339 UTC
+  string scope_id = 18;
 }
 
 // ReleaseActiveInfo is the active pointer state; revision is a decimal string.
@@ -37,6 +38,7 @@ message ReleaseActiveInfo {
   string changed_at = 4;
   string changed_by = 5;
   string changed_reason = 6;
+  string scope_id = 7;
 }
 
 // ReleaseBlockedIssue reports one precheck problem during creation.
@@ -60,10 +62,11 @@ message ReleaseLimitInfo {
 message ReleaseCreateRequest {
   string environment_key = 1;
   string pipeline_key = 2;
-  string version = 3;
+  string version = 3;                  // omit/empty: server assigns vN; non-empty is rejected for new requests
   string expected_freeze_revision = 4; // decimal string
   string request_id = 5;               // UUID
   string reason = 6;                   // optional; trimmed 0-500 Unicode characters
+  string expected_scope_id = 7;
 }
 
 // ReleaseCreateData is the create result; creation never switches the active version.
@@ -97,6 +100,7 @@ message ReleaseListRequest {
   string pipeline_key = 2;
   int32 limit = 3;       // default 20, max 100
   string before_id = 4;  // optional decimal cursor
+  string scope_id = 5;
 }
 
 // ReleaseListData carries items plus the independent active state.
@@ -145,6 +149,7 @@ message ReleaseDetailRequest {
   string environment_key = 1;
   string pipeline_key = 2;
   string version = 3;
+  string scope_id = 4;
 }
 
 // ReleaseDetailData is the snapshot body.
@@ -170,11 +175,13 @@ message ReleaseDetailResponse {
 message ReleaseActiveRequest {
   string environment_key = 1;
   string pipeline_key = 2;
+  string scope_id = 3;
 }
 
 // ReleaseActiveData is the active pointer; null when unset.
 message ReleaseActiveData {
-  ReleaseActiveInfo active = 1;
+  ReleaseActiveInfo active = 1; // null when the scope has no active version
+  string active_revision = 2;   // always present non-negative decimal string
 }
 
 // ReleaseActiveResponse is the unified response for active reads.
@@ -196,6 +203,7 @@ message ReleaseActivateRequest {
   string expected_active_revision = 4; // decimal string
   string request_id = 5;               // UUID
   string reason = 6;                   // optional; trimmed 0-500 Unicode characters
+  string expected_scope_id = 7;
 }
 
 // ReleaseDeleteRequest logically deletes an inactive version without removing files.
@@ -206,6 +214,7 @@ message ReleaseDeleteRequest {
   string expected_snapshot_id = 4;
   string request_id = 5;
   string reason = 6; // optional; trimmed 0-500 Unicode characters
+  string expected_scope_id = 7;
 }
 
 message ReleaseDeleteData {
@@ -259,6 +268,7 @@ message ReleaseHistoryRequest {
   string pipeline_key = 2;
   int32 limit = 3;
   string before_event_id = 4;
+  string scope_id = 5;
 }
 
 // ReleaseEventItem is one audit event.
@@ -293,12 +303,83 @@ message ReleaseHistoryResponse {
   ReleaseHistoryData data = 5;
 }
 
+// ==================== Compare ====================
+
+// ReleaseCompareRequest compares one immutable target with the fixed active baseline.
+message ReleaseCompareRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string expected_scope_id = 3;
+  string version = 4;
+  string expected_snapshot_id = 5;
+  string expected_active_revision = 6;       // non-negative decimal string
+  string expected_active_snapshot_id = 7;    // empty when no active version
+  int32 offset = 8;
+  int32 limit = 9;
+  string comparison_mode = 10;               // active (default) | fixed
+  string baseline_version = 11;              // fixed mode only
+  string expected_baseline_snapshot_id = 12; // fixed mode only
+}
+
+message ReleaseCompareVersion {
+  string version = 1;
+  string snapshot_id = 2;
+}
+
+message ReleaseCompareSummary {
+  int32 added = 1;
+  int32 modified = 2;
+  int32 removed = 3;
+  int32 unchanged = 4;
+}
+
+message ReleaseCompareSide {
+  string alias = 1;
+  string name = 2;
+  string type = 3;
+}
+
+message ReleaseCompareItem {
+  string resource_key = 1;
+  string change_type = 2; // added | modified | removed
+  repeated string changed_fields = 3;
+  ReleaseCompareSide before = 4; // null for added
+  ReleaseCompareSide after = 5;  // null for removed
+}
+
+message ReleaseCompareData {
+  string scope_id = 1;
+  ReleaseCompareVersion target = 2;
+  ReleaseCompareVersion baseline = 3; // null when no active version
+  string active_revision = 4;
+  bool target_is_active = 5;
+  bool has_changes = 6;
+  ReleaseCompareSummary summary = 7;
+  repeated ReleaseCompareItem items = 8;
+  int32 total_changes = 9;
+  int32 offset = 10;
+  int32 limit = 11;
+  bool has_more = 12;
+  optional int32 next_offset = 13;
+  string comparison_mode = 14; // active | fixed
+}
+
+message ReleaseCompareResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  ReleaseCompareData data = 5;
+  ReleaseActiveInfo latest_active = 6;
+}
+
 // ==================== Runtime ====================
 
 // RuntimeReleaseRequest reads a snapshot through headers; optional fixed version query.
 message RuntimeReleaseRequest {
   string version = 1;        // optional query parameter; empty means follow active
   string content_format = 2; // optional query parameter: json (default) | raw
+  string scope_id = 3;       // optional query parameter: fixed scope identity
 }
 
 // RuntimeReleaseEnvironment mirrors runtime environment info.
@@ -307,6 +388,8 @@ message RuntimeReleaseEnvironment {
   string environment_name = 2;
   string pipeline_key = 3;
   string pipeline_name = 4;
+  string scope_id = 5;
+  string environment_id = 6;
 }
 
 // RuntimeReleaseConfig mirrors runtime config shape; object/keyvalue content is rendered as JSON.
@@ -332,6 +415,7 @@ message RuntimeReleaseData {
   RuntimeReleaseEnvironment environment = 7;
   repeated RuntimeReleaseConfig configs = 8;
   string activated_at = 9; // RFC3339 UTC; resolved with active_revision, absent in fixed mode
+  string scope_id = 10;
 }
 
 // RuntimeReleaseResponse is the unified response for version runtime reads.
@@ -347,6 +431,7 @@ message RuntimeReleaseResponse {
 message RuntimeReleaseStaticRequest {
   string version = 1;              // required query parameter
   string expected_snapshot_id = 2; // required query parameter; must match the located snapshot
+  string scope_id = 3;             // optional fixed scope identity
 }
 
 // RuntimeReleaseStaticResponse is only used for error envelopes; success returns a zip.
@@ -406,6 +491,11 @@ service ReleaseService {
   // History pages create/activate audit events.
   rpc History(ReleaseHistoryRequest) returns (ReleaseHistoryResponse) {
     option (api.get) = "/api/v1/release/history";
+  }
+
+  // Compare compares one immutable target version with the fixed active baseline.
+  rpc Compare(ReleaseCompareRequest) returns (ReleaseCompareResponse) {
+    option (api.post) = "/api/v1/release/compare";
   }
 
   // RuntimeRelease reads a snapshot for business clients (active by default).

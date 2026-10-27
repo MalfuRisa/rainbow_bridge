@@ -1,4 +1,6 @@
 import { ApiError, ErrorType } from './error'
+import { operationMessage } from './messages'
+import { isScopeError, scopeProblem } from '@/lib/scope'
 import { isTrustedApiURL } from './url'
 import { clearSession, sessionCsrf, sessionGeneration, sessionProblem, sessionStatus } from '../auth/session'
 
@@ -11,7 +13,7 @@ export const isSessionError = (error: unknown) => error instanceof ApiError &&
 export interface HttpOptions { handleAuth?: boolean }
 
 export function isManagementRequest(url: URL) {
-  return /\/api\/v1\/(environment|pipeline|config|freeze|release|asset|transfer)\//.test(url.pathname) &&
+  return /\/api\/v1\/(environment|pipeline|config|freeze|release|asset|transfer|backup)\//.test(url.pathname) &&
     !/\/api\/v1\/(asset\/file|release\/asset)\//.test(url.pathname)
 }
 export function isSessionBoundRequest(url: URL) {
@@ -23,6 +25,7 @@ export async function responseError(response: Response): Promise<ApiError> {
     ? await response.json().catch(() => null) : null
   const kind = typeof body?.error_type === 'string' ? body.error_type : ''
   const messages: Record<string, string> = {
+    BACKUP_MAINTENANCE: '备份或恢复正在暂停业务写入，请稍后重试；当前输入已保留。',
     AUTH_INVALID_CREDENTIALS: '账号或密码错误',
     AUTH_REQUIRED: '请重新登录',
     AUTH_FORBIDDEN: '账号不可用，请联系管理员',
@@ -32,8 +35,9 @@ export async function responseError(response: Response): Promise<ApiError> {
   }
   const message = messages[kind] || (response.status >= 500 && kind.startsWith('AUTH_')
     ? '服务暂不可用，请重试' : body?.error || body?.msg || `请求失败：HTTP ${response.status}`)
-  const error = new ApiError(response.status, message, '', ErrorType.HTTP)
+  const error = new ApiError(response.status, operationMessage(kind, message), '', ErrorType.HTTP)
   error.errorType = kind
+  if (isScopeError(error)) scopeProblem.value = error.message
   // Auth payloads may contain credentials or internal diagnostics; never retain them.
   if (!kind.startsWith('AUTH_')) error.payload = body ?? undefined
   const retry = response.headers.get('retry-after') ?? ''
@@ -70,7 +74,7 @@ export async function fetchApi(input: string | URL, init: RequestInit = {}, opti
   const error = await responseError(response)
   if (sessionBound && batch !== sessionGeneration()) throw new StaleSessionError()
   if (url.pathname.includes('/api/v1/auth/') && !error.errorType.startsWith('AUTH_')) {
-    error.message = response.status === 429 ? '请求过于频繁，请稍后重试' :
+    if (error.errorType !== 'API_NOT_FOUND') error.message = response.status === 429 ? '请求过于频繁，请稍后重试' :
       response.status === 401 ? '账号或密码错误' : '服务暂不可用，请重试'
     error.payload = undefined
   }

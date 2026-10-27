@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"gorm.io/gorm"
@@ -104,6 +105,16 @@ func (s *Service) UploadAsset(ctx context.Context, input *FileUploadInput) (*com
 	)
 	// 冻结检查必须在创建任何目录/文件之前;文件与元数据写入都在同一次协调存续期内。
 	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		scopeID := input.ExpectedScopeID
+		if scopeID == "" {
+			resolved, err := resolveScopeByKeys(gateCtx, txLogic, input.EnvironmentKey, input.PipelineKey)
+			if err != nil {
+				return err
+			}
+			scopeID = resolved.ScopeID
+		} else if _, err := requireScopeIdentity(gateCtx, txLogic, input.EnvironmentKey, input.PipelineKey, scopeID); err != nil {
+			return err
+		}
 		if err := txLogic.ensurePipelineUnlocked(gateCtx, input.EnvironmentKey, input.PipelineKey); err != nil {
 			return err
 		}
@@ -114,6 +125,7 @@ func (s *Service) UploadAsset(ctx context.Context, input *FileUploadInput) (*com
 		createdRel = write.relativePath
 		record := &model.Asset{
 			FileID:         fileID,
+			ScopeID:        scopeID,
 			EnvironmentKey: input.EnvironmentKey,
 			PipelineKey:    input.PipelineKey,
 			FileName:       fileName,
@@ -229,9 +241,24 @@ func (s *Service) GetAssetFile(ctx context.Context, fileID string) (*model.Asset
 	if fileID == "" {
 		return nil, "", ErrAssetNotFound
 	}
-	asset, err := s.logic.GetAsset(ctx, fileID)
+	asset, err := s.logic.assetDAO.GetByFileIDIncludingDeleted(ctx, s.logic.db, fileID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, "", ErrAssetNotFound
+		}
 		return nil, "", err
+	}
+	if asset.DeletedAt.Valid {
+		return nil, "", scopeDeletedError("asset belongs to a deleted scope")
+	}
+	if asset.ScopeID != "" {
+		active, err := db.ScopeIsActive(ctx, s.logic.db, asset.ScopeID)
+		if err != nil {
+			return nil, "", err
+		}
+		if !active {
+			return nil, "", scopeDeletedError("asset belongs to a deleted scope")
+		}
 	}
 
 	// 根据配置选择存储方式

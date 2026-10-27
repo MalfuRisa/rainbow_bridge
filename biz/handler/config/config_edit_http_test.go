@@ -8,6 +8,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
+	envpb "github.com/yi-nology/rainbow_bridge/biz/model/environment"
 	"github.com/yi-nology/rainbow_bridge/biz/service"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -33,7 +34,20 @@ func TestConfigEditHTTPContract(t *testing.T) {
 	old := svc
 	SetService(serviceInstance)
 	defer SetService(old)
-	row, err := serviceInstance.AddConfig(context.Background(), &common.ResourceConfig{EnvironmentKey: "dev", PipelineKey: "default", Alias: "title", Name: "title", Type: "text", Content: "initial"})
+	if err := serviceInstance.AddEnvironment(context.Background(), &envpb.Environment{
+		EnvironmentKey: "dev", EnvironmentName: "dev", IsActive: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pipeline, err := serviceInstance.GetPipeline(context.Background(), "dev", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeID := pipeline.GetScopeId()
+	row, err := serviceInstance.AddConfig(context.Background(), &common.ResourceConfig{
+		EnvironmentKey: "dev", PipelineKey: "default", Alias: "title", Name: "title",
+		Type: "text", Content: "initial", ScopeId: scopeID,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +70,9 @@ func TestConfigEditHTTPContract(t *testing.T) {
 	}
 	configJSON, _ := json.Marshal(row)
 	for _, bad := range []string{"", `,"expected_edit_revision":null`, `,"expected_edit_revision":12`, `,"expected_edit_revision":""`, `,"expected_edit_revision":"BAD"`, `,"expected_edit_revision":"` + strings.ToUpper(row.EditRevision) + `"`, `,"expected_edit_revision":{}`} {
-		send(`{"config":`+string(configJSON)+bad+`}`, 400, "CONFIG_EDIT_REVISION_INVALID")
+		send(`{"config":`+string(configJSON)+`,"expected_scope_id":"`+scopeID+`"`+bad+`}`, 400, "CONFIG_EDIT_REVISION_INVALID")
 	}
-	body := `{"config":` + string(configJSON) + `,"expected_edit_revision":"` + row.EditRevision + `"}`
+	body := `{"config":` + string(configJSON) + `,"expected_scope_id":"` + scopeID + `","expected_edit_revision":"` + row.EditRevision + `"}`
 	send(body, 200, "")
 	send(body, 409, "CONFIG_EDIT_CONFLICT")
 	detail := ut.PerformRequest(engine.Engine, "GET", "/detail?environment_key=dev&pipeline_key=default&resource_key="+row.ResourceKey, nil)

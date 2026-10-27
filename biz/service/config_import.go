@@ -26,6 +26,12 @@ func (l *Logic) ImportConfigs(ctx context.Context, configs []model.Config, overw
 // 整个导入在写协调事务内执行:先对全部目标范围做冻结检查,任一 locked 则整请求在写前拒绝
 // (包括 overwrite=false),不把冻结项静默当冲突跳过。
 func (s *Service) ImportConfigsWithResult(ctx context.Context, configs []*common.ResourceConfig, overwrite bool) ([]*common.ResourceConfig, error) {
+	return s.ImportConfigsWithIdentity(ctx, configs, overwrite, "", "")
+}
+
+// ImportConfigsWithIdentity binds a JSON import to the selected generation.
+func (s *Service) ImportConfigsWithIdentity(ctx context.Context, configs []*common.ResourceConfig,
+	overwrite bool, expectedEnvironmentID, expectedScopeID string) ([]*common.ResourceConfig, error) {
 	models := make([]model.Config, 0, len(configs))
 	scopes := make([]FreezeScopeRef, 0, len(configs))
 	for i, cfg := range configs {
@@ -42,6 +48,26 @@ func (s *Service) ImportConfigsWithResult(ctx context.Context, configs []*common
 	}
 	var written []model.Config
 	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if expectedEnvironmentID != "" || expectedScopeID != "" {
+			seen := map[string]bool{}
+			for _, cfg := range models {
+				key := cfg.EnvironmentKey + "|" + cfg.PipelineKey
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				if expectedEnvironmentID != "" {
+					if _, err := requireEnvironmentIdentity(gateCtx, txLogic, cfg.EnvironmentKey, expectedEnvironmentID); err != nil {
+						return err
+					}
+				}
+				if expectedScopeID != "" {
+					if _, err := requireScopeIdentity(gateCtx, txLogic, cfg.EnvironmentKey, cfg.PipelineKey, expectedScopeID); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if err := txLogic.ensureScopesUnlocked(gateCtx, scopes); err != nil {
 			return err
 		}
@@ -95,6 +121,7 @@ func (l *Logic) prepareConfigImport(ctx context.Context, configs []model.Config)
 		}
 		// Incoming persistence metadata never identifies a target row.
 		cfg.ID = 0
+		cfg.ScopeID = ""
 		cfg.CreatedAt = time.Time{}
 		cfg.UpdatedAt = time.Time{}
 		cfg.DeletedAt = gorm.DeletedAt{}

@@ -22,6 +22,7 @@ const props = defineProps<{
   editingConfig: ConfigItem | null
   selectedEnvKey: string
   selectedPipelineKey: string
+  scopeId: string
   selectedEnvironmentName: string | undefined
   selectedPipelineName: string | undefined
   /** 当前范围已冻结:写入口禁用,并说明原因 */
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
   (e: 'update:editingConfig', value: ConfigItem | null): void
   (e: 'create', config: {
+    scopeId: string
     name: string
     alias: string
     type: ConfigType
@@ -40,6 +42,7 @@ const emit = defineEmits<{
     description: string
   }, done: (ok: boolean, message?: string, kind?: string) => void): void
   (e: 'update', config: {
+    scopeId: string
     id: string
     expectedEditRevision: string
     name: string
@@ -244,12 +247,13 @@ const handleAdd = () => {
   const current = startAttempt()
   saving.value = true
   emit('create', {
+    scopeId: props.scopeId,
     name: formData.value.name,
     alias: formData.value.alias,
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
-  }, (ok, message) => {
+  }, (ok, message, kind) => {
     if (!current()) return
     saving.value = false
     if (ok) {
@@ -258,6 +262,7 @@ const handleAdd = () => {
       return
     }
     // 失败时保留用户输入,不显示成功;服务端错误(含冻结范围)在此展示
+    if (kind?.startsWith('SCOPE_') && kind !== 'SCOPE_FROZEN') blocked.value = kind
     showSaveError(message || '保存失败')
   })
 }
@@ -273,6 +278,7 @@ const handleUpdate = () => {
   const current = startAttempt()
   saving.value = true
   emit('update', {
+    scopeId: props.scopeId,
     id: props.editingConfig.id,
     expectedEditRevision: baseline.value,
     name: formData.value.name,
@@ -287,7 +293,7 @@ const handleUpdate = () => {
       resetForm()
       return
     }
-    blocked.value = ['CONFIG_EDIT_CONFLICT', 'CONFIG_EDIT_TARGET_NOT_FOUND', 'UNKNOWN_RESULT'].includes(kind || '') ? kind! : ''
+    blocked.value = ['CONFIG_EDIT_CONFLICT', 'CONFIG_EDIT_TARGET_NOT_FOUND', 'UNKNOWN_RESULT', 'SCOPE_INVALID_REQUEST', 'SCOPE_IDENTITY_CONFLICT', 'SCOPE_DELETED'].includes(kind || '') ? kind! : ''
     showSaveError(kind === 'CONFIG_EDIT_CONFLICT' ? '这条配置已被其他操作更新。你的修改尚未保存，请重新加载后核对。' : kind === 'UNKNOWN_RESULT' ? '保存结果未确认，请重新加载核对' : message || '保存失败')
   })
 }
@@ -304,6 +310,7 @@ const handleFileUpload = async (type: 'file' | 'image') => {
   const current = startAttempt()
   const environmentKey = props.selectedEnvKey
   const pipelineKey = props.selectedPipelineKey
+  const scopeId = props.scopeId
 
   input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
@@ -312,7 +319,7 @@ const handleFileUpload = async (type: 'file' | 'image') => {
       uploading.value = true
       saveError.value = ''
       try {
-        const result = await assetStore.uploadAsset(file, environmentKey, pipelineKey)
+        const result = await assetStore.uploadAsset(file, environmentKey, pipelineKey, scopeId)
         if (!current()) return
         if (result?.url) {
           // 只保存相对路径，避免重复添加 basePath
@@ -382,7 +389,7 @@ async function loadEdit(confirmReplace = false) {
   const current = startAttempt()
   loadingDetail.value = true
   try {
-    const response = await configApi.detail(target.id, { environmentKey: props.selectedEnvKey, pipelineKey: props.selectedPipelineKey })
+    const response = await configApi.detail(target.id, { environmentKey: props.selectedEnvKey, pipelineKey: props.selectedPipelineKey, scopeId: target.scopeId })
     if (!current()) return
     if (!response.config?.editRevision) throw new Error('配置编辑版本无效，请重新加载')
     const config = fromApiConfig(response.config)

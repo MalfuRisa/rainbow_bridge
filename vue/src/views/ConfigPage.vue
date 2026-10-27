@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useScopeSelection } from '@/composables/useScopeSelection'
 import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useConfigStore } from '@/stores/config'
@@ -16,23 +16,15 @@ import ConfigImagePreview from '@/components/Config/ConfigImagePreview.vue'
 const environmentStore = useEnvironmentStore()
 const configStore = useConfigStore()
 const freezeStore = useFreezeStore()
-const route = useRoute()
 onUnmounted(() => configStore.resetConfigs())
 
-const selectedEnvKey = ref('')
-const selectedPipelineKey = ref('')
+const { selectedEnvKey, selectedPipelineKey, selectedScopeId, initialize } = useScopeSelection(() => environmentStore.environments)
 const imagePreviewUrl = ref<string | null>(null)
 const imagePreviewName = ref<string>('')
 
 onMounted(async () => {
   await environmentStore.fetchOverview()
-  // Honor scoped links only after checking they identify an existing scope.
-  const env = environmentStore.environments.find(item => item.key === route.query.env)
-  const pipeline = env?.pipelines.find(item => item.key === route.query.pipeline)
-  if (env && pipeline) {
-    selectedEnvKey.value = env.key
-    selectedPipelineKey.value = pipeline.key
-  }
+  if (!environmentStore.error) initialize()
 })
 
 const selectedEnvironment = computed(() =>
@@ -48,17 +40,14 @@ const selectedPipeline = computed(() =>
 const frozen = computed(() => freezeStore.isLocked(selectedEnvKey.value, selectedPipelineKey.value))
 const frozenReason = computed(() => freezeStore.statusFor(selectedEnvKey.value, selectedPipelineKey.value)?.last_reason || '')
 
-watch(selectedEnvKey, () => {
-  selectedPipelineKey.value = ''
-}, { flush: 'sync' })
-
 const refreshConfigs = () => {
   if (selectedEnvKey.value && selectedPipelineKey.value) {
     void configStore.fetchConfigs(selectedEnvKey.value, selectedPipelineKey.value)
   }
 }
 
-watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
+watch([selectedEnvKey, selectedPipelineKey, selectedScopeId], ([envKey, pipelineKey]) => {
+  imagePreviewUrl.value = null
   if (envKey && pipelineKey) {
     configStore.fetchConfigs(envKey, pipelineKey)
   } else {
@@ -67,12 +56,13 @@ watch([selectedEnvKey, selectedPipelineKey], ([envKey, pipelineKey]) => {
 })
 
 const handleCreate = async (config: {
+  scopeId: string
   name: string
   alias: string
   type: string
   content: string
   description: string
-}, done: (ok: boolean, message?: string) => void) => {
+}, done: (ok: boolean, message?: string, kind?: string) => void) => {
   const environmentKey = selectedEnvKey.value
   const pipelineKey = selectedPipelineKey.value
   if (!selectedEnvKey.value || !selectedPipelineKey.value) {
@@ -86,6 +76,7 @@ const handleCreate = async (config: {
       type: config.type as ConfigType,
       content: config.content,
       description: config.description,
+      scopeId: config.scopeId,
     })
     done(true)
   } catch (error) {
@@ -95,11 +86,12 @@ const handleCreate = async (config: {
       done(false, `${freezeErrorMessage(error)}。已刷新冻结状态`)
       return
     }
-    done(false, error instanceof Error ? error.message : '保存失败')
+    done(false, error instanceof Error ? error.message : '保存失败', error instanceof ApiError ? error.errorType : '')
   }
 }
 
 const handleUpdate = async (config: {
+  scopeId: string
   id: string
   expectedEditRevision: string
   name: string
@@ -118,6 +110,7 @@ const handleUpdate = async (config: {
     await configStore.updateConfig(environmentKey, pipelineKey, {
       id: config.id,
       expectedEditRevision: config.expectedEditRevision,
+      scopeId: config.scopeId,
       name: config.name,
       alias: config.alias,
       type: config.type as ConfigType,
@@ -136,12 +129,12 @@ const handleUpdate = async (config: {
   }
 }
 
-const handleDelete = async (id: string, done: (ok: boolean, message?: string) => void) => {
+const handleDelete = async (id: string, scopeId: string, done: (ok: boolean, message?: string) => void) => {
   const environmentKey = selectedEnvKey.value
   const pipelineKey = selectedPipelineKey.value
   if (!environmentKey || !pipelineKey) { done(false, '请先选择环境和渠道'); return }
   try {
-    await configStore.deleteConfig(environmentKey, pipelineKey, id)
+    await configStore.deleteConfig(environmentKey, pipelineKey, id, scopeId)
     done(true)
   } catch (error) {
     if (isFreezeBlockedError(error)) {
@@ -170,6 +163,7 @@ const handleCloseImagePreview = () => {
     />
 
     <FreezePanel
+      :key="selectedScopeId"
       v-if="selectedEnvKey && selectedPipelineKey"
       :environment-key="selectedEnvKey"
       :pipeline-key="selectedPipelineKey"
@@ -179,7 +173,8 @@ const handleCloseImagePreview = () => {
     />
 
     <ConfigList
-      :key="`${selectedEnvKey}/${selectedPipelineKey}`"
+      :key="selectedScopeId"
+      :scope-id="selectedScopeId"
       :configs="configStore.configs"
       :loading="configStore.loading"
       :error="configStore.error"

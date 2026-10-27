@@ -10,18 +10,19 @@ import ConfigDetail from './ConfigDetail.vue'
 import ConfigTypeIcon from './ConfigTypeIcon.vue'
 
 const props = defineProps<{
+  scopeId: string
   configs: ConfigItem[]; loading: boolean; error?: string | null
   selectedEnvKey: string; selectedPipelineKey: string
   selectedEnvironmentName: string | undefined; selectedPipelineName: string | undefined
   frozen?: boolean; frozenReason?: string
 }>()
-type ConfigPayload = { name: string; alias: string; type: string; content: string; description: string }
+type ConfigPayload = { scopeId: string; name: string; alias: string; type: string; content: string; description: string }
 type SaveDone = (ok: boolean, message?: string, kind?: string) => void
 const emit = defineEmits<{
   search: [value: string]
   create: [config: ConfigPayload, done: SaveDone]
   update: [config: ConfigPayload & { id: string; expectedEditRevision: string }, done: SaveDone]
-  delete: [id: string, done: SaveDone]
+  delete: [id: string, scopeId: string, done: SaveDone]
   imagePreview: [url: string, name: string]
   retry: []
 }>()
@@ -81,8 +82,8 @@ function closeForm(open: boolean) {
 function resetForm() { closeForm(false) }
 watch(() => [props.selectedEnvKey, props.selectedPipelineKey], () => { closeForm(false); deleteTarget.value = null }, { flush: 'sync' })
 function createConfig(config: ConfigPayload, done: SaveDone) {
-  emit('create', config, (ok, message) => {
-    done(ok, message)
+  emit('create', config, (ok, message, kind) => {
+    done(ok, message, kind)
     if (ok) void nextTick(() => { selectedId.value = props.configs.find(item => item.alias === config.alias)?.id || '' })
   })
 }
@@ -90,7 +91,7 @@ function requestDelete(config: ConfigItem) { deleteTarget.value = config; delete
 function confirmDelete() {
   if (!deleteTarget.value || deleting.value || props.frozen) return
   deleting.value = true
-  emit('delete', deleteTarget.value.id, (ok, message) => {
+  emit('delete', deleteTarget.value.id, deleteTarget.value.scopeId, (ok, message) => {
     deleting.value = false
     if (ok) deleteTarget.value = null
     else deleteError.value = message || '删除失败，请重试'
@@ -107,7 +108,7 @@ function confirmDelete() {
       <div ref="catalogElement" class="config-catalog">
         <div class="config-catalog-tools">
           <label class="config-search"><Search :size="16" aria-hidden="true" /><Input v-model="searchTerm" placeholder="搜索配置..." aria-label="搜索配置名称或别名" :disabled="!hasScope" @update:model-value="emit('search', String($event))" /></label>
-          <ConfigDialog :key="editingConfig?.id || 'create'" :open="isAddDialogOpen || Boolean(editingConfig)" :editing-config="editingConfig" :selected-env-key="selectedEnvKey" :selected-pipeline-key="selectedPipelineKey" :selected-environment-name="selectedEnvironmentName" :selected-pipeline-name="selectedPipelineName" :frozen="frozen" :frozen-reason="frozenReason" @update:open="closeForm" @update:editing-config="editingConfig = $event" @create="createConfig" @update="(config, done) => emit('update', config, done)" @reset="resetForm" />
+          <ConfigDialog :key="editingConfig?.id || 'create'" :open="isAddDialogOpen || Boolean(editingConfig)" :editing-config="editingConfig" :scope-id="scopeId" :selected-env-key="selectedEnvKey" :selected-pipeline-key="selectedPipelineKey" :selected-environment-name="selectedEnvironmentName" :selected-pipeline-name="selectedPipelineName" :frozen="frozen" :frozen-reason="frozenReason" @update:open="closeForm" @update:editing-config="editingConfig = $event" @create="createConfig" @update="(config, done) => emit('update', config, done)" @reset="resetForm" />
         </div>
         <div v-if="!hasScope" class="config-empty-state"><Layers :size="32" /><h3>请先选择环境和渠道</h3></div>
         <div v-else-if="loading" class="config-empty-state" role="status"><Loader2 :size="28" class="animate-spin" /><p>正在加载配置…</p></div>

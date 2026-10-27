@@ -7,6 +7,7 @@ import { useEnvironmentStore } from '@/stores/environment'
 const environmentStore = useEnvironmentStore()
 
 const props = defineProps<{
+  disabled?: boolean
   modelValue: {
     envKey: string
     pipelineKey: string
@@ -38,7 +39,7 @@ const handleEnvChange = (envKey: string) => {
         <Layers class="w-4 h-4" />
         <span class="text-sm font-medium">环境</span>
       </div>
-      <Select :model-value="selectedEnvKey" @update:model-value="handleEnvChange" :disabled="environmentStore.loading">
+      <Select :model-value="selectedEnvKey" @update:model-value="handleEnvChange" :disabled="disabled || environmentStore.loading">
         <SelectTrigger class="w-48" aria-label="环境">
           <SelectValue :placeholder="environmentStore.loading ? '加载中...' : '请选择环境'" />
         </SelectTrigger>
@@ -58,7 +59,7 @@ const handleEnvChange = (envKey: string) => {
       <Select
         :model-value="selectedPipelineKey"
         @update:model-value="emit('update:modelValue', { envKey: selectedEnvKey, pipelineKey: $event })"
-        :disabled="!selectedEnvKey"
+        :disabled="disabled || environmentStore.loading || !selectedEnvKey"
       >
         <SelectTrigger class="w-48" aria-label="渠道">
           <SelectValue :placeholder="selectedEnvKey ? '请选择渠道' : '先选择环境'" />

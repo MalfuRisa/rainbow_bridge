@@ -5,6 +5,7 @@ import { configApi, type ListConfigParams } from '@/lib/api/config'
 import { fromApiConfig, toApiConfig } from '@/lib/api/transformers'
 import type { ConfigItem, ConfigType } from '@/lib/types'
 import { toast } from 'vue-sonner'
+import { scopeIdFor, assertScope } from '@/lib/scope'
 
 export const useConfigStore = defineStore('config', () => {
   const configs = ref<ConfigItem[]>([])
@@ -12,7 +13,7 @@ export const useConfigStore = defineStore('config', () => {
   const error = ref<string | null>(null)
   let requestId = 0
   let currentScope = ''
-  const scopeKey = (environmentKey: string, pipelineKey: string) => JSON.stringify([environmentKey, pipelineKey])
+  const scopeKey = (environmentKey: string, pipelineKey: string, scopeId = scopeIdFor(environmentKey, pipelineKey)) => JSON.stringify([environmentKey, pipelineKey, scopeId])
 
   const resetConfigs = () => {
     requestId += 1
@@ -22,9 +23,9 @@ export const useConfigStore = defineStore('config', () => {
     error.value = null
   }
 
-  const fetchConfigs = async (environmentKey: string, pipelineKey: string, type?: string) => {
+  const fetchConfigs = async (environmentKey: string, pipelineKey: string, type?: string, scopeId = scopeIdFor(environmentKey, pipelineKey)) => {
     const batch = ++requestId
-    const scope = scopeKey(environmentKey, pipelineKey)
+    const scope = scopeKey(environmentKey, pipelineKey, scopeId)
     if (scope !== currentScope) configs.value = []
     currentScope = scope
     loading.value = true
@@ -33,6 +34,7 @@ export const useConfigStore = defineStore('config', () => {
       const params: ListConfigParams = {
         environmentKey: environmentKey,
         pipelineKey: pipelineKey,
+        scopeId,
       }
       if (type) {
         params.type = type
@@ -49,9 +51,9 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  const refreshCurrentScope = async (environmentKey: string, pipelineKey: string) => {
+  const refreshCurrentScope = async (environmentKey: string, pipelineKey: string, scopeId: string) => {
     // A mutation started in A must not replace the list after the user moves to B.
-    if (currentScope === scopeKey(environmentKey, pipelineKey)) await fetchConfigs(environmentKey, pipelineKey)
+    if (currentScope === scopeKey(environmentKey, pipelineKey, scopeId) && scopeId === scopeIdFor(environmentKey, pipelineKey)) await fetchConfigs(environmentKey, pipelineKey, undefined, scopeId)
   }
 
   const fetchConfigDetail = async (
@@ -82,6 +84,7 @@ export const useConfigStore = defineStore('config', () => {
       type: ConfigType
       content: string
       description: string
+      scopeId: string
     }
   ) => {
     try {
@@ -93,9 +96,10 @@ export const useConfigStore = defineStore('config', () => {
         description: config.description,
         environmentId: environmentKey,
         pipelineId: pipelineKey,
+        scopeId: config.scopeId,
       })
       await configApi.create(apiConfig as any)
-      await refreshCurrentScope(environmentKey, pipelineKey)
+      await refreshCurrentScope(environmentKey, pipelineKey, config.scopeId)
       toast.success('配置创建成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '创建配置失败'
@@ -110,6 +114,7 @@ export const useConfigStore = defineStore('config', () => {
     config: {
       id: string
       expectedEditRevision: string
+      scopeId: string
       name: string
       alias: string
       type: ConfigType
@@ -127,9 +132,10 @@ export const useConfigStore = defineStore('config', () => {
         description: config.description,
         environmentId: environmentKey,
         pipelineId: pipelineKey,
+        scopeId: config.scopeId,
       })
-      await configApi.updateWithRevision(apiConfig as any, config.expectedEditRevision)
-      await refreshCurrentScope(environmentKey, pipelineKey)
+      await configApi.updateWithRevision(apiConfig as any, config.expectedEditRevision, config.scopeId)
+      await refreshCurrentScope(environmentKey, pipelineKey, config.scopeId)
       toast.success('配置更新成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '更新配置失败'
@@ -138,10 +144,11 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
-  const deleteConfig = async (environmentKey: string, pipelineKey: string, resourceKey: string) => {
+  const deleteConfig = async (environmentKey: string, pipelineKey: string, resourceKey: string, expectedScopeId: string) => {
     try {
-      await configApi.delete(resourceKey, { environmentKey, pipelineKey })
-      await refreshCurrentScope(environmentKey, pipelineKey)
+      assertScope(environmentKey, pipelineKey, expectedScopeId)
+      await configApi.delete(resourceKey, { environmentKey, pipelineKey, expectedScopeId })
+      await refreshCurrentScope(environmentKey, pipelineKey, expectedScopeId)
       toast.success('配置删除成功')
     } catch (e) {
       const message = e instanceof Error ? e.message : '删除配置失败'
