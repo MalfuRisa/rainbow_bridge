@@ -12,30 +12,36 @@ message Pipeline {
   string description = 4;
   int32 sort_order = 5;
   bool is_active = 6;
+  string scope_id = 7;
+  string environment_id = 8;
 }
 
 // CreatePipelineRequest is used for creating a pipeline.
 message CreatePipelineRequest {
   string environment_key = 1;
   Pipeline pipeline = 2;
+  string expected_environment_id = 3;
 }
 
 // UpdatePipelineRequest is used for updating a pipeline.
 message UpdatePipelineRequest {
   string environment_key = 1;
   Pipeline pipeline = 2;
+  string expected_scope_id = 3;
 }
 
 // DeletePipelineRequest is used for deleting a pipeline.
 message DeletePipelineRequest {
   string environment_key = 1;
   string pipeline_key = 2;
+  string expected_scope_id = 3;
 }
 
 // ListPipelineRequest is used to list pipelines with filters.
 message ListPipelineRequest {
   string environment_key = 1;
   bool is_active = 2;
+  string environment_id = 3;
 }
 
 // PipelineDetailRequest is used to get a specific pipeline.
@@ -62,6 +68,7 @@ message PipelineResponse {
   string msg = 2;
   string error = 3;
   PipelineData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // PipelineListResponse is a unified response for pipeline list.
@@ -84,10 +91,21 @@ message PipelineDetailResponse {
 
 // DeletePipelineResponse is a unified response for delete operation.
 // Format: { code, msg, data: null }
+message DeletePipelineData {
+  bool deleted = 1;
+  string scope_id = 2;
+  string deleted_at = 3;
+  int32 configs = 4;
+  int32 assets = 5;
+  int32 versions = 6;
+}
+
 message DeletePipelineResponse {
   int32 code = 1;
   string msg = 2;
   string error = 3;
+  string error_type = 4; // machine-readable error classification (e.g. SCOPE_FROZEN)
+  DeletePipelineData data = 5;
 }
 
 // PipelineService handles pipeline CRUD operations.

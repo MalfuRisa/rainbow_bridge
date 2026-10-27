@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
+import { configApi } from '@/lib/api/config'
+import { fromApiConfig } from '@/lib/api/transformers'
+import { useDialogAttempt } from '@/composables/useDialogAttempt'
+import { objectValueTokens, tokenDisplay } from '@/lib/config-json'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,7 +12,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { Plus, X, Upload, AlertCircle } from 'lucide-vue-next'
+import { Plus, X, Upload, AlertCircle, Loader2 } from 'lucide-vue-next'
 import { useAssetStore } from '@/stores/asset'
 import { type ConfigItem, type ConfigType, CONFIG_TYPE_META } from '@/lib/types'
 import { resolveAssetUrl } from '@/lib/utils'
@@ -18,28 +22,35 @@ const props = defineProps<{
   editingConfig: ConfigItem | null
   selectedEnvKey: string
   selectedPipelineKey: string
+  scopeId: string
   selectedEnvironmentName: string | undefined
   selectedPipelineName: string | undefined
+  /** 当前范围已冻结:写入口禁用,并说明原因 */
+  frozen?: boolean
+  frozenReason?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
   (e: 'update:editingConfig', value: ConfigItem | null): void
   (e: 'create', config: {
+    scopeId: string
     name: string
     alias: string
     type: ConfigType
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string, kind?: string) => void): void
   (e: 'update', config: {
+    scopeId: string
     id: string
+    expectedEditRevision: string
     name: string
     alias: string
     type: ConfigType
     content: string
     description: string
-  }): void
+  }, done: (ok: boolean, message?: string, kind?: string) => void): void
   (e: 'reset'): void
 }>()
 
@@ -54,27 +65,70 @@ const formData = ref({
 })
 
 const keyValuePairs = ref<{ key: string; value: string }[]>([{ key: '', value: '' }])
+let originalValueTokens = new Map<string, string>()
 const booleanValue = ref(false)
 const colorValue = ref('#3B82F6')
 const errors = ref<{ field: string; message: string }[]>([])
 
 const isEditing = computed(() => !!props.editingConfig)
+const baseline = ref('')
+const loadingDetail = ref(false)
+const blocked = ref('')
+const saving = ref(false)
+const uploading = ref(false)
+const busy = computed(() => saving.value || uploading.value || loadingDetail.value)
+const formElement = ref<HTMLFormElement | null>(null)
+const saveError = ref('')
+const startAttempt = useDialogAttempt(
+  () => [props.open, props.selectedEnvKey, props.selectedPipelineKey, props.editingConfig?.id],
+  () => { saving.value = false; uploading.value = false },
+)
+
+function handleOpenChange(value: boolean) {
+  if (!value && busy.value) return
+  emit('update:open', value)
+  if (!value) resetForm()
+}
+
+function focusFirstError() {
+  void nextTick(() => {
+    const field = errors.value[0]?.field
+    const element = field ? formElement.value?.querySelector<HTMLElement>(`#${field}`) : null
+    element?.focus()
+    element?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+function showSaveError(message: string) {
+  saveError.value = message
+  void nextTick(() => {
+    const alert = formElement.value?.querySelector<HTMLElement>('.spectrum-config-save-error')
+    alert?.focus()
+    alert?.scrollIntoView({ block: 'nearest' })
+  })
+}
 
 const getFieldError = (field: string) => {
   return errors.value.find(e => e.field === field)?.message
 }
 
 const resetForm = () => {
+  originalValueTokens = new Map()
   formData.value = { name: '', alias: '', type: 'text', content: '', description: '' }
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
   colorValue.value = '#3B82F6'
   errors.value = []
+  saveError.value = ''
+  baseline.value = ''
+  blocked.value = ''
+  saving.value = false
   emit('update:editingConfig', null)
   emit('reset')
 }
 
 const handleTypeChange = (type: string) => {
+  originalValueTokens = new Map()
   formData.value = { ...formData.value, type: type as ConfigType, content: '' }
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
@@ -86,7 +140,11 @@ const getFinalContent = (): string => {
   switch (formData.value.type) {
     case 'keyvalue':
       const pairs = keyValuePairs.value.filter(p => p.key.trim())
-      return JSON.stringify(Object.fromEntries(pairs.map(p => [p.key, p.value])))
+      return '{' + pairs.map(p => {
+        const original = originalValueTokens.get(p.key)
+        const token = original !== undefined && tokenDisplay(original) === p.value ? original : JSON.stringify(p.value)
+        return JSON.stringify(p.key) + ':' + token
+      }).join(',') + '}'
     case 'boolean':
       return String(booleanValue.value)
     case 'color':
@@ -137,7 +195,7 @@ const validateForm = (): boolean => {
       } else {
         try {
           const parsed = JSON.parse(formData.value.content)
-          if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
             errors.value.push({ field: 'content', message: '请输入有效的JSON对象（非数组）' })
           }
         } catch {
@@ -174,50 +232,95 @@ const validateForm = (): boolean => {
       break
   }
 
+  if (errors.value.length) focusFirstError()
   return errors.value.length === 0
 }
 
 const handleAdd = () => {
+  if (busy.value) return
   if (!validateForm()) return
-  
+  if (props.frozen) {
+    showSaveError(`该范围已冻结,无法新增配置${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`)
+    return
+  }
+  saveError.value = ''
+  const current = startAttempt()
+  saving.value = true
   emit('create', {
+    scopeId: props.scopeId,
     name: formData.value.name,
     alias: formData.value.alias,
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
+  }, (ok, message, kind) => {
+    if (!current()) return
+    saving.value = false
+    if (ok) {
+      emit('update:open', false)
+      resetForm()
+      return
+    }
+    // 失败时保留用户输入,不显示成功;服务端错误(含冻结范围)在此展示
+    if (kind?.startsWith('SCOPE_') && kind !== 'SCOPE_FROZEN') blocked.value = kind
+    showSaveError(message || '保存失败')
   })
-
-  emit('update:open', false)
-  resetForm()
 }
 
 const handleUpdate = () => {
+  if (blocked.value || !baseline.value || busy.value) return
   if (!validateForm() || !props.editingConfig) return
-  
+  if (props.frozen) {
+    showSaveError(`该范围已冻结,无法修改配置${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`)
+    return
+  }
+  saveError.value = ''
+  const current = startAttempt()
+  saving.value = true
   emit('update', {
+    scopeId: props.scopeId,
     id: props.editingConfig.id,
+    expectedEditRevision: baseline.value,
     name: formData.value.name,
     alias: formData.value.alias,
     type: formData.value.type,
     content: getFinalContent(),
     description: formData.value.description,
+  }, (ok, message, kind) => {
+    if (!current()) return
+    saving.value = false
+    if (ok) {
+      resetForm()
+      return
+    }
+    blocked.value = ['CONFIG_EDIT_CONFLICT', 'CONFIG_EDIT_TARGET_NOT_FOUND', 'UNKNOWN_RESULT', 'SCOPE_INVALID_REQUEST', 'SCOPE_IDENTITY_CONFLICT', 'SCOPE_DELETED'].includes(kind || '') ? kind! : ''
+    showSaveError(kind === 'CONFIG_EDIT_CONFLICT' ? '这条配置已被其他操作更新。你的修改尚未保存，请重新加载后核对。' : kind === 'UNKNOWN_RESULT' ? '保存结果未确认，请重新加载核对' : message || '保存失败')
   })
-
-  resetForm()
 }
 
 const handleFileUpload = async (type: 'file' | 'image') => {
+  if (busy.value) return
+  if (props.frozen) {
+    showSaveError(`该范围已冻结,无法上传资源${props.frozenReason ? `(原因:${props.frozenReason})` : ''}`)
+    return
+  }
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = type === 'image' ? 'image/*' : '*/*'
+  const current = startAttempt()
+  const environmentKey = props.selectedEnvKey
+  const pipelineKey = props.selectedPipelineKey
+  const scopeId = props.scopeId
 
   input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file || !props.selectedEnvKey || !props.selectedPipelineKey) return
+      if (!current() || !file || !environmentKey || !pipelineKey) return
 
+      uploading.value = true
+      saveError.value = ''
       try {
-        const result = await assetStore.uploadAsset(file, props.selectedEnvKey, props.selectedPipelineKey)
+        const result = await assetStore.uploadAsset(file, environmentKey, pipelineKey, scopeId)
+        if (!current()) return
         if (result?.url) {
           // 只保存相对路径，避免重复添加 basePath
           const basePath = import.meta.env.BASE_URL || ''
@@ -230,7 +333,10 @@ const handleFileUpload = async (type: 'file' | 'image') => {
           errors.value = errors.value.filter(e => e.field !== 'content')
         }
       } catch (e) {
-        console.error('上传失败:', e)
+        if (!current()) return
+        showSaveError(e instanceof Error ? e.message : '资源上传失败')
+      } finally {
+        if (current()) uploading.value = false
       }
     }
 
@@ -250,64 +356,98 @@ const updateKeyValuePair = (index: number, field: 'key' | 'value', value: string
 }
 
 // 初始化编辑数据
-if (isEditing.value && props.editingConfig) {
-  let formattedContent = props.editingConfig.content
-  if (props.editingConfig.type === 'object' && props.editingConfig.content.trim()) {
-    try {
-      const parsed = JSON.parse(props.editingConfig.content)
-      formattedContent = JSON.stringify(parsed, null, 2)
-    } catch {
-      formattedContent = props.editingConfig.content
-    }
-  }
+function initializeEdit(config: ConfigItem) {
 
   formData.value = {
-    name: props.editingConfig.name,
-    alias: props.editingConfig.alias,
-    type: props.editingConfig.type,
-    content: formattedContent,
-    description: props.editingConfig.description || '',
+    name: config.name,
+    alias: config.alias,
+    type: config.type,
+    content: config.content,
+    description: config.description || '',
   }
 
-  if (props.editingConfig.type === 'keyvalue') {
+  originalValueTokens = new Map()
+  keyValuePairs.value = [{ key: '', value: '' }]
+  if (config.type === 'keyvalue') {
     try {
-      const obj = JSON.parse(props.editingConfig.content)
-      keyValuePairs.value = Object.entries(obj).map(([key, value]) => ({ key, value: String(value) }))
+      originalValueTokens = objectValueTokens(config.content)
+      keyValuePairs.value = Array.from(originalValueTokens, ([key, value]) => ({ key, value: tokenDisplay(value) }))
     } catch {
       keyValuePairs.value = [{ key: '', value: '' }]
     }
-  } else if (props.editingConfig.type === 'boolean') {
-    booleanValue.value = props.editingConfig.content === 'true'
-  } else if (props.editingConfig.type === 'color') {
-    colorValue.value = props.editingConfig.content || '#3B82F6'
+  } else if (config.type === 'boolean') {
+    booleanValue.value = config.content === 'true'
+  } else if (config.type === 'color') {
+    colorValue.value = config.content || '#3B82F6'
   }
 }
+
+async function loadEdit(confirmReplace = false) {
+  if (confirmReplace && !window.confirm('将用最新配置替换当前未保存内容')) return
+  const target = props.editingConfig
+  if (!target) return
+  const current = startAttempt()
+  loadingDetail.value = true
+  try {
+    const response = await configApi.detail(target.id, { environmentKey: props.selectedEnvKey, pipelineKey: props.selectedPipelineKey, scopeId: target.scopeId })
+    if (!current()) return
+    if (!response.config?.editRevision) throw new Error('配置编辑版本无效，请重新加载')
+    const config = fromApiConfig(response.config)
+    initializeEdit(config)
+    baseline.value = config.editRevision!
+    blocked.value = ''
+    saveError.value = ''
+    initialSignature.value = formSignature()
+  } catch (error) {
+    if (current()) showSaveError(error instanceof Error ? error.message : '加载失败，草稿已保留')
+  } finally { if (current()) loadingDetail.value = false }
+}
+async function copyDraft() {
+  try { await navigator.clipboard.writeText(JSON.stringify({ ...formData.value, content: getFinalContent() }, null, 2)) }
+  catch { showSaveError('复制失败，请手动复制草稿') }
+}
+watch(() => [props.open, props.selectedEnvKey, props.selectedPipelineKey, props.editingConfig?.id], () => {
+  baseline.value = ''
+  blocked.value = ''
+  loadingDetail.value = false
+  if (props.open && props.editingConfig) void loadEdit()
+}, { immediate: true, flush: 'post' })
+
+const formSignature = () => JSON.stringify({ ...formData.value, content: getFinalContent() })
+const initialSignature = ref(formSignature())
+const isDirty = computed(() => formSignature() !== initialSignature.value)
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="(value) => emit('update:open', value)">
+  <Dialog :open="open" @update:open="handleOpenChange">
     <DialogTrigger as-child>
-      <Button v-if="!isEditing" class="h-10 px-4">
+      <Button v-if="!isEditing" class="h-10 px-4" :disabled="frozen || !selectedEnvKey || !selectedPipelineKey" :title="frozen ? `已冻结:${frozenReason || '该范围不可编辑'}` : undefined">
         <Plus class="w-4 h-4 mr-2" />
         新增配置
       </Button>
     </DialogTrigger>
-    <DialogContent class="max-w-xl max-h-[85vh] overflow-y-auto rounded-lg border-0 shadow-2xl">
-      <DialogHeader>
+    <!-- §2.1 / §3.6 / §6.2: fixed context and action bar; one scrollable field area.
+         Keep the 640px form width, 24/32px grouping and current Spectrum tokens. -->
+    <DialogContent
+      class="spectrum-config-dialog"
+      :close-disabled="busy"
+      @pointer-down-outside="(event) => { if (isDirty || busy) event.preventDefault() }"
+      @escape-key-down="(event) => { if (busy) event.preventDefault() }"
+    >
+      <DialogHeader class="spectrum-config-dialog-header">
         <DialogTitle class="text-xl font-semibold">{{ isEditing ? '编辑配置' : '新增配置' }}</DialogTitle>
         <DialogDescription class="text-muted-foreground">
-          {{ isEditing ? '修改配置项信息' : `为 ${selectedEnvironmentName} - ${selectedPipelineName} 添加配置项` }}
+          {{ selectedEnvironmentName }} / {{ selectedPipelineName }}
         </DialogDescription>
       </DialogHeader>
-      <div class="space-y-5 py-4">
-        <div v-if="errors.length > 0" class="p-4 rounded-md bg-destructive/10 border border-destructive/20">
-          <div class="flex items-center gap-2 text-destructive font-medium text-sm mb-2">
+      <form ref="formElement" class="spectrum-config-dialog-form" novalidate :aria-busy="busy" @submit.prevent="isEditing ? handleUpdate() : handleAdd()">
+      <div class="spectrum-config-dialog-body">
+      <fieldset class="spectrum-config-fields" :disabled="busy || isEditing && !baseline">
+        <div v-if="saveError" role="alert" tabindex="-1" class="spectrum-config-save-error p-3 rounded-md bg-destructive/10 border border-destructive/20">
+          <div class="flex items-center gap-2 text-destructive font-medium text-sm">
             <AlertCircle class="w-4 h-4" />
-            保存失败，请检查以下问题：
+            {{ saveError }}
           </div>
-          <ul class="list-disc list-inside text-sm text-destructive/80 space-y-1">
-            <li v-for="(error, index) in errors" :key="index">{{ error.message }}</li>
-          </ul>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -317,10 +457,13 @@ if (isEditing.value && props.editingConfig) {
               id="name"
               placeholder="例如: API基础地址"
               v-model="formData.name"
+              aria-required="true"
+              :aria-invalid="Boolean(getFieldError('name'))"
+              :aria-describedby="getFieldError('name') ? 'name-error' : undefined"
               :class="getFieldError('name') ? 'border-destructive' : ''"
               class="h-10"
             />
-            <p v-if="getFieldError('name')" class="text-sm text-destructive flex items-center gap-1">
+            <p v-if="getFieldError('name')" id="name-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
               <AlertCircle class="w-3 h-3" />
               {{ getFieldError('name') }}
             </p>
@@ -331,11 +474,14 @@ if (isEditing.value && props.editingConfig) {
               id="alias"
               placeholder="例如: API_BASE_URL"
               v-model="formData.alias"
+              aria-required="true"
+              :aria-invalid="Boolean(getFieldError('alias'))"
+              :aria-describedby="getFieldError('alias') ? 'alias-error' : undefined"
               :class="getFieldError('alias') ? 'border-destructive' : ''"
               :disabled="isEditing"
               class="h-10"
             />
-            <p v-if="getFieldError('alias')" class="text-sm text-destructive flex items-center gap-1">
+            <p v-if="getFieldError('alias')" id="alias-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
               <AlertCircle class="w-3 h-3" />
               {{ getFieldError('alias') }}
             </p>
@@ -345,14 +491,14 @@ if (isEditing.value && props.editingConfig) {
 
         <div class="space-y-3">
           <Label for="type" class="text-sm font-medium">类型</Label>
-          <Select :model-value="formData.type" @update:model-value="handleTypeChange" :disabled="isEditing">
-            <SelectTrigger class="h-10">
+          <Select :model-value="formData.type" @update:model-value="handleTypeChange" :disabled="isEditing || busy">
+            <SelectTrigger id="type" aria-label="配置类型" class="h-10">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem v-for="[key, config] in Object.entries(CONFIG_TYPE_META)" :key="key" :value="key">
                 <div class="flex items-center gap-2">
-                  <Badge variant="secondary" :class="config.color + ' text-xs px-2 py-0.5'">
+                  <Badge variant="secondary" class="text-xs px-2 py-0.5">
                     {{ config.label }}
                   </Badge>
                   <span class="text-muted-foreground text-xs">{{ config.description }}</span>
@@ -369,6 +515,8 @@ if (isEditing.value && props.editingConfig) {
             id="content"
             :placeholder="formData.type === 'text' ? '请输入文本内容...' : '请输入数值...'"
             v-model="formData.content"
+            :aria-invalid="Boolean(getFieldError('content'))"
+            :aria-describedby="getFieldError('content') ? 'content-error' : undefined"
             :class="getFieldError('content') ? 'border-destructive' : ''"
             class="h-10"
           />
@@ -378,11 +526,13 @@ if (isEditing.value && props.editingConfig) {
             :placeholder="formData.type === 'object' ? '{&quot;key&quot;: &quot;value&quot;}' : '请输入内容...'"
             :rows="formData.type === 'object' ? 8 : 4"
             v-model="formData.content"
+            :aria-invalid="Boolean(getFieldError('content'))"
+            :aria-describedby="getFieldError('content') ? 'content-error' : undefined"
             :class="getFieldError('content') ? 'border-destructive' : ''"
             class="resize-none"
           />
           <div v-else-if="formData.type === 'boolean'" class="flex items-center gap-4 p-4 border rounded-md bg-muted/50 dark:bg-muted">
-            <Switch v-model="booleanValue" />
+            <Switch v-model="booleanValue" :disabled="busy" aria-label="配置布尔值" />
             <span class="text-sm">
               当前值: <Badge :variant="booleanValue ? 'default' : 'secondary'" class="ml-1">{{ booleanValue ? 'true' : 'false' }}</Badge>
             </span>
@@ -390,18 +540,21 @@ if (isEditing.value && props.editingConfig) {
           <div v-else-if="formData.type === 'color'" class="flex items-center gap-4">
             <input
               type="color"
+              aria-label="选择配置颜色"
               :value="colorValue"
               @input="colorValue = ($event.target as HTMLInputElement).value"
               class="w-20 h-20 rounded-lg cursor-pointer border-2 border-border shadow-sm"
             />
             <Input
-              :value="colorValue"
+              id="content"
+              aria-label="颜色值"
+              :model-value="colorValue"
               @update:model-value="colorValue = $event"
               class="font-mono text-lg h-10 flex-1"
               maxlength="7"
             />
           </div>
-          <div v-else-if="formData.type === 'keyvalue'" class="space-y-3">
+          <div v-else-if="formData.type === 'keyvalue'" id="content" tabindex="-1" class="space-y-3">
             <div class="flex items-center justify-between">
               <Label class="text-sm font-medium">键值对</Label>
               <Button type="button" variant="outline" size="sm" @click="addKeyValuePair" class="h-8">
@@ -413,14 +566,16 @@ if (isEditing.value && props.editingConfig) {
               <div v-for="(pair, index) in keyValuePairs" :key="index" class="flex items-center gap-2">
                 <Input
                   placeholder="键名"
-                  :value="pair.key"
+                  :aria-label="`键名 ${index + 1}`"
+                  :model-value="pair.key"
                   @update:model-value="updateKeyValuePair(index, 'key', $event)"
                   class="flex-1 h-9"
                 />
                 <span class="text-muted-foreground font-medium">=</span>
                 <Input
                   placeholder="键值"
-                  :value="pair.value"
+                  :aria-label="`键值 ${index + 1}`"
+                  :model-value="pair.value"
                   @update:model-value="updateKeyValuePair(index, 'value', $event)"
                   class="flex-1 h-9"
                 />
@@ -429,6 +584,7 @@ if (isEditing.value && props.editingConfig) {
                   type="button"
                   variant="ghost"
                   size="icon"
+                  :aria-label="`移除键值对 ${index + 1}`"
                   @click="removeKeyValuePair(index)"
                   class="h-9 w-9"
                 >
@@ -437,25 +593,32 @@ if (isEditing.value && props.editingConfig) {
               </div>
             </div>
           </div>
-          <div
+          <button
             v-else-if="formData.type === 'file' || formData.type === 'image'"
-            class="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors bg-muted/50 dark:bg-muted"
-            :class="getFieldError('content') ? 'border-destructive' : ''"
+            id="content"
+            type="button"
+            :disabled="busy || frozen"
+            :aria-label="`上传${formData.type === 'image' ? '图片' : '文件'}`"
+            class="spectrum-config-upload border border-dashed rounded-lg p-6 text-center transition-colors"
+            :class="[getFieldError('content') ? 'border-destructive' : '', frozen ? 'opacity-60 pointer-events-none' : '']"
+            :title="frozen ? `已冻结:${frozenReason || '该范围不可上传资源'}` : undefined"
             @click="handleFileUpload(formData.type)"
           >
-            <Upload v-if="!formData.content" class="w-10 h-10 mx-auto text-muted-foreground" />
-            <p v-if="!formData.content" class="text-sm text-muted-foreground mt-3">
+            <Loader2 v-if="uploading" class="w-6 h-6 mx-auto animate-spin" />
+            <span v-if="uploading" role="status" class="block mt-3">上传中…</span>
+            <Upload v-else-if="!formData.content" class="w-8 h-8 mx-auto text-muted-foreground" />
+            <p v-if="!uploading && !formData.content" class="text-sm text-muted-foreground mt-3">
               点击上传{{ formData.type === 'image' ? '图片' : '文件' }}
             </p>
             <img
-              v-else-if="formData.type === 'image' && formData.content"
+              v-else-if="!uploading && formData.type === 'image' && formData.content"
               :src="resolveAssetUrl(formData.content)"
               alt="预览"
               class="max-w-full max-h-64 mx-auto object-contain rounded-md shadow-sm"
             />
-            <p v-else class="text-sm truncate">{{ formData.content }}</p>
-          </div>
-          <p v-if="getFieldError('content')" class="text-sm text-destructive flex items-center gap-1">
+            <p v-else-if="!uploading" class="text-sm truncate">{{ formData.content }}</p>
+          </button>
+          <p v-if="getFieldError('content')" id="content-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
             <AlertCircle class="w-3 h-3" />
             {{ getFieldError('content') }}
           </p>
@@ -465,22 +628,26 @@ if (isEditing.value && props.editingConfig) {
           <Label for="description" class="text-sm font-medium">描述</Label>
           <Textarea
             id="description"
-            placeholder="可选，为此配置项添加备注或说明..."
+            placeholder="选填"
             :rows="2"
             v-model="formData.description"
             class="resize-none"
           />
         </div>
-
-        <DialogFooter class="pt-4 border-t border-border">
-          <Button variant="outline" @click="emit('update:open', false); resetForm()" class="h-10">
+      </fieldset>
+      </div>
+        <DialogFooter class="spectrum-config-dialog-footer">
+          <Button v-if="blocked" type="button" variant="outline" :disabled="busy" @click="copyDraft">复制我的草稿</Button>
+          <Button v-if="(isEditing && !baseline) || (blocked && blocked !== 'CONFIG_EDIT_TARGET_NOT_FOUND')" type="button" variant="outline" :disabled="busy" @click="loadEdit(true)">重新加载</Button>
+          <Button variant="outline" :disabled="busy" @click="handleOpenChange(false)" class="h-10">
             取消
           </Button>
-          <Button @click="isEditing ? handleUpdate() : handleAdd()" class="h-10">
-            保存
+          <Button type="submit" class="h-10" :disabled="busy || frozen || Boolean(blocked) || isEditing && !baseline">
+            <Loader2 v-if="saving" class="w-4 h-4 mr-2 animate-spin" />
+            {{ saving ? '保存中...' : '保存' }}
           </Button>
         </DialogFooter>
-      </div>
+      </form>
     </DialogContent>
   </Dialog>
 </template>

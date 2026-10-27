@@ -2,23 +2,16 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/pkg/common"
 	"github.com/yi-nology/rainbow_bridge/pkg/redis"
-	"github.com/yi-nology/rainbow_bridge/pkg/util"
 
 	"gorm.io/gorm"
-)
-
-var (
-	colorHexRegexp = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 )
 
 // --------------------- Config Operations ---------------------
@@ -31,10 +24,15 @@ func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 	if err := l.validateConfigContent(ctx, cfg); err != nil {
 		return err
 	}
-
-	// Check if alias already exists in the same environment and pipeline
+	if cfg.ScopeID == "" {
+		scopeID, err := configdb.ActiveScopeID(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey)
+		if err != nil {
+			return err
+		}
+		cfg.ScopeID = scopeID
+	}
 	if cfg.Alias != "" {
-		existing, err := l.configDAO.GetByAlias(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.Alias)
+		existing, err := l.configDAO.GetByAliasInScope(ctx, l.db, cfg.ScopeID, cfg.Alias)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
@@ -42,150 +40,108 @@ func (l *Logic) AddConfig(ctx context.Context, cfg *model.Config) error {
 			return ErrConfigAliasExists
 		}
 	}
+	return l.configDAO.Create(ctx, l.db, cfg)
+}
 
-	if err := l.configDAO.Create(ctx, l.db, cfg); err != nil {
+func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config, expected string) error {
+	if !configdb.ValidEditRevision(expected) {
+		return configdb.ErrEditRevisionInvalid
+	}
+	if cfg == nil {
+		return errors.New("config payload required")
+	}
+	if err := l.checkEditBaseline(ctx, cfg, expected); err != nil {
 		return err
 	}
+	return l.writeConfig(ctx, cfg, expected)
+}
 
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
+func (l *Logic) checkEditBaseline(ctx context.Context, cfg *model.Config, expected string) error {
+	scopeID := cfg.ScopeID
+	if scopeID == "" {
+		resolved, err := configdb.ActiveScopeID(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey)
+		if err != nil {
+			return err
 		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
+		scopeID = resolved
+		cfg.ScopeID = scopeID
 	}
-
+	current, err := l.configDAO.GetByScopeAndResourceKey(ctx, l.db, scopeID, cfg.ResourceKey)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return configdb.ErrEditTargetNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.EditRevision != expected {
+		return configdb.ErrEditConflict
+	}
 	return nil
 }
 
-func (l *Logic) UpdateConfig(ctx context.Context, cfg *model.Config) error {
-	if cfg == nil {
-		return nil
-	}
+// overwriteConfig is reserved for explicit migration writes.
+func (l *Logic) overwriteConfig(ctx context.Context, cfg *model.Config) error {
+	return l.writeConfig(ctx, cfg, "")
+}
+
+func (l *Logic) writeConfig(ctx context.Context, cfg *model.Config, expected string) error {
 	normalizeConfigPayload(cfg)
 	if err := l.validateConfigContent(ctx, cfg); err != nil {
 		return err
 	}
-	if _, err := l.configDAO.GetByResourceKey(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrResourceNotFound
-		}
-		return err
+	if expected != "" {
+		return l.configDAO.UpdateIfRevision(ctx, l.db, cfg, expected)
 	}
-
-	if err := l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg); err != nil {
-		return err
-	}
-
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除单个配置缓存
-		configKey := redis.GenerateConfigKey(cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
-		if err := redis.Delete(ctx, l.redisClient, configKey); err != nil {
-			fmt.Printf("Failed to clear config cache: %v\n", err)
-		}
-
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
-		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(cfg.EnvironmentKey, cfg.PipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
-	}
-
-	return nil
+	return l.configDAO.OverwriteByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg)
 }
 
 func (l *Logic) DeleteConfig(ctx context.Context, environmentKey, pipelineKey, resourceKey string) error {
-	_, err := l.configDAO.GetByResourceKey(ctx, l.db, environmentKey, pipelineKey, resourceKey)
+	scopeID, err := configdb.ActiveScopeID(ctx, l.db, environmentKey, pipelineKey)
 	if err != nil {
+		return err
+	}
+	if _, err := l.configDAO.GetByScopeAndResourceKey(ctx, l.db, scopeID, resourceKey); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrResourceNotFound
 		}
 		return err
 	}
-
-	if err := l.configDAO.DeleteByEnvironmentPipelineAndResourceKey(ctx, l.db, environmentKey, pipelineKey, resourceKey); err != nil {
-		return err
-	}
-
-	// 清除相关缓存
-	if l.redisClient != nil {
-		// 清除单个配置缓存
-		configKey := redis.GenerateConfigKey(environmentKey, pipelineKey, resourceKey)
-		if err := redis.Delete(ctx, l.redisClient, configKey); err != nil {
-			fmt.Printf("Failed to clear config cache: %v\n", err)
-		}
-
-		// 清除列表缓存
-		listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", environmentKey, pipelineKey)
-		if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-			fmt.Printf("Failed to clear config list cache: %v\n", err)
-		}
-
-		// 清除映射缓存
-		mapKey := redis.GenerateConfigMapKey(environmentKey, pipelineKey)
-		if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-			fmt.Printf("Failed to clear config map cache: %v\n", err)
-		}
-	}
-
-	return nil
+	return l.configDAO.DeleteByScopeAndResourceKey(ctx, l.db, scopeID, resourceKey)
 }
 
 func (l *Logic) GetConfig(ctx context.Context, environmentKey, pipelineKey, resourceKey string) (*model.Config, error) {
-	// 生成缓存键
-	cacheKey := redis.GenerateConfigKey(environmentKey, pipelineKey, resourceKey)
-
-	// 尝试从缓存中获取
+	scopeID, err := configdb.ActiveScopeID(ctx, l.db, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := redis.GenerateScopedConfigKey(scopeID, resourceKey)
 	var cachedConfig model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfig)
-	if err == nil && found {
+	if err == nil && found && configdb.ValidEditRevision(cachedConfig.EditRevision) {
 		return &cachedConfig, nil
 	}
-
-	// 缓存未命中，从数据库获取
-	cfg, err := l.configDAO.GetByResourceKey(ctx, l.db, environmentKey, pipelineKey, resourceKey)
+	cfg, err := l.configDAO.GetByScopeAndResourceKey(ctx, l.db, scopeID, resourceKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrResourceNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	// 存入缓存，设置过期时间为1小时
+	cfg.ScopeID = scopeID
 	if err := redis.Set(ctx, l.redisClient, cacheKey, cfg, time.Hour); err != nil {
-		// 缓存错误不影响主流程，只记录错误
 		fmt.Printf("Failed to cache config: %v\n", err)
 	}
-
 	return cfg, nil
 }
 
+// GetConfigByKey is the legacy unscoped helper; new callers must resolve a scope.
 func (l *Logic) GetConfigByKey(ctx context.Context, resourceKey string) (*model.Config, error) {
-	// 生成缓存键
 	cacheKey := fmt.Sprintf("rainbow_bridge:config:key:%s", resourceKey)
-
-	// 尝试从缓存中获取
 	var cachedConfig model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfig)
-	if err == nil && found {
+	if err == nil && found && configdb.ValidEditRevision(cachedConfig.EditRevision) {
 		return &cachedConfig, nil
 	}
-
-	// 缓存未命中，从数据库获取
 	cfg, err := l.configDAO.GetByResourceKeyOnly(ctx, l.db, resourceKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrResourceNotFound
@@ -193,65 +149,57 @@ func (l *Logic) GetConfigByKey(ctx context.Context, resourceKey string) (*model.
 	if err != nil {
 		return nil, err
 	}
-
-	// 存入缓存，设置过期时间为1小时
 	if err := redis.Set(ctx, l.redisClient, cacheKey, cfg, time.Hour); err != nil {
-		// 缓存错误不影响主流程，只记录错误
 		fmt.Printf("Failed to cache config by key: %v\n", err)
 	}
-
 	return cfg, nil
 }
 
 func (l *Logic) ListConfigs(ctx context.Context, environmentKey, pipelineKey, minVersion, maxVersion, resourceType string, latestOnly bool) ([]model.Config, error) {
-	// 生成缓存键
-	cacheKey := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:%s:%s:%s:%t", environmentKey, pipelineKey, minVersion, maxVersion, resourceType, latestOnly)
-
-	// 尝试从缓存中获取
+	scopeID, err := configdb.ActiveScopeID(ctx, l.db, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := fmt.Sprintf("%s:%s:%s:%s:%t", redis.GenerateScopedConfigListPrefix(scopeID),
+		minVersion, maxVersion, resourceType, latestOnly)
 	var cachedConfigs []model.Config
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedConfigs)
-	if err == nil && found {
+	if err == nil && found && validConfigRevisions(cachedConfigs) {
 		return cachedConfigs, nil
 	}
-
-	// 缓存未命中，从数据库获取
 	var configs []model.Config
 	if latestOnly {
-		version := common.GetClientVersion(ctx)
-		configs, err = l.configDAO.ListByEnvironmentAndPipeline(ctx, l.db, environmentKey, pipelineKey, version, 0, 0)
+		configs, err = l.configDAO.ListLatestByScope(ctx, l.db, scopeID)
 	} else {
-		configs, err = l.configDAO.ListByEnvironmentAndPipelineWithFilter(ctx, l.db, environmentKey, pipelineKey, minVersion, maxVersion, resourceType, 0, 0)
+		configs, err = l.configDAO.ListByScopeWithFilter(ctx, l.db, scopeID, resourceType, 0, 0)
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	// 存入缓存，设置过期时间为30分钟
+	for i := range configs {
+		configs[i].ScopeID = scopeID
+	}
 	if err := redis.Set(ctx, l.redisClient, cacheKey, configs, 30*time.Minute); err != nil {
-		// 缓存错误不影响主流程，只记录错误
 		fmt.Printf("Failed to cache config list: %v\n", err)
 	}
-
 	return configs, nil
 }
 
 func (l *Logic) ListConfigsAsMap(ctx context.Context, environmentKey, pipelineKey string) (map[string]any, error) {
-	// 生成缓存键
-	cacheKey := redis.GenerateConfigMapKey(environmentKey, pipelineKey)
-
-	// 尝试从缓存中获取
+	scopeID, err := configdb.ActiveScopeID(ctx, l.db, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := redis.GenerateScopedConfigMapKey(scopeID)
 	var cachedMap map[string]any
 	found, err := redis.Get(ctx, l.redisClient, cacheKey, &cachedMap)
 	if err == nil && found {
 		return cachedMap, nil
 	}
-
-	// 缓存未命中，从数据库获取
-	data, err := l.configDAO.ListByEnvironmentAndPipelineWithFilter(ctx, l.db, environmentKey, pipelineKey, "", "", "", 0, 0)
+	data, err := l.configDAO.ListByScopeWithFilter(ctx, l.db, scopeID, "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
-
 	userID, ok := common.GetUserID(ctx)
 	if !ok || userID == 0 {
 		filtered := make([]model.Config, 0, len(data))
@@ -263,260 +211,41 @@ func (l *Logic) ListConfigsAsMap(ctx context.Context, environmentKey, pipelineKe
 		}
 		data = filtered
 	}
-
 	result := make(map[string]any, len(data))
 	for _, res := range data {
 		result[res.Alias] = res.Content
 	}
-
-	// 存入缓存，设置过期时间为1小时
 	if err := redis.Set(ctx, l.redisClient, cacheKey, result, time.Hour); err != nil {
-		// 缓存错误不影响主流程，只记录错误
 		fmt.Printf("Failed to cache config map: %v\n", err)
 	}
-
 	return result, nil
 }
 
 func (l *Logic) ExportConfigs(ctx context.Context, environmentKey, pipelineKey string) ([]model.Config, error) {
-	data, err := l.configDAO.ListByEnvironmentAndPipeline(ctx, l.db, environmentKey, pipelineKey, common.GetClientVersion(ctx), 0, 0)
+	scopeID, err := configdb.ActiveScopeID(ctx, l.db, environmentKey, pipelineKey)
+	if err != nil {
+		return nil, err
+	}
+	data, err := l.configDAO.ListByScopeWithFilter(ctx, l.db, scopeID, "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
 	for i := range data {
 		data[i].ResourceKey = ""
+		data[i].ScopeID = scopeID
 	}
 	return data, nil
 }
 
-func (l *Logic) ImportConfigs(ctx context.Context, configs []model.Config, overwrite bool) error {
-	if overwrite {
-		if err := l.configDAO.ClearAll(ctx, l.db); err != nil {
-			return err
-		}
-	}
-
-	// 用于跟踪已导入的 alias，避免重复
-	importedAliases := make(map[string]bool)
-	// 用于跟踪需要清除缓存的环境和渠道
-	envPipelineMap := make(map[string]bool)
-
-	for idx := range configs {
-		cfg := configs[idx]
-		normalizeConfigPayload(&cfg)
-		if err := l.validateConfigContent(ctx, &cfg); err != nil {
-			return err
-		}
-
-		// 检查是否已经导入过相同的 alias
-		aliasKey := fmt.Sprintf("%s/%s/%s", cfg.EnvironmentKey, cfg.PipelineKey, cfg.Alias)
-		if cfg.Alias != "" && importedAliases[aliasKey] {
-			// 跳过重复的 alias
-			continue
-		}
-
-		existing, err := l.configDAO.GetByResourceKey(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.ResourceKey)
-		if err != nil && err != gorm.ErrRecordNotFound {
-			return err
-		}
-		if existing == nil && cfg.ResourceKey == "" && cfg.Alias != "" {
-			existing, err = l.configDAO.GetByAlias(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, cfg.Alias)
-			if err != nil && err != gorm.ErrRecordNotFound {
-				return err
-			}
-		}
-		if existing == nil {
-			if err := l.configDAO.Create(ctx, l.db, &cfg); err != nil {
-				return err
-			}
-			// 记录已导入的 alias
-			if cfg.Alias != "" {
-				importedAliases[aliasKey] = true
-			}
-		} else {
-			cfg.ResourceKey = existing.ResourceKey
-			if err := l.configDAO.UpdateByEnvironmentAndPipeline(ctx, l.db, cfg.EnvironmentKey, cfg.PipelineKey, &cfg); err != nil {
-				return err
-			}
-			// 记录已导入的 alias
-			if cfg.Alias != "" {
-				importedAliases[aliasKey] = true
-			}
-		}
-
-		// 记录需要清除缓存的环境和渠道
-		envPipelineKey := fmt.Sprintf("%s:%s", cfg.EnvironmentKey, cfg.PipelineKey)
-		envPipelineMap[envPipelineKey] = true
-	}
-
-	// 清除相关缓存
-	if l.redisClient != nil {
-		for envPipelineKey := range envPipelineMap {
-			parts := strings.Split(envPipelineKey, ":")
-			if len(parts) == 2 {
-				environmentKey := parts[0]
-				pipelineKey := parts[1]
-
-				// 清除列表缓存
-				listPattern := fmt.Sprintf("rainbow_bridge:config:list:%s:%s:*", environmentKey, pipelineKey)
-				if err := redis.DeleteByPattern(ctx, l.redisClient, listPattern); err != nil {
-					fmt.Printf("Failed to clear config list cache: %v\n", err)
-				}
-
-				// 清除映射缓存
-				mapKey := redis.GenerateConfigMapKey(environmentKey, pipelineKey)
-				if err := redis.Delete(ctx, l.redisClient, mapKey); err != nil {
-					fmt.Printf("Failed to clear config map cache: %v\n", err)
-				}
-			}
-		}
-
-		// 如果是覆盖模式，清除所有缓存
-		if overwrite {
-			if err := redis.DeleteByPattern(ctx, l.redisClient, "rainbow_bridge:config:*"); err != nil {
-				fmt.Printf("Failed to clear all config caches: %v\n", err)
-			}
-		}
-	}
-
-	return nil
-}
-
 func (l *Logic) ListBusinessKeys(ctx context.Context) ([]string, error) {
-	// Deprecated: business_key is replaced by environment_key + pipeline_key
 	return []string{}, errors.New("business_key is deprecated")
 }
 
-// --------------------- Config Validation & Normalization ---------------------
-
-func normalizeConfigPayload(cfg *model.Config) {
-	if cfg == nil {
-		return
+func validConfigRevisions(configs []model.Config) bool {
+	for _, cfg := range configs {
+		if !configdb.ValidEditRevision(cfg.EditRevision) {
+			return false
+		}
 	}
-	cfg.EnvironmentKey = strings.TrimSpace(cfg.EnvironmentKey)
-	cfg.PipelineKey = strings.TrimSpace(cfg.PipelineKey)
-	cfg.Alias = strings.TrimSpace(cfg.Alias)
-	cfg.Name = strings.TrimSpace(cfg.Name)
-	cfg.Type = normalizeConfigType(cfg.Type)
-	cfg.Content = strings.TrimSpace(cfg.Content)
-	cfg.Remark = strings.TrimSpace(cfg.Remark)
-	cfg.Description = strings.TrimSpace(cfg.Description)
-}
-
-func normalizeConfigType(t string) string {
-	return util.NormalizeConfigType(t)
-}
-
-func (l *Logic) validateConfigContent(ctx context.Context, cfg *model.Config) error {
-	if cfg == nil {
-		return errors.New("config payload required")
-	}
-
-	// 前端传什么类型就存什么类型，不做自动类型转换
-
-	switch cfg.Type {
-	case "image":
-		if cfg.Content == "" {
-			return errors.New("图片类型内容不能为空")
-		}
-		// 支持多种路径格式
-		contentLower := strings.ToLower(cfg.Content)
-		if strings.HasPrefix(cfg.Content, "asset://") ||
-			strings.HasPrefix(cfg.Content, "/api/v1/asset/file/") ||
-			strings.Contains(cfg.Content, "/api/v1/asset/file/") || // 支持带路由前缀的路径
-			strings.HasPrefix(contentLower, "http://") ||
-			strings.HasPrefix(contentLower, "https://") {
-			if strings.HasPrefix(cfg.Content, "asset://") {
-				fileID := strings.TrimPrefix(cfg.Content, "asset://")
-				asset, err := l.assetDAO.GetByFileID(ctx, l.db, fileID)
-				if err == nil && asset != nil {
-					cfg.Content = fmt.Sprintf("/api/v1/asset/file/%s/%s", asset.FileID, asset.FileName)
-				} else {
-					// Fallback if asset not found in DB
-					cfg.Content = "/api/v1/asset/file/" + fileID
-				}
-			}
-			return nil
-		}
-		return errors.New("图片类型内容必须为有效的引用地址")
-	case "file":
-		if cfg.Content == "" {
-			return errors.New("文件类型内容不能为空")
-		}
-		// 支持多种路径格式（与 image 类型相同的处理逻辑）
-		contentLower := strings.ToLower(cfg.Content)
-		if strings.HasPrefix(cfg.Content, "asset://") ||
-			strings.HasPrefix(cfg.Content, "/api/v1/asset/file/") ||
-			strings.Contains(cfg.Content, "/api/v1/asset/file/") || // 支持带路由前缀的路径
-			strings.HasPrefix(contentLower, "http://") ||
-			strings.HasPrefix(contentLower, "https://") {
-			if strings.HasPrefix(cfg.Content, "asset://") {
-				fileID := strings.TrimPrefix(cfg.Content, "asset://")
-				asset, err := l.assetDAO.GetByFileID(ctx, l.db, fileID)
-				if err == nil && asset != nil {
-					cfg.Content = fmt.Sprintf("/api/v1/asset/file/%s/%s", asset.FileID, asset.FileName)
-				} else {
-					// Fallback if asset not found in DB
-					cfg.Content = "/api/v1/asset/file/" + fileID
-				}
-			}
-			return nil
-		}
-		return errors.New("文件类型内容必须为有效的引用地址")
-	case "text":
-		if cfg.Content == "" {
-			return errors.New("文案内容不能为空")
-		}
-		return nil
-	case "textarea":
-		if cfg.Content == "" {
-			return errors.New("文本内容不能为空")
-		}
-		return nil
-	case "richtext":
-		if cfg.Content == "" {
-			return errors.New("富文本内容不能为空")
-		}
-		return nil
-	case "color":
-		colorValue, err := normalizeColorContent(cfg.Content)
-		if err != nil {
-			return err
-		}
-		cfg.Content = colorValue
-		return nil
-	default:
-		if cfg.Content == "" {
-			return errors.New("配置内容不能为空")
-		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(cfg.Content), &payload); err != nil {
-			return fmt.Errorf("配置内容需为 JSON 对象: %w", err)
-		}
-		if payload == nil {
-			return errors.New("配置内容不能为空对象")
-		}
-		canonical, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-		cfg.Content = string(canonical)
-		return nil
-	}
-}
-
-func normalizeColorContent(value string) (string, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", errors.New("色彩标签内容不能为空")
-	}
-	matches := colorHexRegexp.FindStringSubmatch(trimmed)
-	if matches == nil {
-		return "", errors.New("色彩标签内容需为 #RGB 或 #RRGGBB 格式")
-	}
-	hex := matches[1]
-	if len(hex) == 3 {
-		hex = fmt.Sprintf("%c%c%c%c%c%c", hex[0], hex[0], hex[1], hex[1], hex[2], hex[2])
-	}
-	return "#" + strings.ToUpper(hex), nil
+	return true
 }

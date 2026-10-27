@@ -1,0 +1,128 @@
+.spectrum-shell .config-page-heading { padding: 32px 0; }
+.spectrum-shell .config-page-heading h1 { margin-top: 12px; }
+.spectrum-shell .config-page-heading > p:last-child { margin-top: 12px; color: var(--muted-foreground); }
+.spectrum-shell .config-scope-selector { padding: 24px; border: 1px solid var(--spectrum-surface-line); border-radius: 16px; background: var(--card); box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-shell .config-scope-header { padding: 0 0 16px; }
+.spectrum-shell .config-scope-title { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.spectrum-shell .config-scope-content { padding: 0; }
+.spectrum-shell .config-scope-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; }
+.spectrum-shell .config-scope-trigger { min-height: 44px; width: 224px; max-width: 100%; box-shadow: none; background: var(--card); }
+.spectrum-shell .config-scope-summary { max-width: 100%; background: transparent; color: var(--muted-foreground); font-size: 12px; padding: 0; font-weight: 400; white-space: normal; }
+.spectrum-shell .config-environment-error { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 16px; color: var(--destructive); font-size: 14px; }
+.spectrum-shell .config-freeze-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 24px; background: var(--card); border: 1px solid var(--spectrum-surface-line); border-radius: 8px; margin: 24px 0; box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-shell .config-freeze-panel.is-frozen { background: var(--spectrum-caution-bg); color: var(--spectrum-caution); }
+.spectrum-shell .config-freeze-panel.is-frozen code, .spectrum-shell .config-freeze-panel.is-frozen .text-muted-foreground { color: var(--spectrum-caution); }
+.spectrum-shell .config-freeze-panel > div:first-child { flex: 1 1 320px; }
+.spectrum-shell .config-freeze-reason { font-size: 12px; line-height: 2; overflow-wrap: anywhere; }
+.spectrum-shell .config-freeze-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.spectrum-shell .config-freeze-actions button { min-height: 40px; }
+.spectrum-shell .config-freeze-actions > a { color: var(--spectrum-link); }
+.spectrum-shell .config-freeze-panel.is-frozen .config-freeze-actions > a { color: var(--spectrum-caution); }
+.spectrum-shell .config-freeze-panel.is-frozen .config-freeze-actions button { background: transparent; color: var(--spectrum-caution); }
+.spectrum-shell .config-list-heading, .spectrum-shell .config-list-heading > div { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.spectrum-shell .config-list-heading { justify-content: space-between; margin: 24px 0 16px; }
+.spectrum-shell .config-list-heading h2 { font-size: 20px; }
+.spectrum-shell .config-list-heading > div > span { color: var(--muted-foreground); font-size: 12px; }
+.spectrum-shell .config-readonly-label { color: var(--spectrum-link); font-size: 12px; }
+.spectrum-shell .config-workspace { padding-bottom: 32px; }
+.spectrum-shell .config-workspace.has-content { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.spectrum-shell .config-catalog { min-width: 0; padding: 24px; background: var(--card); border: 1px solid var(--spectrum-surface-line); border-radius: 16px; box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-shell .config-detail-region { min-width: 0; scroll-margin-top: 24px; }
+.spectrum-shell .config-catalog-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.spectrum-shell .config-catalog-tools > button { min-height: 44px; flex-shrink: 0; }
+.spectrum-shell .config-search { display: flex; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-width: 0; flex: 1; padding-left: 12px; color: var(--muted-foreground); }
+.spectrum-shell .config-search > svg { flex-shrink: 0; }
+.spectrum-shell .config-search input { background: transparent; height: 44px; min-width: 0; border: 0; box-shadow: none; padding-left: 0; font-size: 14px; }
+.spectrum-shell .config-empty-state { min-height: 256px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 48px 24px; gap: 16px; background: var(--card); border-radius: 16px; }
+.spectrum-shell .config-empty-state > svg { color: var(--muted-foreground); }
+.spectrum-shell .config-empty-state h3 { font-size: 18px; }
+.spectrum-shell .config-empty-state p { max-width: 32em; color: var(--muted-foreground); line-height: 2; }
+.spectrum-shell .config-catalog-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
+.spectrum-shell .config-catalog-table th { padding: 0 12px 12px; color: var(--muted-foreground); font-weight: 400; text-align: left; font-size: 12px; border-bottom: 1px solid var(--border); }
+.spectrum-shell .config-catalog-table th:nth-child(2) { width: 64px; }
+.spectrum-shell .config-catalog-table th:last-child { width: 88px; }
+.spectrum-shell .config-catalog-table td { padding: 12px 8px; border-bottom: 1px solid var(--border); }
+.spectrum-shell .config-catalog-table tr.is-selected { background: var(--secondary); }
+.spectrum-shell .config-select { display: flex; width: 100%; align-items: center; gap: 12px; min-height: 48px; text-align: left; background: transparent; border: 0; padding: 4px; color: var(--foreground); }
+.spectrum-shell .config-select > span:nth-child(2) { min-width: 0; flex: 1; }
+.spectrum-shell .config-select strong { display: block; overflow-wrap: anywhere; font-size: 14px; }
+.spectrum-shell .config-select code { display: block; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; margin-top: 4px; }
+.spectrum-shell .config-item-mark { font: 14px/1.5 Consolas, monospace; color: var(--muted-foreground); width: 24px; flex-shrink: 0; }
+.spectrum-shell .config-selected-arrow { opacity: 0; flex-shrink: 0; }
+.spectrum-shell tr.is-selected .config-selected-arrow { opacity: 1; }
+.spectrum-shell .config-type-label { color: var(--muted-foreground); font-size: 12px; }
+.spectrum-shell tr.is-selected code, .spectrum-shell tr.is-selected .config-type-label, .spectrum-shell tr.is-selected .config-item-mark { color: var(--spectrum-secondary-text); }
+.spectrum-shell .config-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.spectrum-shell .config-row-actions button { width: 32px; height: 40px; color: var(--spectrum-secondary-text); }
+.spectrum-shell .config-row-actions button:last-child:not(:disabled) { color: var(--destructive); }
+.spectrum-shell .config-catalog-footer { display: flex; justify-content: space-between; gap: 16px; padding: 24px 0 0; font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.spectrum-shell .config-detail { background: var(--spectrum-material-dark); color: var(--spectrum-inverse); border: 1px solid var(--spectrum-material-dark-edge); border-radius: 16px; padding: 24px; min-width: 0; box-shadow: var(--spectrum-material-dark-shadow); }
+.spectrum-shell .config-detail h2 { font-size: 24px; overflow-wrap: anywhere; }
+.spectrum-shell .config-detail-overline { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; font: 12px/1.5 Consolas, monospace; letter-spacing: 1px; color: var(--spectrum-inverse-muted); }
+.spectrum-shell .config-detail-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 12px; color: var(--spectrum-inverse-muted); }
+.spectrum-shell .config-detail-meta code { overflow-wrap: anywhere; }
+.spectrum-shell .config-content-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0 16px; font-size: 12px; color: var(--spectrum-inverse-muted); }
+.spectrum-shell .config-content-toolbar > div { display: flex; gap: 12px; }
+.spectrum-shell .config-detail-quiet { display: inline-flex; align-items: center; gap: 4px; padding: 8px 0; border: 0; background: transparent; color: var(--spectrum-inverse); font-size: 12px; }
+.spectrum-shell .config-detail-quiet:hover { color: var(--spectrum-gold); }
+.spectrum-shell .config-detail-content { min-width: 0; }
+.spectrum-shell .config-detail-content pre { min-height: 192px; margin: 0; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/2 Consolas, ui-monospace, monospace; color: var(--spectrum-inverse); }
+.spectrum-shell .config-detail-description { border-top: 1px solid var(--spectrum-ink-line); margin-top: 24px; padding-top: 16px; color: var(--spectrum-inverse-muted); font-size: 12px; }
+.spectrum-shell .config-detail-description p { font-size: 14px; line-height: 2; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.spectrum-shell .config-detail-bottom { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 24px; color: var(--spectrum-inverse-muted); font-size: 12px; }
+.spectrum-shell .config-detail-bottom > span { display: flex; align-items: center; gap: 8px; }
+.spectrum-shell .config-detail-bottom > button { background: var(--spectrum-material-dark-control); color: var(--spectrum-inverse); border-color: var(--spectrum-material-dark-edge); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--spectrum-inverse) 8%, transparent); }
+.spectrum-shell .config-detail-bottom > button:hover:not(:disabled) { background: var(--spectrum-ink-line); border-color: var(--spectrum-inverse-muted); }
+.spectrum-shell .config-detail-bottom > button:disabled { background: var(--spectrum-ink-panel); color: var(--spectrum-inverse-muted); opacity: 1; box-shadow: none; }
+.spectrum-shell .config-image-button { display: block; width: 100%; background: transparent; border: 0; color: var(--spectrum-inverse); }
+.spectrum-shell .config-image-button img { max-height: 320px; width: 100%; object-fit: contain; border-radius: 8px; }
+.spectrum-shell .config-media-caption { display: block; font-size: 12px; color: var(--spectrum-inverse-muted); margin-top: 12px; }
+.spectrum-shell .config-media-error { display: flex; flex-direction: column; gap: 16px; align-items: center; padding: 48px 16px; }
+.spectrum-shell .config-color-preview { display: flex; flex-direction: column; gap: 16px; }
+.spectrum-shell .config-color-preview > span { display: block; height: 192px; width: 100%; border-radius: 8px; }
+.spectrum-shell .config-file-preview { display: flex; flex-direction: column; gap: 24px; align-items: flex-start; padding: 16px 0; min-height: 192px; }
+.spectrum-shell .config-file-preview code { overflow-wrap: anywhere; }
+.spectrum-shell .config-file-preview a { display: inline-flex; align-items: center; gap: 8px; color: var(--spectrum-gold); }
+.spectrum-shell .config-richtext-preview { width: 100%; min-height: 256px; background: var(--spectrum-inverse); border: 0; border-radius: 8px; }
+:root:has(.spectrum-shell) [role=dialog].spectrum-image-dialog { max-width: min(960px, calc(100vw - 32px)); }
+.spectrum-image-stage { position: relative; min-height: 192px; display: flex; align-items: center; justify-content: center; }
+.spectrum-image-stage img { display: block; max-width: 100%; max-height: 70dvh; object-fit: contain; }
+.spectrum-image-stage img.is-loading { opacity: 0; }
+.spectrum-image-stage p { display: flex; align-items: center; gap: 12px; padding: 24px; }
+.spectrum-image-stage img.is-loading + p { position: absolute; }
+@media (max-width: 1100px) {
+  .spectrum-shell .config-workspace.has-content { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+  .spectrum-shell .config-item-mark { display: none; }
+  .spectrum-shell .config-catalog-table th:last-child { width: 80px; }
+}
+@media (max-width: 800px) {
+  .spectrum-shell .config-workspace.has-content { grid-template-columns: minmax(0, 1fr); }
+  .spectrum-shell .config-scope-summary { margin-left: 0; flex-basis: 100%; }
+  .spectrum-shell .config-detail { margin-top: 8px; }
+  .spectrum-shell .config-select { min-height: 64px; }
+}
+@media (max-width: 600px) {
+  .spectrum-shell .config-scope-fields { display: block; }
+  .spectrum-shell .config-scope-fields > div { align-items: flex-start; margin-bottom: 16px; }
+  .spectrum-shell .config-scope-fields > div > div { padding-top: 12px; min-width: 64px; }
+  .spectrum-shell .config-scope-trigger { flex: 1; width: 100%; min-width: 0; }
+  .spectrum-shell .config-freeze-panel { padding: 16px; gap: 16px; }
+  .spectrum-shell .config-freeze-actions { width: 100%; }
+  .spectrum-shell .config-freeze-actions > span { flex-basis: 100%; }
+  .spectrum-shell .config-catalog-tools { flex-wrap: wrap; }
+  .spectrum-shell .config-search { flex-basis: 100%; }
+  .spectrum-shell .config-catalog-tools > button { width: 100%; }
+  .spectrum-shell .config-catalog-table td { padding: 8px 4px; }
+  .spectrum-shell .config-catalog-table th { padding: 0 4px 12px; }
+  .spectrum-shell .config-catalog-table th:nth-child(2) { width: 48px; }
+  .spectrum-shell .config-catalog-table th:last-child { width: 88px; }
+  .spectrum-shell .config-row-actions button { width: 40px; min-height: 44px; }
+  .spectrum-shell .config-select { gap: 4px; }
+  .spectrum-shell .config-selected-arrow { display: none; }
+  .spectrum-shell .config-detail { padding: 24px 16px; }
+  .spectrum-shell .config-detail-content pre { font-size: 12px; }
+}
+@media (pointer: coarse) {
+  .spectrum-shell .config-search input { font-size: 16px; }
+  .spectrum-shell .config-detail-quiet { min-height: 44px; }
+}

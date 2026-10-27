@@ -46,6 +46,7 @@ function calculateSelectionsFromChecked(
     if (envChecked) {
       selections.push({
         environment_key: envKey,
+        expected_environment_id: env.environment_id,
         pipeline_key: '',
         resource_keys: [],
       })
@@ -58,7 +59,9 @@ function calculateSelectionsFromChecked(
         if (pipeChecked) {
           selections.push({
             environment_key: envKey,
+        expected_environment_id: env.environment_id,
             pipeline_key: pipe.pipeline_key,
+            expected_scope_id: pipe.scope_id,
             resource_keys: [],
           })
         } else {
@@ -69,7 +72,9 @@ function calculateSelectionsFromChecked(
           if (selectedConfigs.length > 0) {
             selections.push({
               environment_key: envKey,
+        expected_environment_id: env.environment_id,
               pipeline_key: pipe.pipeline_key,
+            expected_scope_id: pipe.scope_id,
               resource_keys: selectedConfigs,
             })
           }
@@ -321,7 +326,7 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
 </script>
 
 <template>
-  <div class="space-y-1">
+  <div class="spectrum-transfer-tree space-y-1">
     <div v-if="loading" class="flex items-center justify-center py-8 text-muted-foreground">
       <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mr-2" />
       加载中...
@@ -337,6 +342,8 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
         <div class="flex items-center gap-2 py-2 px-2 hover:bg-muted/50 rounded-md">
           <button
             @click="toggleExpand(env.environment_key)"
+            :aria-expanded="isNodeExpanded(env.environment_key)"
+            :aria-label="`展开或收起环境 ${env.environment_name}`"
             class="p-0.5 hover:bg-muted rounded"
           >
             <ChevronDown v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4" />
@@ -344,11 +351,12 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
           </button>
           <Checkbox
             :model-value="getEnvState(env).checked"
+            :aria-label="`选择环境 ${env.environment_name}`"
             @update:model-value="(v: boolean) => handleEnvChange(env, v)"
             :class="getEnvState(env).indeterminate ? 'data-[state=checked]:bg-primary/50' : ''"
           />
-          <FolderOpen v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4 text-blue-500" />
-          <Folder v-else class="w-4 h-4 text-blue-500" />
+          <FolderOpen v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4 text-muted-foreground" />
+          <Folder v-else class="w-4 h-4 text-muted-foreground" />
           <span class="flex-1 text-sm font-medium">{{ env.environment_name }}</span>
           <Badge variant="secondary" class="text-xs">
             {{ (env.pipelines || []).length }} 渠道 / {{ getEnvConfigCount(env) }} 配置
@@ -360,6 +368,8 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
             <div class="flex items-center gap-2 py-2 px-2 hover:bg-muted/50 rounded-md">
               <button
                 @click="toggleExpand(`${env.environment_key}:${pipe.pipeline_key}`)"
+                :aria-expanded="isNodeExpanded(`${env.environment_key}:${pipe.pipeline_key}`)"
+                :aria-label="`展开或收起渠道 ${pipe.pipeline_name}`"
                 class="p-0.5 hover:bg-muted rounded"
               >
                 <ChevronDown v-if="isNodeExpanded(`${env.environment_key}:${pipe.pipeline_key}`)" class="w-4 h-4" />
@@ -367,10 +377,11 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
               </button>
               <Checkbox
                 :model-value="getPipeState(env, pipe).checked"
+                :aria-label="`选择渠道 ${pipe.pipeline_name}`"
                 @update:model-value="(v: boolean) => handlePipeChange(env, pipe, v)"
                 :class="getPipeState(env, pipe).indeterminate ? 'data-[state=checked]:bg-primary/50' : ''"
               />
-              <Folder class="w-4 h-4 text-emerald-500" />
+              <Folder class="w-4 h-4 text-muted-foreground" />
               <span class="flex-1 text-sm">{{ pipe.pipeline_name }}</span>
               <Badge variant="outline" class="text-xs">
                 {{ pipe.config_count || 0 }} 配置
@@ -386,9 +397,10 @@ function getEnvConfigCount(env: ExportTreeEnvironment) {
                 <div class="w-5" />
                 <Checkbox
                   :model-value="isConfigChecked(env, pipe, cfg)"
+                  :aria-label="`选择配置 ${cfg.name || cfg.alias}`"
                   @update:model-value="(v: boolean) => handleConfigChange(env, pipe, cfg, v)"
                 />
-                <FileText class="w-4 h-4 text-amber-500" />
+                <FileText class="w-4 h-4 text-muted-foreground" />
                 <span class="flex-1 text-sm text-muted-foreground">
                   {{ cfg.name || cfg.alias }}
                 </span>

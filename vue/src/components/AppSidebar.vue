@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { LayoutDashboard, Settings, Github, Database, Layers, ArrowRightLeft, Info, ExternalLink, Import, BookOpen } from 'lucide-vue-next'
+import { LayoutDashboard, Settings, Github, Database, Layers, ArrowRightLeft, Info, ExternalLink, Import, BookOpen, PackageCheck } from 'lucide-vue-next'
 import { cn } from '@/lib/utils'
 import { useVersionStore } from '@/stores/version'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +39,11 @@ const navItems = [
     title: '导入导出',
     href: '/import-export',
     icon: Import,
+  },
+  {
+    title: '版本发布',
+    href: '/releases',
+    icon: PackageCheck,
   },
 ]
 

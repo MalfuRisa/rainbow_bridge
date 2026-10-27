@@ -1,0 +1,167 @@
+/* §1.5 / §2.1 / §5.7: homepage-only tokens, orange interaction and green live state.
+   Existing control motion scale; a separate 900ms cover reveal never delays an API action. */
+.spectrum-home { --home-bridge-light-duration: 900ms; --home-hover: color-mix(in srgb, var(--primary) 7%, var(--background)); --home-success: var(--spectrum-success); --home-success-surface: color-mix(in srgb, var(--home-success) 5%, var(--card)); }
+:root.dark .spectrum-home { --home-success: color-mix(in srgb, var(--spectrum-success), var(--spectrum-inverse) 48%); }
+.spectrum-home-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px 0; }
+.spectrum-home-heading h1 { font-size: 20px; letter-spacing: 0; }
+.spectrum-home-heading .spectrum-text-button { gap: 8px; }
+.spectrum-introduction { display: grid; grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows var(--duration-slow) var(--ease-in-out), opacity var(--duration-normal) var(--ease-out), visibility 0s; }
+.spectrum-introduction.is-collapsed { grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition-delay: 0s, 0s, var(--duration-slow); }
+.spectrum-introduction-inner { min-height: 0; overflow: hidden; margin-inline: -16px; padding-inline: 16px; }
+/* Real copy and state overlay the decorative bridge; no baked-in labels. */
+.spectrum-hero { background: var(--spectrum-ink); color: var(--spectrum-inverse); border-radius: 16px; display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.3fr); overflow: hidden; min-height: 400px; box-shadow: var(--spectrum-elevation-navigation); }
+.spectrum-hero-copy { padding: 48px 0 48px 40px; min-width: 0; z-index: 1; align-self: center; }
+.spectrum-hero .spectrum-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--spectrum-inverse-muted); }
+.spectrum-hero h2 { font-size: 48px; letter-spacing: -.04em; line-height: 1.3; margin: 24px 0 16px; }
+.spectrum-hero h2 span { color: var(--spectrum-gold); }
+.spectrum-hero .spectrum-hero-description { line-height: 2; color: var(--spectrum-inverse-muted); }
+.spectrum-hero-actions { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; margin-top: 32px; }
+.spectrum-home .spectrum-primary-link { min-height: 48px; padding: 12px 20px; box-shadow: inset 0 1px 0 color-mix(in srgb, var(--spectrum-gold) 48%, transparent); transition: background-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.spectrum-home .spectrum-primary-link:hover { background: color-mix(in srgb, var(--spectrum-orange) 80%, var(--spectrum-gold)); box-shadow: inset 0 1px 0 var(--spectrum-gold), 0 4px 16px color-mix(in srgb, var(--spectrum-orange) 16%, transparent); }
+.spectrum-hero-actions a > svg { transition: transform var(--duration-fast) var(--ease-out); }
+.spectrum-hero-actions a:hover > svg { transform: translate(2px, -2px); }
+.spectrum-hero-link { display: inline-flex; align-items: center; gap: 8px; color: var(--spectrum-inverse); font-size: 12px; padding: 12px 0; transition: color var(--duration-fast) var(--ease-out); }
+.spectrum-hero-link:hover { color: var(--spectrum-gold); }
+.spectrum-release-art { position: relative; isolation: isolate; min-width: 0; min-height: 400px; }
+.spectrum-bridge-scenery { position: absolute; inset: 0; pointer-events: none; mask-image: linear-gradient(to right, transparent, black 12%, black 96%, transparent); }
+.spectrum-bridge-artwork { display: block; width: 100%; height: 100%; object-fit: cover; filter: brightness(.9); opacity: .16; }
+/* Follow the curved bridge from its feet to the crown, with mirrored water light.
+   The blur is fixed; only short path progress and ambient opacity animate. */
+.spectrum-bridge-lighting { position: absolute; inset: 0; width: 100%; height: 100%; filter: brightness(.9); }
+.spectrum-bridge-light-path { stroke-dasharray: 1 1; stroke-dashoffset: 1; }
+.spectrum-bridge-ambient-light { opacity: 0; }
+.spectrum-bridge-scenery.is-ready .spectrum-bridge-light-path { animation: home-bridge-arch-light var(--home-bridge-light-duration) cubic-bezier(.32, 0, .25, 1) both; }
+.spectrum-bridge-scenery.is-ready .spectrum-bridge-ambient-light { animation: home-bridge-ambient-light var(--home-bridge-light-duration) ease-in-out both; }
+.spectrum-bridge-flow { position: absolute; left: 8px; right: 32px; bottom: 56px; display: grid; grid-template-columns: 152px minmax(0, 1fr) 176px; align-items: center; gap: 12px; }
+.spectrum-origin { padding: 16px; background: color-mix(in srgb, var(--spectrum-ink-panel) 88%, transparent); border: 1px solid var(--spectrum-secondary-text); border-radius: 8px; color: var(--spectrum-inverse); min-width: 0; }
+.spectrum-origin > span { font-size: 14px; font-weight: 500; }
+.spectrum-origin small { display: block; margin-top: 12px; font: 12px/1.5 Consolas, monospace; color: var(--spectrum-inverse-muted); overflow-wrap: anywhere; }
+.spectrum-origin-content { display: flex; align-items: center; gap: 16px; margin-top: 16px; }
+.spectrum-origin code { color: var(--spectrum-gold); font-size: 24px; white-space: nowrap; }
+.spectrum-sheet-lines { display: flex; flex-direction: column; flex: 1; gap: 8px; }
+.spectrum-sheet-lines i { height: 4px; display: block; background: var(--spectrum-ink-line); border-radius: 4px; }
+.spectrum-sheet-lines i:nth-child(2) { width: 80%; }
+.spectrum-sheet-lines i:nth-child(3) { width: 60%; }
+.spectrum-art-lock { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--spectrum-gold); font-size: 12px; white-space: nowrap; }
+.spectrum-art-lock > span { height: 1px; min-width: 8px; flex: 1; background: repeating-linear-gradient(to right, var(--spectrum-gold) 0 3px, transparent 3px 7px); }
+.spectrum-art-lock > svg { flex-shrink: 0; }
+.spectrum-art-lock > svg:last-child { margin-left: -8px; }
+.spectrum-snapshot { min-width: 0; padding: 16px; border: 1px solid var(--spectrum-gold); border-radius: 8px; background: var(--spectrum-inverse); color: var(--spectrum-ink); box-shadow: 0 8px 24px color-mix(in srgb, var(--spectrum-ink) 24%, transparent); }
+.spectrum-snapshot-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--spectrum-warning); }
+.spectrum-snapshot-label i { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--spectrum-warning); }
+.spectrum-snapshot.is-live .spectrum-snapshot-label { color: var(--spectrum-success); }
+.spectrum-snapshot.is-live .spectrum-snapshot-label i { background: var(--spectrum-success); }
+.spectrum-snapshot strong { display: block; font: 600 48px/1.25 Consolas, 'Microsoft YaHei', monospace; letter-spacing: -1px; margin: 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spectrum-snapshot.is-live strong { animation: home-status-arrive var(--duration-normal) var(--ease-out); }
+.spectrum-snapshot-footer { display: flex; justify-content: space-between; align-items: center; gap: 4px; font-size: 12px; padding-top: 12px; border-top: 1px solid var(--spectrum-gold); }
+.spectrum-art-baseline { position: absolute; bottom: 20px; left: 8px; right: 32px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--spectrum-inverse-muted); font-size: 12px; }
+.spectrum-principles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin: 24px 0; padding: 24px 32px; background: var(--card); border: 1px solid var(--spectrum-surface-line); border-radius: 16px; box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-principles > div { min-width: 0; }
+.spectrum-principles > div + div { padding-left: 32px; border-left: 1px solid var(--border); }
+.spectrum-principles > div > span { display: block; color: var(--spectrum-link); font: 12px/1.5 Consolas, monospace; margin-bottom: 12px; }
+.spectrum-principles h3 { font-size: 20px; margin-bottom: 12px; }
+.spectrum-principles p { color: var(--muted-foreground); font-size: 12px; line-height: 2; }
+/* Working area: independent hover and active signals, unchanged controls. */
+.spectrum-home .runtime-panel { padding: 24px; border: 1px solid var(--spectrum-surface-line); border-radius: 16px; background: var(--card); box-shadow: var(--spectrum-elevation-panel); }
+.spectrum-home .runtime-header { padding: 0 0 16px; }
+.spectrum-home .runtime-content { padding: 0; }
+.spectrum-home .runtime-header .runtime-title { font-size: 24px; color: var(--foreground); }
+.spectrum-home .spectrum-runtime-release-link { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 8px 0 8px 12px; color: var(--spectrum-link); font-size: 12px; transition: color var(--duration-fast) var(--ease-out); }
+.spectrum-home .spectrum-runtime-release-link:hover { color: var(--foreground); }
+.spectrum-home .runtime-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px 24px; padding: 12px 16px; border: 1px solid var(--spectrum-surface-line); border-radius: 8px; background: var(--spectrum-surface-soft); }
+.spectrum-home .runtime-scope-field { display: flex; align-items: center; gap: 12px; }
+.spectrum-home .runtime-scope-field > label { font-weight: 400; color: var(--muted-foreground); }
+.spectrum-home .runtime-toolbar [role=combobox] { min-height: 40px; width: 224px; max-width: 100%; box-shadow: none; background: var(--background); }
+.spectrum-home .runtime-toolbar [role=combobox]:hover:not(:disabled) { border-color: var(--spectrum-link); }
+.spectrum-home .runtime-toolbar-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.spectrum-home .runtime-toolbar button { min-height: 40px; }
+.spectrum-home .runtime-toolbar button:active:not(:disabled), .spectrum-home .runtime-config-row button:active:not(:disabled) { transform: none; }
+.spectrum-home .runtime-toolbar button:not([role=combobox]):hover:not(:disabled) { box-shadow: none; }
+.spectrum-home .runtime-summary { position: relative; padding: 16px 24px; border: 1px solid var(--border); background: var(--home-success-surface); gap: 12px 24px; border-radius: 8px; overflow: hidden; }
+.spectrum-home .runtime-summary::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--home-success); }
+.spectrum-home .runtime-summary-version { display: flex; align-items: center; gap: 12px; }
+.spectrum-home .runtime-summary-version::before { content: ''; width: 8px; height: 8px; flex-shrink: 0; background: var(--home-success); border-radius: 50%; }
+.spectrum-home .runtime-summary-version > strong { font: 600 30px/1.25 Consolas, monospace; max-width: 100%; overflow-wrap: anywhere; }
+.spectrum-home .runtime-summary > span + span { border-left: 1px solid var(--border); padding-left: 24px; }
+.spectrum-home .runtime-type { color: var(--spectrum-secondary-text); background: var(--secondary); border: 0; font-size: 12px; box-shadow: none; }
+.spectrum-home .runtime-table-wrap { position: relative; border: 1px solid var(--spectrum-surface-line); border-radius: 8px; }
+.spectrum-home .runtime-table-wrap thead { background: color-mix(in srgb, var(--secondary) 20%, var(--card)); }
+.spectrum-home .runtime-table-wrap tbody tr:last-child { border-bottom: 0; }
+.spectrum-home .runtime-table-wrap th { padding: 12px; font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.spectrum-home .runtime-table-wrap td { padding: 16px 12px; font-size: 14px; }
+.spectrum-home .runtime-config-row { transition: background-color var(--duration-fast) var(--ease-out); }
+.spectrum-home .runtime-config-row:hover, .spectrum-home .runtime-config-row:focus-within { background: var(--home-hover); }
+.spectrum-home .runtime-config-row > td:first-child { transition: box-shadow var(--duration-fast) var(--ease-out); }
+.spectrum-home .runtime-config-row:hover > td:first-child, .spectrum-home .runtime-config-row:focus-within > td:first-child { box-shadow: inset 3px 0 var(--spectrum-orange); }
+.spectrum-home .runtime-raw-content { max-width: 384px; }
+.spectrum-home .runtime-config-row .runtime-config-value { flex-direction: row; align-items: center; flex-wrap: wrap; }
+.spectrum-home .runtime-config-row .runtime-value-toggle { white-space: nowrap; }
+.spectrum-home .runtime-config-row .runtime-image-preview { max-width: 128px; min-height: 48px; padding: 4px; }
+.spectrum-home .runtime-config-row .runtime-image-preview img { max-height: 56px; }
+.spectrum-home .runtime-config-row .text-green-600 { color: var(--home-success); }
+.spectrum-home .runtime-content > p { font-size: 12px; line-height: 2; }
+.spectrum-home .runtime-content a:not([class*=inline-flex]) { color: var(--spectrum-link); text-decoration: underline; text-underline-offset: 3px; }
+.spectrum-home .runtime-panel[data-state=loading] .runtime-table-wrap::before { content: ''; position: absolute; top: 0; left: 0; width: 24%; height: 2px; background: var(--spectrum-orange); animation: home-loading 1s var(--ease-in-out) infinite; }
+.home-status-enter-active { animation: home-status-arrive var(--duration-normal) var(--ease-out); }
+.home-status-leave-active { display: none; }
+@keyframes home-bridge-arch-light { 0%, 6% { stroke-dashoffset: 1; } 85%, 100% { stroke-dashoffset: 0; } }
+@keyframes home-bridge-ambient-light { 0%, 48% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes home-status-arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes home-loading { from { transform: translateX(-100%); } to { transform: translateX(450%); } }
+.spectrum-home-docs { display: grid; gap: 16px; margin: 24px 0 48px; }
+.spectrum-disclosure { background: var(--card); border: 1px solid var(--spectrum-surface-line); border-radius: 8px; padding: 0 16px; box-shadow: var(--spectrum-elevation-panel); transition: border-color var(--duration-fast) var(--ease-out); }
+.spectrum-disclosure:hover { border-color: var(--input); }
+.spectrum-disclosure > summary { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; cursor: pointer; list-style: none; font-weight: 500; }
+.spectrum-disclosure > summary::-webkit-details-marker { display: none; }
+.spectrum-disclosure > summary > span { display: inline-flex; align-items: center; gap: 12px; }
+.spectrum-disclosure > summary svg { color: var(--muted-foreground); transition: transform var(--duration-normal) var(--ease-out); }
+.spectrum-disclosure[open] > summary > svg { transform: rotate(180deg); }
+.spectrum-disclosure > div { border: 0; box-shadow: none; padding: 0; background: transparent; }
+.spectrum-disclosure > div > div { padding: 16px 0; }
+.spectrum-api-row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.spectrum-api-path { display: flex; align-items: flex-start; gap: 12px; min-width: 0; flex: 1; }
+.spectrum-api-path code { overflow-wrap: anywhere; white-space: normal; font-size: 12px; }
+.spectrum-api-description { display: block; color: var(--muted-foreground); font-size: 12px; line-height: 2; margin-top: 8px; }
+.spectrum-api-method { font-size: 12px; color: var(--spectrum-success); background: var(--spectrum-success-bg); padding: 4px 8px; border-radius: 4px; }
+/* Preserve the existing narrow-screen fallback; desktop is the design target. */
+@media (max-width: 1199px) {
+  .spectrum-hero h2 { font-size: 40px; }
+  .spectrum-hero-copy { padding: 40px 0 40px 32px; }
+  .spectrum-bridge-flow { right: 24px; grid-template-columns: 128px minmax(0, 1fr) 152px; gap: 8px; }
+  .spectrum-origin, .spectrum-snapshot { padding: 12px; }
+  .spectrum-hero-actions { gap: 16px; }
+  .spectrum-home .runtime-toolbar [role=combobox] { width: 192px; }
+}
+@media (max-width: 900px) {
+  .spectrum-hero { grid-template-columns: 1fr; }
+  .spectrum-hero-copy { padding: 32px 32px 0; }
+  .spectrum-release-art { min-height: 320px; }
+  .spectrum-bridge-flow { left: 32px; right: 32px; }
+  .spectrum-principles { gap: 24px; }
+  .spectrum-principles > div + div { padding-left: 24px; }
+}
+@media (max-width: 680px) {
+  .spectrum-hero h2 { font-size: 36px; }
+  .spectrum-hero-copy { padding: 32px 24px 0; }
+  .spectrum-hero-actions { align-items: flex-start; gap: 16px; flex-direction: column; margin-top: 24px; }
+  .spectrum-bridge-flow { left: 24px; right: 24px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .spectrum-art-lock { display: none; }
+  .spectrum-principles { display: block; margin: 24px 0 32px; }
+  .spectrum-principles > div { padding: 16px 0; }
+  .spectrum-principles > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--border); }
+  .spectrum-home .runtime-scope-field { width: 100%; }
+  .spectrum-home .runtime-toolbar [role=combobox] { width: auto; min-width: 0; flex: 1; }
+  .spectrum-home .runtime-toolbar-actions { flex-wrap: wrap; margin-left: 0; }
+  .spectrum-home .runtime-toolbar-actions button { height: auto; min-height: 40px; white-space: normal; }
+  .spectrum-home .runtime-summary { padding: 16px; }
+  .spectrum-home .runtime-summary-version { width: 100%; }
+  .spectrum-home .runtime-summary > span + span { border-left: 0; padding-left: 0; }
+  .spectrum-home .runtime-header .runtime-title { font-size: 20px; }
+  .spectrum-api-path { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spectrum-introduction, .spectrum-home *, .home-status-enter-active { animation: none !important; transition: none !important; }
+  .spectrum-bridge-lighting { display: none; }
+  .spectrum-bridge-artwork { opacity: 1; }
+  .spectrum-home .runtime-panel[data-state=loading] .runtime-table-wrap::before { display: none; }
+}

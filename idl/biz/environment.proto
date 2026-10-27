@@ -11,6 +11,7 @@ message Environment {
   string description = 3;
   int32 sort_order = 4;
   bool is_active = 5;
+  string environment_id = 6;
 }
 
 // CreateEnvironmentRequest is used for creating an environment.
@@ -21,11 +22,13 @@ message CreateEnvironmentRequest {
 // UpdateEnvironmentRequest is used for updating an environment.
 message UpdateEnvironmentRequest {
   Environment environment = 1;
+  string expected_environment_id = 2;
 }
 
 // DeleteEnvironmentRequest is used for deleting an environment.
 message DeleteEnvironmentRequest {
   string environment_key = 1;
+  string expected_environment_id = 2;
 }
 
 // ListEnvironmentRequest is used to list environments with filters.
@@ -56,6 +59,7 @@ message EnvironmentResponse {
   string msg = 2;
   string error = 3;
   EnvironmentData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // EnvironmentListResponse is a unified response for environment list.
@@ -78,10 +82,22 @@ message EnvironmentDetailResponse {
 
 // DeleteEnvironmentResponse is a unified response for delete operation.
 // Format: { code, msg, data: null }
+message DeleteEnvironmentData {
+  bool deleted = 1;
+  string environment_id = 2;
+  string deleted_at = 3;
+  int32 pipelines = 4;
+  int32 configs = 5;
+  int32 assets = 6;
+  int32 versions = 7;
+}
+
 message DeleteEnvironmentResponse {
   int32 code = 1;
   string msg = 2;
   string error = 3;
+  string error_type = 4; // machine-readable error classification (e.g. SCOPE_FROZEN)
+  DeleteEnvironmentData data = 5;
 }
 
 // EnvironmentService handles environment CRUD operations.

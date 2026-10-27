@@ -1,0 +1,102 @@
+/* §2.1 / §3.6 / §6.2: extend the approved homepage through the existing tokens.
+   Surface changes are scoped to Spectrum; portal controls share the same rules.
+   Keep the original Lucide glyphs, component contracts and 150/200/300ms scale. */
+:root:has(.spectrum-shell) {
+  --spectrum-hover: color-mix(in srgb, var(--primary) 6%, var(--background));
+  --spectrum-selected: color-mix(in srgb, var(--primary) 10%, var(--card));
+  --spectrum-positive: var(--spectrum-success);
+  --spectrum-positive-bg: color-mix(in srgb, var(--spectrum-positive) 7%, var(--card));
+  --spectrum-caution: var(--spectrum-link);
+  --spectrum-caution-bg: color-mix(in srgb, var(--spectrum-caution) 7%, var(--card));
+}
+:root.dark:has(.spectrum-shell) { --ring: var(--spectrum-orange); --spectrum-positive: color-mix(in srgb, var(--spectrum-success), var(--spectrum-inverse) 48%); }
+.spectrum-shell .spectrum-navigation a, .spectrum-shell .spectrum-quiet-link, .spectrum-shell .spectrum-text-button { transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out); }
+.spectrum-shell .spectrum-navigation a:hover { background: var(--spectrum-hover); }
+.spectrum-shell button:not([role=checkbox]):not([role=switch]):active:not(:disabled) { scale: 1; transform: translateY(1px); }
+.spectrum-shell button.feedback-hover:hover:not(:disabled) { box-shadow: none; }
+:root:has(.spectrum-shell) :is(input:not([type=color]):not([type=file]):not([type=checkbox]), textarea, [role=combobox]) {
+  min-height: 40px; box-shadow: none;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+}
+:root:has(.spectrum-shell) :is(input:not([type=color]):not([type=file]):not([type=checkbox]), textarea, [role=combobox]):focus-visible {
+  outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 13%, transparent);
+}
+:root:has(.spectrum-shell) :is(input, textarea, [role=combobox])[aria-invalid=true] { border-color: var(--destructive); }
+:root:has(.spectrum-shell) :is(input, textarea, [role=combobox]):disabled { background: var(--muted); cursor: not-allowed; }
+
+/* A modal owns the foreground. Only its field area scrolls in long forms. */
+:root:has(.spectrum-shell) .workspace-dialog-overlay { background: color-mix(in srgb, var(--spectrum-ink) 28%, transparent); backdrop-filter: blur(4px); }
+:root.dark:has(.spectrum-shell) .workspace-dialog-overlay { background: color-mix(in srgb, var(--spectrum-ink) 64%, transparent); }
+:root:has(.spectrum-shell) .workspace-dialog-overlay[data-state=open] { animation: spectrum-overlay-in var(--duration-normal) var(--ease-out); }
+:root:has(.spectrum-shell) .workspace-dialog-overlay[data-state=closed] { animation: spectrum-overlay-out var(--duration-fast) var(--ease-in); }
+:root:has(.spectrum-shell) .workspace-dialog {
+  width: calc(100vw - 64px); max-height: calc(100dvh - 64px); overflow-y: auto;
+  background: var(--background); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--spectrum-ink) 20%, transparent);
+}
+:root:has(.spectrum-shell) .workspace-dialog[data-state=open] { animation: spectrum-dialog-in var(--duration-normal) var(--ease-out); }
+:root:has(.spectrum-shell) .workspace-dialog[data-state=closed] { animation: spectrum-dialog-out var(--duration-fast) var(--ease-in); }
+:root:has(.spectrum-shell) .workspace-dialog > button[aria-label='关闭弹窗'] { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; top: 16px; right: 16px; opacity: 1; color: var(--muted-foreground); border-radius: 8px; transition: color var(--duration-fast), background-color var(--duration-fast); }
+:root:has(.spectrum-shell) .workspace-dialog > button[aria-label='关闭弹窗']:hover { background: var(--spectrum-hover); color: var(--foreground); }
+:root:has(.spectrum-shell) .workspace-dialog > button[aria-label='关闭弹窗']:disabled { opacity: .4; cursor: not-allowed; }
+:root:has(.spectrum-shell) .workspace-dialog-footer { gap: 12px; }
+:root:has(.spectrum-shell) .workspace-dialog-footer > button { min-height: 40px; margin-left: 0; padding-inline: 20px; }
+:root:has(.spectrum-shell) .workspace-dialog button:not([role=checkbox]):not([role=switch]):active:not(:disabled) { scale: 1; transform: translateY(1px); }
+
+:root:has(.spectrum-shell) .workspace-dialog.spectrum-config-dialog { display: flex; flex-direction: column; gap: 0; width: min(640px, calc(100vw - 64px)); max-height: min(800px, calc(100dvh - 64px)); padding: 0; overflow: hidden; }
+.spectrum-config-dialog-header { flex-shrink: 0; padding: 24px 32px 20px; border-bottom: 1px solid var(--border); padding-right: 64px; }
+.spectrum-config-dialog-header > p { font-size: 13px; margin-top: 8px; }
+.spectrum-config-dialog-form { display: flex; flex-direction: column; min-height: 0; }
+.spectrum-config-dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px 32px; scrollbar-gutter: stable; }
+.spectrum-config-fields { display: flex; flex-direction: column; gap: 20px; min-width: 0; padding: 0; margin: 0; border: 0; }
+.spectrum-config-fields > .grid { gap: 20px; }
+.spectrum-config-fields .space-y-3 { display: flex; flex-direction: column; gap: 8px; }
+.spectrum-config-fields .space-y-3 > * { margin-block: 0; }
+.spectrum-config-fields :is(input, textarea, button, [tabindex]) { scroll-margin: 16px; }
+.spectrum-config-fields [role=combobox] { background: var(--card); }
+.spectrum-config-fields [role=alert] { font-size: 12px; line-height: 1.5; }
+.spectrum-config-fields input[type=color] { width: 48px; height: 48px; padding: 4px; border: 1px solid var(--input); box-shadow: none; border-radius: 8px; }
+.spectrum-config-fields .spectrum-config-upload { display: block; width: 100%; min-height: 128px; color: var(--muted-foreground); background: var(--card); border-color: var(--input); }
+.spectrum-config-fields .spectrum-config-upload:hover:not(:disabled) { background: var(--spectrum-hover); border-color: var(--spectrum-link); }
+.spectrum-config-dialog-footer { flex-shrink: 0; padding: 16px 32px; background: var(--card); border-top: 1px solid var(--border); }
+
+/* Dropdowns stay below dialogs in depth, with a quiet orange focus surface. */
+:root:has(.spectrum-shell) .workspace-select { max-height: min(384px, var(--radix-select-content-available-height, 384px)); border-color: var(--border); border-radius: 8px; box-shadow: 0 8px 24px color-mix(in srgb, var(--spectrum-ink) 12%, transparent); }
+:root:has(.spectrum-shell) .workspace-select[data-state=open] { animation: spectrum-select-in var(--duration-fast) var(--ease-out); }
+:root:has(.spectrum-shell) .workspace-select[data-state=closed] { animation: spectrum-overlay-out var(--duration-fast) var(--ease-in); }
+:root:has(.spectrum-shell) .workspace-select [role=option] { min-height: 36px; cursor: pointer; transition: background-color var(--duration-fast) var(--ease-out); }
+:root:has(.spectrum-shell) .workspace-select [role=option][data-highlighted] { background: var(--spectrum-hover); color: var(--foreground); }
+:root:has(.spectrum-shell) .workspace-select [role=option][data-state=checked] { background: var(--spectrum-selected); color: var(--foreground); }
+
+/* Apply the homepage feedback to every workspace without moving its controls. */
+.spectrum-shell :is(.spectrum-env-row, .spectrum-channel-row, .config-catalog-table tr, .spectrum-table tbody tr) { transition: background-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.spectrum-shell :is(.spectrum-env-row, .spectrum-channel-row, .config-catalog-table tbody tr, .spectrum-table tbody tr):hover { background: var(--spectrum-hover); }
+.spectrum-shell .spectrum-env-row.is-selected, .spectrum-shell .config-catalog-table tr.is-selected { background: var(--spectrum-selected); box-shadow: inset 3px 0 var(--spectrum-orange); }
+.spectrum-shell .config-selected-arrow { transition: opacity var(--duration-fast) var(--ease-out); }
+.spectrum-shell .spectrum-release-table .is-active-version { background: var(--spectrum-positive-bg); box-shadow: inset 3px 0 var(--spectrum-positive); }
+.spectrum-shell .spectrum-state-pill.is-active { background: var(--spectrum-positive-bg); color: var(--spectrum-positive); }
+.spectrum-shell .spectrum-state-pill.is-frozen { background: var(--spectrum-caution-bg); color: var(--spectrum-caution); }
+.spectrum-shell .spectrum-operations .spectrum-result-success { background: var(--spectrum-positive-bg); color: var(--spectrum-positive); }
+.spectrum-shell .spectrum-operations .spectrum-result-success * { color: var(--spectrum-positive); }
+.spectrum-shell .spectrum-operations .spectrum-result-warning { background: var(--spectrum-caution-bg); color: var(--spectrum-caution); }
+.spectrum-shell .spectrum-operations .spectrum-result-warning * { color: var(--spectrum-caution); }
+.spectrum-shell .spectrum-transfer-tabs [role=tab] { position: relative; transition: color var(--duration-fast), background-color var(--duration-fast); }
+.spectrum-shell .spectrum-transfer-tabs [role=tab]:hover { background: var(--spectrum-hover); }
+.spectrum-shell .spectrum-transfer-tabs [role=tab][data-state=active] { background: var(--spectrum-selected); color: var(--spectrum-link); }
+.spectrum-shell .spectrum-transfer-tabs [role=tab][data-state=active]::after { content: ''; position: absolute; bottom: 0; left: 24px; right: 24px; height: 2px; background: var(--spectrum-orange); border-radius: 2px; }
+.spectrum-shell .spectrum-format-option, .spectrum-shell .spectrum-import-dropzone { transition: border-color var(--duration-fast), background-color var(--duration-fast); }
+.spectrum-shell .spectrum-format-option:hover { background: var(--spectrum-hover); border-color: var(--spectrum-link); }
+.spectrum-shell .spectrum-format-options > button[aria-pressed=true] { background: var(--spectrum-selected); border-color: var(--spectrum-link); color: var(--foreground); }
+.spectrum-shell .spectrum-format-options > button[aria-pressed=true] :is(svg, .text-muted-foreground) { color: var(--spectrum-link); }
+.spectrum-shell .spectrum-import-dropzone.is-dragging { background: var(--spectrum-selected); border-color: var(--spectrum-link); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 10%, transparent); }
+.spectrum-shell .spectrum-workflow-steps li { transition: color var(--duration-normal); }
+.spectrum-shell .spectrum-workflow-steps li.is-current > span { color: var(--spectrum-link); background: var(--spectrum-selected); border-radius: 4px; padding: 4px 8px; }
+.spectrum-image-stage img { transition: opacity var(--duration-normal) var(--ease-out); }
+@keyframes spectrum-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spectrum-overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes spectrum-dialog-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spectrum-dialog-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(4px); } }
+@keyframes spectrum-select-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  :root:has(.spectrum-shell) :is(.workspace-dialog, .workspace-dialog *, .workspace-dialog-overlay, .workspace-select, .workspace-select *) { animation: none !important; transition: none !important; }
+}

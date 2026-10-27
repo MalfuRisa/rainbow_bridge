@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Check } from 'lucide-vue-next'
+import { Check, AlertCircle } from 'lucide-vue-next'
 
 interface Props {
   status: string
@@ -21,17 +21,18 @@ const handleReset = () => {
 </script>
 
 <template>
-  <Card v-if="status === 'success'">
-    <CardContent class="pt-6">
-      <div class="text-center py-12">
-        <div class="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
-          <Check class="w-8 h-8 text-emerald-600" />
+  <Card v-if="status === 'success' || status === 'error'" class="spectrum-panel">
+    <CardContent class="spectrum-panel-content">
+      <div class="spectrum-empty" :role="status === 'error' ? 'alert' : 'status'">
+        <div class="spectrum-result-icon" :class="status === 'success' ? 'is-success' : 'is-error'">
+          <Check v-if="status === 'success'" class="w-8 h-8" /><AlertCircle v-else class="w-8 h-8 text-destructive" />
         </div>
         <h3 class="text-lg font-medium text-foreground mb-2">
-          迁移完成
+          {{ status === 'success' ? '迁移完成' : '迁移未完成，请核对结果' }}
         </h3>
         <p class="text-muted-foreground mb-6">
-          已成功迁移 {{ selectedConfigs.length }} 个配置项
+          <template v-if="status === 'success'">已处理所选配置，请在目标范围核对结果。</template>
+          <template v-else>请根据错误提示检查范围、冻结状态或网络连接；部分成功时请先核对目标内容。</template>
         </p>
         <Button @click="handleReset">开始新的迁移</Button>
       </div>

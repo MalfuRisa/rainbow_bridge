@@ -120,6 +120,21 @@ func GenerateConfigKey(environmentKey, pipelineKey, resourceKey string) string {
 	return fmt.Sprintf("rainbow_bridge:config:%s:%s:%s", environmentKey, pipelineKey, resourceKey)
 }
 
+// GenerateScopedConfigKey isolates configurations by internal scope identity.
+func GenerateScopedConfigKey(scopeID, resourceKey string) string {
+	return fmt.Sprintf("rainbow_bridge:config:scope:%s:%s", scopeID, resourceKey)
+}
+
+// GenerateScopedConfigListPrefix is the list cache prefix for one scope.
+func GenerateScopedConfigListPrefix(scopeID string) string {
+	return fmt.Sprintf("rainbow_bridge:config:list:scope:%s", scopeID)
+}
+
+// GenerateScopedConfigMapKey isolates runtime config maps by scope.
+func GenerateScopedConfigMapKey(scopeID string) string {
+	return fmt.Sprintf("rainbow_bridge:config:map:scope:%s", scopeID)
+}
+
 // GenerateConfigListKey generates a Redis key for config list data
 func GenerateConfigListKey(environmentKey, pipelineKey string) string {
 	return fmt.Sprintf("rainbow_bridge:config:list:%s:%s", environmentKey, pipelineKey)

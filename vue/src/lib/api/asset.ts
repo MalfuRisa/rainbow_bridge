@@ -2,6 +2,7 @@ import { BaseApiService } from './base-api'
 import { apiClient } from './client'
 import { toCamelCase } from '../utils'
 import type { FileAsset, UploadAssetResponse } from './types'
+import { assertScope, readScope } from '@/lib/scope'
 
 class AssetApiService extends BaseApiService<FileAsset> {
   protected baseUrl = '/api/v1/asset'
@@ -11,8 +12,8 @@ class AssetApiService extends BaseApiService<FileAsset> {
   }
 
   // 重写list方法，因为需要环境和管道key参数
-  async list(params: { environmentKey: string; pipelineKey: string }): Promise<{ total: number; list: FileAsset[] }> {
-    return super.list(params)
+  async list(params: { environmentKey: string; pipelineKey: string; scopeId?: string }): Promise<{ total: number; list: FileAsset[] }> {
+    return readScope(params.environmentKey, params.pipelineKey, scopeId => super.list({ ...params, scopeId }), params.scopeId)
   }
 
   // 上传文件
@@ -20,12 +21,15 @@ class AssetApiService extends BaseApiService<FileAsset> {
     file: File,
     environmentKey: string,
     pipelineKey: string,
+    expectedScopeId: string,
     remark?: string
   ) {
+    assertScope(environmentKey, pipelineKey, expectedScopeId)
     const formData = new FormData()
     formData.append('file', file)
     formData.append('environment_key', environmentKey)
     formData.append('pipeline_key', pipelineKey)
+    formData.append('expected_scope_id', expectedScopeId)
     if (remark) {
       formData.append('remark', remark)
     }

@@ -12,7 +12,8 @@ import type {
 
 export function fromApiEnvironment(api: ApiEnvironment, pipelines: Pipeline[] = []): Environment {
   return {
-    id: api.environment_key,
+    id: api.environment_id,
+    environmentId: api.environment_id,
     key: api.environment_key,
     name: api.environment_name,
     pipelines,
@@ -21,6 +22,7 @@ export function fromApiEnvironment(api: ApiEnvironment, pipelines: Pipeline[] = 
 
 export function toApiEnvironment(env: Partial<Environment> & { key: string; name: string }): ApiEnvironment {
   return {
+    environment_id: env.environmentId || '',
     environment_key: env.key,
     environment_name: env.name,
     description: '',
@@ -31,7 +33,9 @@ export function toApiEnvironment(env: Partial<Environment> & { key: string; name
 
 export function fromApiPipeline(api: ApiPipeline): Pipeline {
   return {
-    id: api.pipeline_key,
+    id: api.scope_id,
+    scopeId: api.scope_id,
+    environmentId: api.environment_id,
     key: api.pipeline_key,
     name: api.pipeline_name,
   }
@@ -42,6 +46,8 @@ export function toApiPipeline(
   environmentKey: string
 ): ApiPipeline {
   return {
+    scope_id: pipeline.scopeId || '',
+    environment_id: pipeline.environmentId || '',
     environment_key: environmentKey,
     pipeline_key: pipeline.key,
     pipeline_name: pipeline.name,
@@ -69,6 +75,8 @@ export function fromApiConfig(api: ApiResourceConfig | ResourceConfig): ConfigIt
     const { type, content } = transformContentFromBackend(api.type, api.content)
     
     return {
+      editRevision: api.edit_revision,
+      scopeId: api.scope_id,
       id: api.resource_key,
       name: api.name,
       alias: api.alias,
@@ -84,6 +92,8 @@ export function fromApiConfig(api: ApiResourceConfig | ResourceConfig): ConfigIt
     const { type, content } = transformContentFromBackend(api.type, api.content)
     
     return {
+      editRevision: api.editRevision,
+      scopeId: api.scopeId,
       id: api.resourceKey,
       name: api.name,
       alias: api.alias,
@@ -112,6 +122,7 @@ export function toApiConfig(
   
   return {
     resource_key: config.id || '',
+    scope_id: config.scopeId || '',
     alias: config.alias || '',
     name: config.name,
     environment_key: config.environmentId,
@@ -127,22 +138,28 @@ export function toApiConfig(
 export function fromApiEnvironmentOverview(api: ApiEnvironmentOverview | EnvironmentOverview): Environment {
   if ('environment_key' in api) {
     return {
-      id: api.environment_key,
+      id: api.environment_id,
+      environmentId: api.environment_id,
       key: api.environment_key,
       name: api.environment_name,
-      pipelines: api.pipelines.map((p) => ({
-        id: p.pipeline_key,
+      pipelines: (api.pipelines || []).map((p) => ({
+        id: p.scope_id,
+        scopeId: p.scope_id,
+        environmentId: p.environment_id || api.environment_id,
         key: p.pipeline_key,
         name: p.pipeline_name,
       })),
     }
   } else {
     return {
-      id: api.environmentKey,
+      id: api.environmentId,
+      environmentId: api.environmentId,
       key: api.environmentKey,
       name: api.environmentName,
-      pipelines: api.pipelines.map((p) => ({
-        id: p.pipelineKey,
+      pipelines: (api.pipelines || []).map((p) => ({
+        id: p.scopeId,
+        scopeId: p.scopeId,
+        environmentId: p.environmentId || api.environmentId,
         key: p.pipelineKey,
         name: p.pipelineName,
       })),
@@ -151,6 +168,7 @@ export function fromApiEnvironmentOverview(api: ApiEnvironmentOverview | Environ
 }
 
 export interface Asset {
+  scopeId: string
   id: string
   name: string
   type: string
@@ -165,6 +183,7 @@ export function fromApiAsset(api: ApiFileAsset | FileAsset): Asset {
   if ('file_id' in api) {
     return {
       id: api.file_id,
+      scopeId: api.scope_id,
       name: api.file_name,
       type: api.content_type,
       size: api.file_size,
@@ -176,6 +195,7 @@ export function fromApiAsset(api: ApiFileAsset | FileAsset): Asset {
   } else {
     return {
       id: api.fileId,
+      scopeId: api.scopeId,
       name: api.fileName,
       type: api.contentType,
       size: api.fileSize,

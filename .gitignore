@@ -82,6 +82,10 @@ coverage.out
 /vue/.output/
 /vue/.DS_Store
 /vue/*.log
+*.tsbuildinfo
+/vue/vite.config.js
+/vue/vite.config.d.ts
+/tests/e2e/local-artifacts/
 
 # Trae IDE files
 .trae/
@@ -100,3 +104,20 @@ test_*.sh
 
 # Config files
 config.yaml.demo
+
+# 本地联调实例(数据、二进制与本地凭据,不入库)
+.dev-18081/
+.dev-integration/
+/tests/e2e/test-results-auth/
+
+# 清理功能隔离冒烟(数据/二进制/本地凭据不进库)
+.smoke-cleanup/
+
+# Local consolidation checks and development snapshots
+.local-qa/
+/data/release-snapshots/
+*.lnk
+
+.smoke-active/
+.smoke-migrate/
+.smoke-repair/

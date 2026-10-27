@@ -10,12 +10,15 @@ message EnvironmentInfo {
   string environment_name = 2;
   string pipeline_key = 3;
   string pipeline_name = 4;
+  string environment_id = 5;
+  string scope_id = 6;
 }
 
 // RuntimeConfigRequest is used to get runtime config via headers.
 message RuntimeConfigRequest {
   string x_environment = 1 [(api.header) = "x-environment"];
   string x_pipeline = 2 [(api.header) = "x-pipeline"];
+  string scope_id = 3 [(api.query) = "scope_id"];
 }
 
 // RuntimeConfigData is the data wrapper for runtime config.
@@ -37,12 +40,15 @@ message RuntimeConfigResponse {
 message StaticPackageRequest {
   string environment_key = 1 [(api.query) = "environment_key"];
   string pipeline_key = 2 [(api.query) = "pipeline_key"];
+  string scope_id = 3 [(api.query) = "scope_id"];
 }
 
 // PipelineOverview contains basic pipeline info.
 message PipelineOverview {
   string pipeline_key = 1;
   string pipeline_name = 2;
+  string scope_id = 3;
+  string environment_id = 4;
 }
 
 // EnvironmentOverview contains environment info and its pipelines.
@@ -50,6 +56,7 @@ message EnvironmentOverview {
   string environment_key = 1;
   string environment_name = 2;
   repeated PipelineOverview pipelines = 3;
+  string environment_id = 4;
 }
 
 // RuntimeOverviewData is the data wrapper for runtime overview.

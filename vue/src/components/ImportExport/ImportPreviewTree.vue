@@ -337,7 +337,11 @@ function getStatusVariant(status: string): 'default' | 'secondary' | 'destructiv
 function getStatusClass(status: string): string {
   switch (status) {
     case 'new':
-      return 'bg-emerald-500'
+      return 'spectrum-state-pill is-active'
+    case 'conflict':
+      return 'spectrum-state-pill is-frozen'
+    case 'exists':
+      return 'spectrum-state-pill is-idle'
     default:
       return ''
   }
@@ -358,7 +362,7 @@ function getStatusLabel(status: string): string {
 </script>
 
 <template>
-  <div class="space-y-1">
+  <div class="spectrum-transfer-tree space-y-1">
     <div v-if="data.length === 0" class="flex flex-col items-center justify-center py-8 text-muted-foreground">
       <Layers class="w-12 h-12 mb-4 opacity-50" />
       <p>暂无数据</p>
@@ -369,6 +373,8 @@ function getStatusLabel(status: string): string {
         <div class="flex items-center gap-2 py-2 px-2 hover:bg-muted/50 rounded-md">
           <button
             @click="toggleExpand(env.environment_key)"
+            :aria-expanded="isNodeExpanded(env.environment_key)"
+            :aria-label="`展开或收起环境 ${env.environment_name}`"
             class="p-0.5 hover:bg-muted rounded"
           >
             <ChevronDown v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4" />
@@ -376,11 +382,12 @@ function getStatusLabel(status: string): string {
           </button>
           <Checkbox
             :model-value="getEnvState(env).checked"
+            :aria-label="`选择环境 ${env.environment_name}`"
             @update:model-value="(v: boolean) => handleEnvChange(env, v)"
             :class="getEnvState(env).indeterminate ? 'data-[state=checked]:bg-primary/50' : ''"
           />
-          <FolderOpen v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4 text-blue-500" />
-          <Folder v-else class="w-4 h-4 text-blue-500" />
+          <FolderOpen v-if="isNodeExpanded(env.environment_key)" class="w-4 h-4 text-muted-foreground" />
+          <Folder v-else class="w-4 h-4 text-muted-foreground" />
           <span class="flex-1 text-sm font-medium">{{ env.environment_name }}</span>
           <Badge :variant="getStatusVariant(env.status)" :class="getStatusClass(env.status)" class="text-xs">
             {{ getStatusLabel(env.status) }}
@@ -395,6 +402,8 @@ function getStatusLabel(status: string): string {
             <div class="flex items-center gap-2 py-2 px-2 hover:bg-muted/50 rounded-md">
               <button
                 @click="toggleExpand(`${env.environment_key}:${pipe.pipeline_key}`)"
+                :aria-expanded="isNodeExpanded(`${env.environment_key}:${pipe.pipeline_key}`)"
+                :aria-label="`展开或收起渠道 ${pipe.pipeline_name}`"
                 class="p-0.5 hover:bg-muted rounded"
               >
                 <ChevronDown v-if="isNodeExpanded(`${env.environment_key}:${pipe.pipeline_key}`)" class="w-4 h-4" />
@@ -402,10 +411,11 @@ function getStatusLabel(status: string): string {
               </button>
               <Checkbox
                 :model-value="getPipeState(env, pipe).checked"
+                :aria-label="`选择渠道 ${pipe.pipeline_name}`"
                 @update:model-value="(v: boolean) => handlePipeChange(env, pipe, v)"
                 :class="getPipeState(env, pipe).indeterminate ? 'data-[state=checked]:bg-primary/50' : ''"
               />
-              <Folder class="w-4 h-4 text-emerald-500" />
+              <Folder class="w-4 h-4 text-muted-foreground" />
               <span class="flex-1 text-sm">{{ pipe.pipeline_name }}</span>
               <Badge :variant="getStatusVariant(pipe.status)" :class="getStatusClass(pipe.status)" class="text-xs">
                 {{ getStatusLabel(pipe.status) }}
@@ -424,9 +434,10 @@ function getStatusLabel(status: string): string {
                 <div class="w-5" />
                 <Checkbox
                   :model-value="isConfigChecked(env, pipe, cfg)"
+                  :aria-label="`选择配置 ${cfg.name || cfg.alias}`"
                   @update:model-value="(v: boolean) => handleConfigChange(env, pipe, cfg, v)"
                 />
-                <FileText class="w-4 h-4 text-amber-500" />
+                <FileText class="w-4 h-4 text-muted-foreground" />
                 <span class="flex-1 text-sm text-muted-foreground">
                   {{ cfg.name || cfg.alias }}
                 </span>

@@ -33,7 +33,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		if err := ensureDir(filepath.Dir(cfg.SQLite.Path)); err != nil {
 			return nil, err
 		}
-		dialector = sqlite.Open(cfg.SQLite.Path)
+		// busy_timeout 让跨进程/多连接的写冲突有界等待,而不是立即 SQLITE_BUSY 报错;
+		// 写协调(config_write_gate)依赖这一等待语义实现"先写完再锁版"。
+		dialector = sqlite.Open(withSQLiteBusyTimeout(cfg.SQLite.Path))
 	case "mysql":
 		if cfg.MySQL.DSN == "" {
 			return nil, fmt.Errorf("mysql dsn must be configured")
@@ -56,6 +58,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 			LogLevel:                  logger.Warn,            // 日志级别
 			IgnoreRecordNotFoundError: true,                   // 忽略记录未找到错误
 			Colorful:                  false,                  // 禁用彩色输出
+			// 认证表会写入密码哈希、会话摘要与 CSRF;日志只保留参数化 SQL,不输出参数值
+			ParameterizedQueries: true,
 		},
 	)
 
@@ -70,8 +74,13 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	sqlDB.SetMaxIdleConns(20)
-	sqlDB.SetMaxOpenConns(100)
+	if driver == "sqlite" || driver == "sqlite3" {
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+	} else {
+		sqlDB.SetMaxIdleConns(20)
+		sqlDB.SetMaxOpenConns(100)
+	}
 	sqlDB.SetConnMaxLifetime(1 * time.Hour)
 	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
 
@@ -83,4 +92,16 @@ func ensureDir(dir string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+// withSQLiteBusyTimeout 在 DSN 上附加 busy_timeout pragma;已显式配置时不重复添加。
+func withSQLiteBusyTimeout(dsn string) string {
+	const pragma = "_pragma=busy_timeout(10000)"
+	if strings.Contains(dsn, "busy_timeout") {
+		return dsn
+	}
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + pragma
+	}
+	return dsn + "?" + pragma
 }

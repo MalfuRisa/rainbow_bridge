@@ -60,24 +60,24 @@ const handleMigrate = () => {
 </script>
 
 <template>
-  <Card v-if="previewData.length > 0">
-    <CardHeader>
+  <Card v-if="previewData.length > 0" class="spectrum-panel spectrum-section">
+    <CardHeader class="spectrum-panel-header">
       <div class="flex items-center justify-between">
         <div>
           <CardTitle class="text-base">变更预览</CardTitle>
           <CardDescription>
             共 {{ previewData.length }} 个配置项，已选择 {{ selectedConfigs.length }} 个
-            <span v-if="newCount > 0" class="text-emerald-600 dark:text-emerald-500">，{{ newCount }} 个新增</span>
-            <span v-if="conflictCount > 0" class="text-amber-600 dark:text-amber-500">，{{ conflictCount }} 个存在冲突</span>
+            <span v-if="newCount > 0">，{{ newCount }} 个新增</span>
+            <span v-if="conflictCount > 0">，{{ conflictCount }} 个存在冲突</span>
           </CardDescription>
         </div>
-        <Button variant="outline" size="sm" @click="toggleAll" class="bg-transparent">
+        <Button variant="outline" size="sm" :disabled="status === 'migrating'" @click="toggleAll" class="bg-transparent">
           {{ selectedConfigs.length === previewData.length ? '取消全选' : '全选' }}
         </Button>
       </div>
     </CardHeader>
-    <CardContent>
-      <div class="border border-border rounded-lg overflow-hidden">
+    <CardContent class="spectrum-panel-content">
+      <div class="spectrum-table">
         <Table>
           <TableHeader>
             <TableRow>
@@ -92,11 +92,13 @@ const handleMigrate = () => {
             <TableRow
               v-for="config in previewData"
               :key="config.id"
-              :class="config.hasConflict ? 'bg-amber-50 dark:bg-amber-900/10' : config.isNew ? 'bg-emerald-50 dark:bg-emerald-900/10' : ''"
+              :class="config.hasConflict ? 'spectrum-conflict-row' : ''"
             >
               <TableCell>
                 <Checkbox
                   :model-value="selectedConfigs.includes(config.id)"
+                  :aria-label="`选择配置 ${config.name}`"
+                  :disabled="status === 'migrating'"
                   @update:model-value="() => toggleConfig(config.id)"
                 />
               </TableCell>
@@ -106,13 +108,13 @@ const handleMigrate = () => {
                 <Badge variant="secondary">{{ config.type }}</Badge>
               </TableCell>
               <TableCell>
-                <Badge v-if="config.isNew" variant="outline" class="border-emerald-500 text-emerald-600 dark:text-emerald-500">
+                <Badge v-if="config.isNew" variant="outline" class="spectrum-state-pill is-active">
                   新增
                 </Badge>
-                <Badge v-else-if="config.hasConflict" variant="outline" class="border-amber-500 text-amber-600 dark:text-amber-500">
+                <Badge v-else-if="config.hasConflict" variant="outline" class="spectrum-state-pill is-frozen">
                   值不同
                 </Badge>
-                <Badge v-else variant="outline" class="border-gray-400 text-gray-500">
+                <Badge v-else variant="outline" class="spectrum-state-pill is-idle">
                   无变更
                 </Badge>
               </TableCell>
@@ -125,11 +127,12 @@ const handleMigrate = () => {
         <div class="flex items-center gap-2">
           <Checkbox
             id="overwrite"
+            :disabled="status === 'migrating'"
             :model-value="overwriteConflicts"
             @update:model-value="(v: boolean) => emit('update:overwriteConflicts', v)"
           />
           <label for="overwrite" class="text-sm text-foreground cursor-pointer">
-            覆盖目标环境中已存在的不同值
+            覆盖目标中的冲突配置
           </label>
         </div>
       </div>
@@ -138,13 +141,13 @@ const handleMigrate = () => {
         <AlertCircle class="h-4 w-4" />
         <AlertTitle>存在冲突</AlertTitle>
         <AlertDescription>
-          {{ conflictCount }} 个配置项在目标环境中已存在不同的值。
-          请勾选"覆盖"以继续，或取消选择这些配置项。
+          {{ conflictCount }} 项已选配置与目标值不同。
+          勾选“覆盖目标中的冲突配置”，或取消选择冲突项。
         </AlertDescription>
       </Alert>
 
       <div class="mt-6 flex items-center justify-between">
-        <Button variant="outline" @click="handleReset" class="bg-transparent">
+        <Button variant="outline" :disabled="status === 'migrating'" @click="handleReset" class="bg-transparent">
           重置
         </Button>
         <Button

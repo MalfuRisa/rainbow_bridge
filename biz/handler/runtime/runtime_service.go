@@ -4,8 +4,7 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -24,153 +23,50 @@ func SetService(s *service.Service) {
 // GetConfig .
 // @router /api/v1/runtime/config [GET]
 func GetConfig(ctx context.Context, c *app.RequestContext) {
-	// 从 header 获取参数
 	environmentKey := strings.TrimSpace(string(c.GetHeader("x-environment")))
 	pipelineKey := strings.TrimSpace(string(c.GetHeader("x-pipeline")))
-
-	// 参数验证
-	if environmentKey == "" {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "x-environment header is required",
-		})
+	if environmentKey == "" || pipelineKey == "" {
+		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, "x-environment and x-pipeline headers are required")
 		return
 	}
-	if pipelineKey == "" {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "x-pipeline header is required",
-		})
+	// 旧入口只跟随当前生效版本:显式传版本选择参数按请求错误拒绝
+	if name := rejectedSelectionParam(c); name != "" {
+		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, name+" is not supported here; use /api/v1/runtime/release or the fixed release export")
 		return
 	}
-
-	// 调用 service 层
-	resp, err := svc.GetRuntimeConfig(handler.EnrichContext(ctx, c), environmentKey, pipelineKey)
+	data, err := svc.RuntimeReleaseLegacy(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, c.Query("scope_id"))
 	if err != nil {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusInternalServerError,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+		writeRuntimeServiceError(c, err)
 		return
 	}
-
-	// 自定义响应结构，处理 JSON 对象
-	type CustomResourceConfig struct {
-		ResourceKey    string      `json:"resource_key"`
-		Alias          string      `json:"alias"`
-		Name           string      `json:"name"`
-		EnvironmentKey string      `json:"environment_key"`
-		PipelineKey    string      `json:"pipeline_key"`
-		Content        interface{} `json:"content"`
-		Type           string      `json:"type"`
-		Remark         string      `json:"remark"`
-		IsPerm         bool        `json:"is_perm"`
-	}
-
-	type CustomRuntimeConfigData struct {
-		Configs      []CustomResourceConfig `json:"configs"`
-		Environment  *runtime.EnvironmentInfo `json:"environment"`
-	}
-
-	type CustomRuntimeConfigResponse struct {
-		Code    int32                    `json:"code"`
-		Msg     string                   `json:"msg"`
-		Error   string                   `json:"error"`
-		Data    CustomRuntimeConfigData  `json:"data"`
-	}
-
-	// 转换配置数据
-	customConfigs := make([]CustomResourceConfig, len(resp.Data.Configs))
-	for i, cfg := range resp.Data.Configs {
-		customConfig := CustomResourceConfig{
-			ResourceKey:    cfg.ResourceKey,
-			Alias:          cfg.Alias,
-			Name:           cfg.Name,
-			EnvironmentKey: cfg.EnvironmentKey,
-			PipelineKey:    cfg.PipelineKey,
-			Type:           cfg.Type,
-			Remark:         cfg.Remark,
-			IsPerm:         cfg.IsPerm,
-		}
-
-		// 对于 object 和 keyvalue 类型，解析为 JSON 对象
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		switch normalizedType {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
-			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
-				customConfig.Content = content
-			} else {
-				customConfig.Content = cfg.Content
-			}
-		default:
-			customConfig.Content = cfg.Content
-		}
-
-		customConfigs[i] = customConfig
-	}
-
-	// 构建自定义响应
-	customResponse := CustomRuntimeConfigResponse{
-		Code:   resp.Code,
-		Msg:    resp.Msg,
-		Error:  resp.Error,
-		Data: CustomRuntimeConfigData{
-			Configs:     customConfigs,
-			Environment: resp.Data.Environment,
-		},
-	}
-
-	c.JSON(consts.StatusOK, customResponse)
+	writeActiveRuntimeConfig(c, data)
 }
-
-// ExportStatic .
-// @router /api/v1/runtime/static [GET]
 func ExportStatic(ctx context.Context, c *app.RequestContext) {
-	// 从 query 参数获取
 	environmentKey := strings.TrimSpace(c.Query("environment_key"))
 	pipelineKey := strings.TrimSpace(c.Query("pipeline_key"))
-
-	// 参数验证
-	if environmentKey == "" {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "environment_key is required",
-		})
+	if environmentKey == "" || pipelineKey == "" {
+		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, "environment_key and pipeline_key are required")
 		return
 	}
-	if pipelineKey == "" {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "pipeline_key is required",
-		})
+	// 旧入口只跟随当前生效版本:显式传版本选择参数按请求错误拒绝
+	if name := rejectedSelectionParam(c); name != "" {
+		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, name+" is not supported here; use the fixed release export")
 		return
 	}
-
-	// 调用 service 层
-	data, filename, err := svc.ExportStaticPackage(handler.EnrichContext(ctx, c), environmentKey, pipelineKey)
+	result, err := svc.ExportActiveReleasePackageWithScope(handler.EnrichContext(ctx, c),
+		environmentKey, pipelineKey, c.Query("scope_id"))
 	if err != nil {
-		c.JSON(consts.StatusOK, &runtime.RuntimeConfigResponse{
-			Code:  consts.StatusInternalServerError,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+		writeRuntimeServiceError(c, err)
 		return
 	}
-
-	// 返回 zip 文件
+	defer os.Remove(result.TempPath)
+	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Type", "application/zip")
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(consts.StatusOK, "application/zip", data)
+	c.Header("X-Rainbow-Snapshot-Id", result.SnapshotID)
+	c.Header("X-Rainbow-Version", result.Version)
+	c.FileAttachment(result.TempPath, result.FileName)
 }
 
-// GetOverview .
-// @router /api/v1/runtime/overview [GET]
 func GetOverview(ctx context.Context, c *app.RequestContext) {
 	resp, err := svc.GetRuntimeOverview(handler.EnrichContext(ctx, c))
 	if err != nil {

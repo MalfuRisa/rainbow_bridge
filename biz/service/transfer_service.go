@@ -9,14 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/transfer"
@@ -38,14 +34,8 @@ func (s *Service) ExportConfigs(ctx context.Context, environmentKey, pipelineKey
 }
 
 func (s *Service) ImportConfigs(ctx context.Context, configs []*common.ResourceConfig, overwrite bool) error {
-	if configs == nil {
-		return errors.New("configs required")
-	}
-	modelConfigs := make([]model.Config, 0, len(configs))
-	for _, cfg := range configs {
-		modelConfigs = append(modelConfigs, *pbConfigToModel(cfg))
-	}
-	return s.logic.ImportConfigs(ctx, modelConfigs, overwrite)
+	_, err := s.ImportConfigsWithResult(ctx, configs, overwrite)
+	return err
 }
 
 func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config) ([]byte, error) {
@@ -98,39 +88,13 @@ func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config
 		}
 	}
 
-	// 收集所有相关资产（包括配置中引用的和环境/渠道下的所有资产）
-	allAssets := make([]model.Asset, 0)
-	assetIDSet := make(map[string]bool)
-
-	// 1. 收集配置中引用的资产
-	assetIDs := extractAssetIDs(configs)
-	for _, assetID := range assetIDs {
-		if assetIDSet[assetID] {
-			continue
-		}
-		asset, err := s.logic.GetAsset(ctx, assetID)
-		if err != nil {
-			continue // 跳过不存在的资产
-		}
-		assetIDSet[assetID] = true
-		allAssets = append(allAssets, *asset)
+	prepared, err := s.prepareExportAssets(ctx, configs, true)
+	if err != nil {
+		return nil, err
 	}
-
-	// 2. 收集环境/渠道下的所有资产
-	for envKey, pipes := range pipelineSet {
-		for pipeKey := range pipes {
-			assets, err := s.logic.ListAssetsByEnvironmentAndPipeline(ctx, envKey, pipeKey)
-			if err != nil {
-				continue
-			}
-			for _, asset := range assets {
-				if assetIDSet[asset.FileID] {
-					continue
-				}
-				assetIDSet[asset.FileID] = true
-				allAssets = append(allAssets, asset)
-			}
-		}
+	allAssets := make([]model.Asset, 0, len(prepared))
+	for _, item := range prepared {
+		allAssets = append(allAssets, item.metadata)
 	}
 
 	// 构建资产元数据列表
@@ -149,35 +113,7 @@ func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config
 
 	// 构建完整的数据结构
 	// Convert configs to a format that handles JSON objects properly
-	configsData := make([]map[string]any, len(configs))
-	for i, cfg := range configs {
-		configMap := map[string]any{
-			"resource_key":    cfg.ResourceKey,
-			"alias":           cfg.Alias,
-			"name":            cfg.Name,
-			"environment_key": cfg.EnvironmentKey,
-			"pipeline_key":    cfg.PipelineKey,
-			"type":            cfg.Type,
-			"remark":          cfg.Remark,
-			"is_perm":         cfg.IsPerm,
-		}
-
-		// For object and keyvalue types, parse the content as JSON
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		switch normalizedType {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
-			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
-				configMap["content"] = content
-			} else {
-				configMap["content"] = cfg.Content
-			}
-		default:
-			configMap["content"] = cfg.Content
-		}
-
-		configsData[i] = configMap
-	}
+	configsData := archiveConfigData(configs)
 
 	archiveData := map[string]any{
 		"environments":     envList,
@@ -198,24 +134,15 @@ func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config
 		return nil, err
 	}
 
-	// 写入所有资产文件
-	for _, asset := range allAssets {
-		fullPath := filepath.Join(dataDirectory, asset.Path)
-		file, err := os.Open(fullPath)
+	for _, item := range prepared {
+		name := path.Join("files", item.metadata.FileID, item.metadata.FileName)
+		writer, err := zipWriter.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate})
 		if err != nil {
-			continue // 跳过无法读取的文件
+			return nil, err
 		}
-		zipPath := filepath.Join("files", asset.FileID, asset.FileName)
-		writer, err := zipWriter.CreateHeader(&zip.FileHeader{Name: zipPath, Method: zip.Deflate})
-		if err != nil {
-			file.Close()
-			continue
+		if _, err := writer.Write(item.data); err != nil {
+			return nil, err
 		}
-		if _, err := io.Copy(writer, file); err != nil {
-			file.Close()
-			continue
-		}
-		file.Close()
 	}
 
 	if err := zipWriter.Close(); err != nil {
@@ -226,204 +153,15 @@ func (s *Service) writeConfigArchive(ctx context.Context, configs []model.Config
 }
 
 func (s *Service) ImportConfigsArchive(ctx context.Context, data []byte, targetEnv, targetPipeline string, overwrite bool) ([]*common.ResourceConfig, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	outcome, err := s.ImportArchiveWithResult(ctx, data, "zip", targetEnv, targetPipeline, nil, overwrite)
 	if err != nil {
 		return nil, err
 	}
-
-	var configs []*common.ResourceConfig
-	var archiveData map[string]any
-	assetFiles := make(map[string]*zip.File)
-
-	for _, f := range reader.File {
-		cleanName := filepath.Clean(f.Name)
-		if cleanName == "configs.json" {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			payload, err := io.ReadAll(rc)
-			closeQuietly(rc)
-			if err != nil {
-				return nil, err
-			}
-
-			// 解析新格式（包含 environments, pipelines, business_configs, assets）
-			if err := json.Unmarshal(payload, &archiveData); err != nil {
-				return nil, errors.New("invalid configs.json format")
-			}
-
-			businessConfigs, ok := archiveData["business_configs"]
-			if !ok {
-				return nil, errors.New("business_configs field not found in configs.json")
-			}
-
-			// 解析 business_configs 字段
-			configBytes, _ := json.Marshal(businessConfigs)
-			if err := json.Unmarshal(configBytes, &configs); err != nil {
-				return nil, err
-			}
-
-			// 规范化图片和文件类型配置的引用格式
-			for i := range configs {
-				if (configs[i].Type == "image" || configs[i].Type == "file") && configs[i].Content != "" {
-					configs[i].Content = normalizeImageReference(configs[i].Content)
-				}
-			}
-
-			// 如果指定了目标环境和渠道，将所有配置映射到目标环境/渠道
-			if targetEnv != "" && targetPipeline != "" {
-				for i := range configs {
-					configs[i].EnvironmentKey = targetEnv
-					configs[i].PipelineKey = targetPipeline
-				}
-			}
-
-			// 导入 environments（仅当未指定目标环境时）
-			if targetEnv == "" {
-				if envs, ok := archiveData["environments"]; ok {
-					if err := s.importEnvironments(ctx, envs); err != nil {
-						// 记录错误但继续导入
-						fmt.Printf("Warning: failed to import environments: %v\n", err)
-					}
-				}
-			} else {
-				// 确保目标环境存在
-				if err := s.ensureEnvironmentExists(ctx, targetEnv); err != nil {
-					fmt.Printf("Warning: target environment may not exist: %v\n", err)
-				}
-			}
-
-			// 导入 pipelines（仅当未指定目标渠道时）
-			if targetPipeline == "" {
-				if pipes, ok := archiveData["pipelines"]; ok {
-					if err := s.importPipelines(ctx, pipes); err != nil {
-						// 记录错误但继续导入
-						fmt.Printf("Warning: failed to import pipelines: %v\n", err)
-					}
-				}
-			} else {
-				// 确保目标渠道存在
-				if err := s.ensurePipelineExists(ctx, targetEnv, targetPipeline); err != nil {
-					fmt.Printf("Warning: target pipeline may not exist: %v\n", err)
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(cleanName, "files/") {
-			assetFiles[cleanName] = f
-		}
-	}
-
-	if configs == nil {
-		return nil, errors.New("config content not found in archive")
-	}
-
-	// Parse asset metadata from archive
-	assetMetaMap := make(map[string]map[string]any) // fileID -> metadata
-	if assetsData, ok := archiveData["assets"]; ok {
-		assetsBytes, _ := json.Marshal(assetsData)
-		var assetMetas []map[string]any
-		if err := json.Unmarshal(assetsBytes, &assetMetas); err == nil {
-			for _, meta := range assetMetas {
-				if fileID, ok := meta["file_id"].(string); ok && fileID != "" {
-					assetMetaMap[fileID] = meta
-				}
-			}
-		}
-	}
-
-	// Import configs
-	configModels := make([]model.Config, 0, len(configs))
-	for _, cfg := range configs {
-		configModels = append(configModels, *pbConfigToModel(cfg))
-	}
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
-		return nil, err
-	}
-
-	// Restore all assets present in archive
-	for path, f := range assetFiles {
-		fileID := filepath.Base(filepath.Dir(path))
-		fileName := filepath.Base(path)
-		rc, err := f.Open()
-		if err != nil {
-			continue
-		}
-		fileData, err := io.ReadAll(rc)
-		closeQuietly(rc)
-		if err != nil {
-			continue
-		}
-
-		if err := ensureUploadDir(fileID); err != nil {
-			continue
-		}
-		relativePath := filepath.Join(uploadDirectory, fileID, fileName)
-		fullPath := filepath.Join(dataDirectory, relativePath)
-		if err := os.WriteFile(fullPath, fileData, 0o644); err != nil {
-			continue
-		}
-
-		// Get asset metadata
-		meta, hasMeta := assetMetaMap[fileID]
-		envKey := ""
-		pipeKey := ""
-		contentType := ""
-		remark := ""
-
-		if hasMeta {
-			if v, ok := meta["environment_key"].(string); ok {
-				envKey = v
-			}
-			if v, ok := meta["pipeline_key"].(string); ok {
-				pipeKey = v
-			}
-			if v, ok := meta["content_type"].(string); ok {
-				contentType = v
-			}
-			if v, ok := meta["remark"].(string); ok {
-				remark = v
-			}
-		}
-
-		// If target env/pipeline specified, use those instead
-		if targetEnv != "" && targetPipeline != "" {
-			envKey = targetEnv
-			pipeKey = targetPipeline
-		}
-
-		// Use metadata content type if available, otherwise detect
-		if contentType == "" {
-			contentType = http.DetectContentType(fileData)
-		}
-
-		asset := &model.Asset{
-			FileID:         fileID,
-			EnvironmentKey: envKey,
-			PipelineKey:    pipeKey,
-			FileName:       fileName,
-			FileSize:       int64(len(fileData)),
-			ContentType:    contentType,
-			Path:           relativePath,
-			Remark:         remark,
-		}
-
-		if err := s.logic.UpdateAsset(ctx, asset); err != nil {
-			if !errors.Is(err, ErrAssetNotFound) {
-				continue
-			}
-			if err := s.logic.CreateAsset(ctx, asset); err != nil {
-				continue
-			}
-		}
-	}
-
-	return s.decorateConfigList(configs), nil
+	return outcome.Configs, nil
 }
 
-// importEnvironments 导入环境信息
-func (s *Service) importEnvironments(ctx context.Context, data any) error {
+// importEnvironments 导入环境信息(写协调事务内执行;既有环境的元数据更新需通过冻结检查)。
+func (s *Service) importEnvironments(ctx context.Context, l *Logic, data any) error {
 	// 将 data 转换为 JSON 再解析
 	envBytes, err := json.Marshal(data)
 	if err != nil {
@@ -431,27 +169,31 @@ func (s *Service) importEnvironments(ctx context.Context, data any) error {
 	}
 
 	var environments []model.Environment
-	if err := json.Unmarshal(envBytes, &environments); err != nil {
+	if err := DecodeConfigJSON(envBytes, &environments); err != nil {
 		return err
 	}
 
 	for _, env := range environments {
 		// 检查环境是否已存在
-		existing, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, env.EnvironmentKey)
+		existing, err := l.environmentDAO.GetByKey(ctx, l.db, env.EnvironmentKey)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 
 		if existing != nil {
-			// 更新已存在的环境
+			// 环境内存在 locked 渠道时拒绝写入其元数据
+			if err := l.ensureEnvironmentMetadataUnlocked(ctx, env.EnvironmentKey); err != nil {
+				return err
+			}
 			env.ID = existing.ID
+			env.EnvironmentID = existing.EnvironmentID
 			env.CreatedAt = existing.CreatedAt
-			if err := s.logic.environmentDAO.Update(ctx, s.logic.db, &env); err != nil {
+			if err := l.environmentDAO.Update(ctx, l.db, &env); err != nil {
 				return err
 			}
 		} else {
-			// 创建新环境
-			if err := s.logic.environmentDAO.Create(ctx, s.logic.db, &env); err != nil {
+			env.EnvironmentID = ""
+			if err := l.environmentDAO.Create(ctx, l.db, &env); err != nil {
 				return err
 			}
 		}
@@ -460,8 +202,8 @@ func (s *Service) importEnvironments(ctx context.Context, data any) error {
 	return nil
 }
 
-// importPipelines 导入渠道信息
-func (s *Service) importPipelines(ctx context.Context, data any) error {
+// importPipelines 导入渠道信息(写协调事务内执行;既有渠道更新需通过冻结检查)。
+func (s *Service) importPipelines(ctx context.Context, l *Logic, data any) error {
 	// 将 data 转换为 JSON 再解析
 	pipeBytes, err := json.Marshal(data)
 	if err != nil {
@@ -469,27 +211,35 @@ func (s *Service) importPipelines(ctx context.Context, data any) error {
 	}
 
 	var pipelines []model.Pipeline
-	if err := json.Unmarshal(pipeBytes, &pipelines); err != nil {
+	if err := DecodeConfigJSON(pipeBytes, &pipelines); err != nil {
 		return err
 	}
 
 	for _, pipe := range pipelines {
 		// 检查渠道是否已存在
-		existing, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, pipe.EnvironmentKey, pipe.PipelineKey)
+		existing, err := l.pipelineDAO.GetByKey(ctx, l.db, pipe.EnvironmentKey, pipe.PipelineKey)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 
 		if existing != nil {
-			// 更新已存在的渠道
+			if err := l.ensurePipelineUnlocked(ctx, pipe.EnvironmentKey, pipe.PipelineKey); err != nil {
+				return err
+			}
 			pipe.ID = existing.ID
+			pipe.ScopeID = existing.ScopeID
+			pipe.EnvironmentID = existing.EnvironmentID
 			pipe.CreatedAt = existing.CreatedAt
-			if err := s.logic.pipelineDAO.Update(ctx, s.logic.db, &pipe); err != nil {
+			if err := l.pipelineDAO.Update(ctx, l.db, &pipe); err != nil {
 				return err
 			}
 		} else {
-			// 创建新渠道
-			if err := s.logic.pipelineDAO.Create(ctx, s.logic.db, &pipe); err != nil {
+			pipe.ScopeID = ""
+			pipe.EnvironmentID = ""
+			if err := l.pipelineDAO.Create(ctx, l.db, &pipe); err != nil {
+				return err
+			}
+			if err := l.ensurePipelineStateExists(ctx, pipe.EnvironmentKey, pipe.PipelineKey); err != nil {
 				return err
 			}
 		}
@@ -525,9 +275,9 @@ func extractAssetIDs(configs []model.Config) []string {
 	return ids
 }
 
-// ensureEnvironmentExists 确保环境存在，如果不存在则返回错误
-func (s *Service) ensureEnvironmentExists(ctx context.Context, envKey string) error {
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, envKey)
+// ensureEnvironmentExists 确保环境存在(只读检查,可在协调事务内复用)。
+func (s *Service) ensureEnvironmentExists(ctx context.Context, l *Logic, envKey string) error {
+	_, err := l.environmentDAO.GetByKey(ctx, l.db, envKey)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("environment %s does not exist", envKey)
@@ -537,9 +287,9 @@ func (s *Service) ensureEnvironmentExists(ctx context.Context, envKey string) er
 	return nil
 }
 
-// ensurePipelineExists 确保渠道存在，如果不存在则返回错误
-func (s *Service) ensurePipelineExists(ctx context.Context, envKey, pipelineKey string) error {
-	_, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, envKey, pipelineKey)
+// ensurePipelineExists 确保渠道存在(只读检查,可在协调事务内复用)。
+func (s *Service) ensurePipelineExists(ctx context.Context, l *Logic, envKey, pipelineKey string) error {
+	_, err := l.pipelineDAO.GetByKey(ctx, l.db, envKey, pipelineKey)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("pipeline %s/%s does not exist", envKey, pipelineKey)
@@ -597,172 +347,123 @@ func normalizeImageReference(ref string) string {
 
 // MigrateConfigs migrates configurations between environments/pipelines.
 func (s *Service) MigrateConfigs(ctx context.Context, req *transfer.MigrateRequest) (*transfer.MigrateSummary, error) {
-	// 1. 验证源和目标环境/渠道存在
-	if err := s.ensureEnvironmentExists(ctx, req.SourceEnvironmentKey); err != nil {
+	// 1. 只读预检:源和目标环境/渠道存在(错误语义与既有实现一致)
+	if err := s.ensureEnvironmentExists(ctx, s.logic, req.SourceEnvironmentKey); err != nil {
 		return nil, fmt.Errorf("source environment not found: %w", err)
 	}
-	if err := s.ensurePipelineExists(ctx, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
+	if err := s.ensurePipelineExists(ctx, s.logic, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
 		return nil, fmt.Errorf("source pipeline not found: %w", err)
 	}
-	if err := s.ensureEnvironmentExists(ctx, req.TargetEnvironmentKey); err != nil {
+	if err := s.ensureEnvironmentExists(ctx, s.logic, req.TargetEnvironmentKey); err != nil {
 		return nil, fmt.Errorf("target environment not found: %w", err)
 	}
-	if err := s.ensurePipelineExists(ctx, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+	if err := s.ensurePipelineExists(ctx, s.logic, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
 		return nil, fmt.Errorf("target pipeline not found: %w", err)
 	}
 
-	// 2. 获取源配置（使用 ListConfigs 而不是 ExportConfigs，因为需要保留 ResourceKey）
-	sourceConfigs, err := s.logic.ListConfigs(ctx, req.SourceEnvironmentKey, req.SourcePipelineKey, "", "", "", false)
+	var (
+		summary      *transfer.MigrateSummary
+		written      []model.Config
+		createdFiles []createdResourceFile
+	)
+	// 迁移在写协调事务内执行:目标 locked 时在复制任何资源前整体拒绝;源 locked 只读复制,不受限。
+	err := s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		if err := txLogic.ensurePipelineUnlocked(gateCtx, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+			return err
+		}
+		if req.SourceExpectedScopeId != "" {
+			if _, err := requireScopeIdentity(gateCtx, txLogic, req.SourceEnvironmentKey, req.SourcePipelineKey, req.SourceExpectedScopeId); err != nil {
+				return err
+			}
+		}
+		if req.TargetExpectedScopeId != "" {
+			if _, err := requireScopeIdentity(gateCtx, txLogic, req.TargetEnvironmentKey, req.TargetPipelineKey, req.TargetExpectedScopeId); err != nil {
+				return err
+			}
+		}
+		// 协调内复查存在性(TOCTOU)
+		if err := s.ensureEnvironmentExists(gateCtx, txLogic, req.SourceEnvironmentKey); err != nil {
+			return fmt.Errorf("source environment not found: %w", err)
+		}
+		if err := s.ensurePipelineExists(gateCtx, txLogic, req.SourceEnvironmentKey, req.SourcePipelineKey); err != nil {
+			return fmt.Errorf("source pipeline not found: %w", err)
+		}
+		if err := s.ensureEnvironmentExists(gateCtx, txLogic, req.TargetEnvironmentKey); err != nil {
+			return fmt.Errorf("target environment not found: %w", err)
+		}
+		if err := s.ensurePipelineExists(gateCtx, txLogic, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
+			return fmt.Errorf("target pipeline not found: %w", err)
+		}
+		// 2. 获取源配置(保留 ResourceKey;不经缓存,作为写入依据)
+		sourceConfigs, err := txLogic.configDAO.ListByEnvironmentAndPipelineWithFilter(gateCtx, txLogic.db,
+			req.SourceEnvironmentKey, req.SourcePipelineKey, "", "", "", 0, 0)
+		if err != nil {
+			return err
+		}
+		// 3. 过滤指定的配置(如果提供了 resource_keys)
+		if len(req.ResourceKeys) > 0 {
+			resourceKeySet := make(map[string]bool)
+			for _, key := range req.ResourceKeys {
+				resourceKeySet[key] = true
+			}
+			filtered := make([]model.Config, 0)
+			for _, cfg := range sourceConfigs {
+				if resourceKeySet[cfg.ResourceKey] {
+					filtered = append(filtered, cfg)
+				}
+			}
+			sourceConfigs = filtered
+		}
+		// 4. 执行迁移
+		summary = &transfer.MigrateSummary{
+			Total: int32(len(sourceConfigs)), // #nosec G115 -- count will not exceed int32
+			Items: make([]*transfer.MigrateResultItem, 0),
+		}
+		for _, srcCfg := range sourceConfigs {
+			item := &transfer.MigrateResultItem{
+				ResourceKey: srcCfg.ResourceKey,
+				Name:        srcCfg.Name,
+				Alias:       srcCfg.Alias,
+			}
+			// 检查目标是否存在同别名配置;非 not-found 错误不能忽略或当成不存在
+			existing, err := txLogic.configDAO.GetByAlias(gateCtx, txLogic.db,
+				req.TargetEnvironmentKey, req.TargetPipelineKey, srcCfg.Alias)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("query target config alias=%s: %w", srcCfg.Alias, err)
+			}
+
+			if existing != nil && !req.Overwrite {
+				item.Status = "skipped"
+				item.Message = "配置已存在且 overwrite=false"
+				summary.Skipped++
+				summary.Items = append(summary.Items, item)
+				continue
+			}
+
+			// 每项在独立保存点内完成:复制资源→重写引用→创建/更新→回读验证。
+			// 失败项回滚本项配置与资源行,并清理本项新建文件;其他项继续。
+			writtenCfg, itemFiles, err := s.migrateOneConfig(gateCtx, txLogic, srcCfg, existing, req)
+			if err != nil {
+				item.Status = "failed"
+				item.Message = migrationItemMessage(err, s.cleanupMigratedItemFiles(gateCtx, itemFiles))
+				summary.Failed++
+				summary.Items = append(summary.Items, item)
+				continue
+			}
+			createdFiles = append(createdFiles, itemFiles...)
+			item.Status = "succeeded"
+			summary.Succeeded++
+			written = append(written, *writtenCfg)
+			summary.Items = append(summary.Items, item)
+		}
+		return nil
+	})
 	if err != nil {
+		logResidualCleanupFailures(s.cleanupMigratedItemFiles(ctx, createdFiles))
 		return nil, err
 	}
-
-	// 3. 过滤指定的配置（如果提供了 resource_keys）
-	if len(req.ResourceKeys) > 0 {
-		resourceKeySet := make(map[string]bool)
-		for _, key := range req.ResourceKeys {
-			resourceKeySet[key] = true
-		}
-		filtered := make([]model.Config, 0)
-		for _, cfg := range sourceConfigs {
-			if resourceKeySet[cfg.ResourceKey] {
-				filtered = append(filtered, cfg)
-			}
-		}
-		sourceConfigs = filtered
-	}
-
-	// 4. 执行迁移
-	summary := &transfer.MigrateSummary{
-		Total: int32(len(sourceConfigs)), // #nosec G115 -- count will not exceed int32
-		Items: make([]*transfer.MigrateResultItem, 0),
-	}
-
-	for _, srcCfg := range sourceConfigs {
-		item := &transfer.MigrateResultItem{
-			ResourceKey: srcCfg.ResourceKey,
-			Name:        srcCfg.Name,
-			Alias:       srcCfg.Alias,
-		}
-
-		// 检查目标是否存在同别名配置
-		existing, _ := s.logic.configDAO.GetByAlias(ctx, s.logic.db,
-			req.TargetEnvironmentKey, req.TargetPipelineKey, srcCfg.Alias)
-
-		if existing != nil && !req.Overwrite {
-			item.Status = "skipped"
-			item.Message = "配置已存在且 overwrite=false"
-			summary.Skipped++
-			summary.Items = append(summary.Items, item)
-			continue
-		}
-
-		// 复制配置
-		newCfg := srcCfg
-		newCfg.ID = 0
-		newCfg.EnvironmentKey = req.TargetEnvironmentKey
-		newCfg.PipelineKey = req.TargetPipelineKey
-		newCfg.ResourceKey = uuid.NewString() // 生成新的 resource_key
-
-		// 复制关联的资源文件
-		if err := s.copyConfigAssets(ctx, &newCfg, req.TargetEnvironmentKey, req.TargetPipelineKey); err != nil {
-			item.Status = "failed"
-			item.Message = err.Error()
-			summary.Failed++
-			summary.Items = append(summary.Items, item)
-			continue
-		}
-
-		// 保存配置
-		if existing != nil {
-			// 更新现有配置
-			newCfg.ResourceKey = existing.ResourceKey
-			if err := s.logic.UpdateConfig(ctx, &newCfg); err != nil {
-				item.Status = "failed"
-				item.Message = err.Error()
-				summary.Failed++
-			} else {
-				item.Status = "succeeded"
-				summary.Succeeded++
-			}
-		} else {
-			// 创建新配置
-			if err := s.logic.AddConfig(ctx, &newCfg); err != nil {
-				item.Status = "failed"
-				item.Message = err.Error()
-				summary.Failed++
-			} else {
-				item.Status = "succeeded"
-				summary.Succeeded++
-			}
-		}
-
-		summary.Items = append(summary.Items, item)
-	}
-
+	s.logic.invalidateConfigCaches(context.WithoutCancel(ctx), written)
 	return summary, nil
-}
-
-// copyConfigAssets copies assets referenced in the config content.
-func (s *Service) copyConfigAssets(ctx context.Context, cfg *model.Config, targetEnv, targetPipeline string) error {
-	// 提取资源引用
-	assetIDs := extractAssetIDsFromContent(cfg.Content)
-	if len(assetIDs) == 0 {
-		return nil
-	}
-
-	// 记录旧 ID 到新 ID 的映射
-	idMapping := make(map[string]string)
-
-	for _, oldID := range assetIDs {
-		// 获取原资源
-		oldAsset, err := s.logic.GetAsset(ctx, oldID)
-		if err != nil {
-			continue // 跳过不存在的资源
-		}
-
-		// 读取原文件
-		oldPath := filepath.Join(dataDirectory, oldAsset.Path)
-		data, err := os.ReadFile(oldPath)
-		if err != nil {
-			continue
-		}
-
-		// 生成新 ID 并写入文件
-		newID := uuid.NewString()
-		if err := ensureUploadDir(newID); err != nil {
-			return err
-		}
-
-		newRelPath := filepath.Join(uploadDirectory, newID, oldAsset.FileName)
-		newFullPath := filepath.Join(dataDirectory, newRelPath)
-		if err := os.WriteFile(newFullPath, data, 0o644); err != nil {
-			return err
-		}
-
-		// 创建新资源记录
-		newAsset := &model.Asset{
-			FileID:         newID,
-			EnvironmentKey: targetEnv,
-			PipelineKey:    targetPipeline,
-			FileName:       oldAsset.FileName,
-			FileSize:       oldAsset.FileSize,
-			ContentType:    oldAsset.ContentType,
-			Path:           newRelPath,
-		}
-		if err := s.logic.CreateAsset(ctx, newAsset); err != nil {
-			return err
-		}
-
-		idMapping[oldID] = newID
-	}
-
-	// 更新配置中的资源引用
-	for oldID, newID := range idMapping {
-		cfg.Content = strings.ReplaceAll(cfg.Content, "asset://"+oldID, "asset://"+newID)
-	}
-
-	return nil
 }
 
 // extractAssetIDsFromContent extracts asset IDs from config content.
@@ -804,6 +505,7 @@ func (s *Service) GetExportTree(ctx context.Context) (*transfer.ExportTreeData, 
 		}
 
 		treeEnv := &transfer.ExportTreeEnvironment{
+			EnvironmentId:   env.EnvironmentID,
 			EnvironmentKey:  env.EnvironmentKey,
 			EnvironmentName: env.EnvironmentName,
 			Description:     env.Description,
@@ -819,12 +521,14 @@ func (s *Service) GetExportTree(ctx context.Context) (*transfer.ExportTreeData, 
 			}
 
 			treePipe := &transfer.ExportTreePipeline{
-				PipelineKey:  pipe.GetPipelineKey(),
-				PipelineName: pipe.GetPipelineName(),
-				Description:  pipe.GetDescription(),
-				IsActive:     pipe.GetIsActive(),
-				ConfigCount:  int32(len(configs)), // #nosec G115 -- count will not exceed int32
-				Configs:      make([]*transfer.ExportTreeConfig, 0),
+				ScopeId:       pipe.GetScopeId(),
+				EnvironmentId: pipe.GetEnvironmentId(),
+				PipelineKey:   pipe.GetPipelineKey(),
+				PipelineName:  pipe.GetPipelineName(),
+				Description:   pipe.GetDescription(),
+				IsActive:      pipe.GetIsActive(),
+				ConfigCount:   int32(len(configs)), // #nosec G115 -- count will not exceed int32
+				Configs:       make([]*transfer.ExportTreeConfig, 0),
 			}
 
 			// Add config details
@@ -1001,39 +705,13 @@ func (s *Service) writeConfigTarGz(ctx context.Context, configs []model.Config) 
 		}
 	}
 
-	// 收集所有相关资产（包括配置中引用的和环境/渠道下的所有资产）
-	allAssets := make([]model.Asset, 0)
-	assetIDSet := make(map[string]bool)
-
-	// 1. 收集配置中引用的资产
-	assetIDs := extractAssetIDs(configs)
-	for _, assetID := range assetIDs {
-		if assetIDSet[assetID] {
-			continue
-		}
-		asset, err := s.logic.GetAsset(ctx, assetID)
-		if err != nil {
-			continue
-		}
-		assetIDSet[assetID] = true
-		allAssets = append(allAssets, *asset)
+	prepared, err := s.prepareExportAssets(ctx, configs, true)
+	if err != nil {
+		return nil, err
 	}
-
-	// 2. 收集环境/渠道下的所有资产
-	for envKey, pipes := range pipelineSet {
-		for pipeKey := range pipes {
-			assets, err := s.logic.ListAssetsByEnvironmentAndPipeline(ctx, envKey, pipeKey)
-			if err != nil {
-				continue
-			}
-			for _, asset := range assets {
-				if assetIDSet[asset.FileID] {
-					continue
-				}
-				assetIDSet[asset.FileID] = true
-				allAssets = append(allAssets, asset)
-			}
-		}
+	allAssets := make([]model.Asset, 0, len(prepared))
+	for _, item := range prepared {
+		allAssets = append(allAssets, item.metadata)
 	}
 
 	// 构建资产元数据列表
@@ -1052,35 +730,7 @@ func (s *Service) writeConfigTarGz(ctx context.Context, configs []model.Config) 
 
 	// Build complete data structure
 	// Convert configs to a format that handles JSON objects properly
-	configsData := make([]map[string]any, len(configs))
-	for i, cfg := range configs {
-		configMap := map[string]any{
-			"resource_key":    cfg.ResourceKey,
-			"alias":           cfg.Alias,
-			"name":            cfg.Name,
-			"environment_key": cfg.EnvironmentKey,
-			"pipeline_key":    cfg.PipelineKey,
-			"type":            cfg.Type,
-			"remark":          cfg.Remark,
-			"is_perm":         cfg.IsPerm,
-		}
-
-		// For object and keyvalue types, parse the content as JSON
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		switch normalizedType {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
-			var content interface{}
-			if err := json.Unmarshal([]byte(cfg.Content), &content); err == nil {
-				configMap["content"] = content
-			} else {
-				configMap["content"] = cfg.Content
-			}
-		default:
-			configMap["content"] = cfg.Content
-		}
-
-		configsData[i] = configMap
-	}
+	configsData := archiveConfigData(configs)
 
 	archiveData := map[string]any{
 		"environments":     envList,
@@ -1108,23 +758,12 @@ func (s *Service) writeConfigTarGz(ctx context.Context, configs []model.Config) 
 	}
 
 	// Write all asset files
-	for _, asset := range allAssets {
-		fullPath := filepath.Join(dataDirectory, asset.Path)
-		fileData, err := os.ReadFile(fullPath)
-		if err != nil {
-			continue
-		}
-
-		tarPath := filepath.Join("files", asset.FileID, asset.FileName)
-		fileHeader := &tar.Header{
-			Name: tarPath,
-			Mode: 0644,
-			Size: int64(len(fileData)),
-		}
-		if err := tarWriter.WriteHeader(fileHeader); err != nil {
+	for _, item := range prepared {
+		name := path.Join("files", item.metadata.FileID, item.metadata.FileName)
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(item.data))}); err != nil {
 			return nil, err
 		}
-		if _, err := tarWriter.Write(fileData); err != nil {
+		if _, err := tarWriter.Write(item.data); err != nil {
 			return nil, err
 		}
 	}
@@ -1173,7 +812,7 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 	if envData, ok := archiveData["environments"]; ok {
 		envBytes, _ := json.Marshal(envData)
 		var environments []model.Environment
-		if err := json.Unmarshal(envBytes, &environments); err == nil {
+		if err := DecodeConfigJSON(envBytes, &environments); err == nil {
 			for _, env := range environments {
 				status := s.checkEnvironmentStatus(ctx, env.EnvironmentKey)
 				previewEnv := &transfer.ImportPreviewEnvironment{
@@ -1194,7 +833,7 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 	if pipeData, ok := archiveData["pipelines"]; ok {
 		pipeBytes, _ := json.Marshal(pipeData)
 		var pipelines []model.Pipeline
-		if err := json.Unmarshal(pipeBytes, &pipelines); err == nil {
+		if err := DecodeConfigJSON(pipeBytes, &pipelines); err == nil {
 			for _, pipe := range pipelines {
 				status := s.checkPipelineStatus(ctx, pipe.EnvironmentKey, pipe.PipelineKey)
 				previewPipe := &transfer.ImportPreviewPipeline{
@@ -1228,56 +867,57 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 	// Parse configs
 	if configData, ok := archiveData["business_configs"]; ok {
 		configBytes, _ := json.Marshal(configData)
-		var configs []*common.ResourceConfig
-		if err := json.Unmarshal(configBytes, &configs); err == nil {
-			for _, cfg := range configs {
-				status := s.checkConfigStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetAlias())
-				previewCfg := &transfer.ImportPreviewConfig{
-					ResourceKey: cfg.GetResourceKey(),
-					Name:        cfg.GetName(),
-					Alias:       cfg.GetAlias(),
-					Type:        cfg.GetType(),
-					Status:      status,
-				}
+		configs, err := decodeArchiveConfigs(configBytes)
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range configs {
+			status := s.checkConfigStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetAlias())
+			previewCfg := &transfer.ImportPreviewConfig{
+				ResourceKey: cfg.GetResourceKey(),
+				Name:        cfg.GetName(),
+				Alias:       cfg.GetAlias(),
+				Type:        cfg.GetType(),
+				Status:      status,
+			}
 
-				// Add to pipeline
-				pipeKey := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
-				if pipe, exists := pipeMap[pipeKey]; exists {
-					pipe.Configs = append(pipe.Configs, previewCfg)
+			// Add to pipeline
+			pipeKey := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
+			if pipe, exists := pipeMap[pipeKey]; exists {
+				pipe.Configs = append(pipe.Configs, previewCfg)
+			} else {
+				// Pipeline not in archive, create a placeholder
+				newPipe := &transfer.ImportPreviewPipeline{
+					PipelineKey:  cfg.GetPipelineKey(),
+					PipelineName: cfg.GetPipelineKey(),
+					Status:       s.checkPipelineStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey()),
+					Configs:      []*transfer.ImportPreviewConfig{previewCfg},
+				}
+				pipeMap[pipeKey] = newPipe
+
+				// Add to environment
+				if env, exists := envMap[cfg.GetEnvironmentKey()]; exists {
+					env.Pipelines = append(env.Pipelines, newPipe)
 				} else {
-					// Pipeline not in archive, create a placeholder
-					newPipe := &transfer.ImportPreviewPipeline{
-						PipelineKey:  cfg.GetPipelineKey(),
-						PipelineName: cfg.GetPipelineKey(),
-						Status:       s.checkPipelineStatus(ctx, cfg.GetEnvironmentKey(), cfg.GetPipelineKey()),
-						Configs:      []*transfer.ImportPreviewConfig{previewCfg},
+					newEnv := &transfer.ImportPreviewEnvironment{
+						EnvironmentKey:  cfg.GetEnvironmentKey(),
+						EnvironmentName: cfg.GetEnvironmentKey(),
+						Status:          s.checkEnvironmentStatus(ctx, cfg.GetEnvironmentKey()),
+						Pipelines:       []*transfer.ImportPreviewPipeline{newPipe},
 					}
-					pipeMap[pipeKey] = newPipe
-
-					// Add to environment
-					if env, exists := envMap[cfg.GetEnvironmentKey()]; exists {
-						env.Pipelines = append(env.Pipelines, newPipe)
-					} else {
-						newEnv := &transfer.ImportPreviewEnvironment{
-							EnvironmentKey:  cfg.GetEnvironmentKey(),
-							EnvironmentName: cfg.GetEnvironmentKey(),
-							Status:          s.checkEnvironmentStatus(ctx, cfg.GetEnvironmentKey()),
-							Pipelines:       []*transfer.ImportPreviewPipeline{newPipe},
-						}
-						envMap[cfg.GetEnvironmentKey()] = newEnv
-						preview.Environments = append(preview.Environments, newEnv)
-					}
+					envMap[cfg.GetEnvironmentKey()] = newEnv
+					preview.Environments = append(preview.Environments, newEnv)
 				}
+			}
 
-				preview.Summary.TotalConfigs++
-				switch status {
-				case "new":
-					preview.Summary.NewCount++
-				case "exists":
-					preview.Summary.ExistingCount++
-				case "conflict":
-					preview.Summary.ConflictCount++
-				}
+			preview.Summary.TotalConfigs++
+			switch status {
+			case "new":
+				preview.Summary.NewCount++
+			case "exists":
+				preview.Summary.ExistingCount++
+			case "conflict":
+				preview.Summary.ConflictCount++
 			}
 		}
 	}
@@ -1286,7 +926,7 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 	if assetData, ok := archiveData["assets"]; ok {
 		assetBytes, _ := json.Marshal(assetData)
 		var assets []map[string]any
-		if err := json.Unmarshal(assetBytes, &assets); err == nil {
+		if err := DecodeConfigJSON(assetBytes, &assets); err == nil {
 			preview.Summary.TotalAssets = int32(len(assets)) // #nosec G115 -- count will not exceed int32
 		}
 	}
@@ -1296,67 +936,18 @@ func (s *Service) ImportConfigsPreview(ctx context.Context, data []byte, filenam
 
 // parseZip parses a zip archive and returns the archive data.
 func (s *Service) parseZip(data []byte) (map[string]any, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	archive, err := readConfigArchive(data, "zip")
 	if err != nil {
 		return nil, err
 	}
-
-	for _, f := range reader.File {
-		if filepath.Clean(f.Name) == "configs.json" {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			payload, err := io.ReadAll(rc)
-			closeQuietly(rc)
-			if err != nil {
-				return nil, err
-			}
-
-			var archiveData map[string]any
-			if err := json.Unmarshal(payload, &archiveData); err != nil {
-				return nil, errors.New("invalid configs.json format")
-			}
-			return archiveData, nil
-		}
-	}
-
-	return nil, errors.New("configs.json not found in archive")
+	return archive.metadata, nil
 }
-
-// parseTarGz parses a tar.gz archive and returns the archive data.
 func (s *Service) parseTarGz(data []byte) (map[string]any, error) {
-	gzReader, err := gzip.NewReader(bytes.NewReader(data))
+	archive, err := readConfigArchive(data, "tar.gz")
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = gzReader.Close() }()
-
-	tarReader := tar.NewReader(gzReader)
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if filepath.Clean(header.Name) == "configs.json" {
-			payload, err := io.ReadAll(tarReader)
-			if err != nil {
-				return nil, err
-			}
-
-			var archiveData map[string]any
-			if err := json.Unmarshal(payload, &archiveData); err != nil {
-				return nil, errors.New("invalid configs.json format")
-			}
-			return archiveData, nil
-		}
-	}
-
-	return nil, errors.New("configs.json not found in archive")
+	return archive.metadata, nil
 }
 
 // checkEnvironmentStatus checks if an environment exists.
@@ -1390,436 +981,61 @@ func (s *Service) checkConfigStatus(ctx context.Context, envKey, pipeKey, alias 
 
 // ImportConfigsSelective imports selected configurations from an archive.
 func (s *Service) ImportConfigsSelective(ctx context.Context, data []byte, filename string, selections []*transfer.ExportSelection, overwrite bool) ([]*common.ResourceConfig, error) {
-	// Detect format from filename
+	outcome, err := s.ImportConfigsSelectiveWithResult(ctx, data, filename, selections, overwrite)
+	if err != nil {
+		return nil, err
+	}
+	return outcome.Configs, nil
+}
+
+func (s *Service) ImportConfigsSelectiveWithResult(ctx context.Context, data []byte, filename string, selections []*transfer.ExportSelection, overwrite bool) (*ArchiveImportOutcome, error) {
 	format := "zip"
 	if strings.HasSuffix(strings.ToLower(filename), ".tar.gz") || strings.HasSuffix(strings.ToLower(filename), ".tgz") {
 		format = "tar.gz"
 	}
-
-	// Build selection set for quick lookup
-	selectionSet := make(map[string]map[string]map[string]bool) // env -> pipe -> resourceKey
-	selectAll := len(selections) == 0
-
 	for _, sel := range selections {
-		if _, exists := selectionSet[sel.EnvironmentKey]; !exists {
-			selectionSet[sel.EnvironmentKey] = make(map[string]map[string]bool)
+		if sel == nil {
+			return nil, errors.New("nil selection")
 		}
-		if sel.PipelineKey == "" {
-			// Select all pipelines in this environment
-			selectionSet[sel.EnvironmentKey]["*"] = map[string]bool{"*": true}
-		} else {
-			if _, exists := selectionSet[sel.EnvironmentKey][sel.PipelineKey]; !exists {
-				selectionSet[sel.EnvironmentKey][sel.PipelineKey] = make(map[string]bool)
+		if sel.ExpectedEnvironmentId != "" && sel.EnvironmentKey != "" {
+			env, err := resolveEnvironmentByKey(ctx, s.logic, sel.EnvironmentKey)
+			if err != nil {
+				return nil, err
+			}
+			if env.EnvironmentID != sel.ExpectedEnvironmentId {
+				return nil, scopeIdentityConflict("environment_key now identifies a different generation")
+			}
+		}
+		if sel.ExpectedScopeId != "" && sel.EnvironmentKey != "" && sel.PipelineKey != "" {
+			if err := s.ValidateReadScope(ctx, sel.EnvironmentKey, sel.PipelineKey, sel.ExpectedScopeId); err != nil {
+				return nil, err
+			}
+		}
+	}
+	selected := func(env, pipe, key string) bool {
+		if len(selections) == 0 {
+			return true
+		}
+		for _, sel := range selections {
+			if sel.EnvironmentKey != env {
+				continue
+			}
+			if sel.PipelineKey == "" {
+				return true
+			}
+			if sel.PipelineKey != pipe {
+				continue
 			}
 			if len(sel.ResourceKeys) == 0 {
-				// Select all configs in this pipeline
-				selectionSet[sel.EnvironmentKey][sel.PipelineKey]["*"] = true
-			} else {
-				for _, key := range sel.ResourceKeys {
-					selectionSet[sel.EnvironmentKey][sel.PipelineKey][key] = true
+				return true
+			}
+			for _, candidate := range sel.ResourceKeys {
+				if candidate == key {
+					return true
 				}
 			}
 		}
+		return false
 	}
-
-	// Check if a config should be imported
-	shouldImport := func(envKey, pipeKey, resourceKey string) bool {
-		if selectAll {
-			return true
-		}
-		// Check if environment is selected
-		envSel, envExists := selectionSet[envKey]
-		if !envExists {
-			return false
-		}
-		// Check if all pipelines are selected
-		if _, allPipes := envSel["*"]; allPipes {
-			return true
-		}
-		// Check if pipeline is selected
-		pipeSel, pipeExists := envSel[pipeKey]
-		if !pipeExists {
-			return false
-		}
-		// Check if all configs are selected
-		if pipeSel["*"] {
-			return true
-		}
-		// Check if specific config is selected
-		return pipeSel[resourceKey]
-	}
-
-	// Parse archive based on format
-	if format == "tar.gz" {
-		return s.importConfigsFromTarGz(ctx, data, shouldImport, overwrite)
-	}
-	return s.importConfigsFromZip(ctx, data, shouldImport, overwrite)
-}
-
-// importConfigsFromZip imports configs from a zip archive with selection filter.
-func (s *Service) importConfigsFromZip(ctx context.Context, data []byte, shouldImport func(string, string, string) bool, overwrite bool) ([]*common.ResourceConfig, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, err
-	}
-
-	var allConfigs []*common.ResourceConfig
-	var archiveData map[string]any
-	assetFiles := make(map[string]*zip.File)
-
-	for _, f := range reader.File {
-		cleanName := filepath.Clean(f.Name)
-		if cleanName == "configs.json" {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			payload, err := io.ReadAll(rc)
-			closeQuietly(rc)
-			if err != nil {
-				return nil, err
-			}
-			if err := json.Unmarshal(payload, &archiveData); err != nil {
-				return nil, errors.New("invalid configs.json format")
-			}
-		} else if strings.HasPrefix(cleanName, "files/") {
-			assetFiles[cleanName] = f
-		}
-	}
-
-	if archiveData == nil {
-		return nil, errors.New("configs.json not found in archive")
-	}
-
-	// Import environments
-	if envData, ok := archiveData["environments"]; ok {
-		if err := s.importEnvironments(ctx, envData); err != nil {
-			fmt.Printf("Warning: failed to import environments: %v\n", err)
-		}
-	}
-
-	// Import pipelines
-	if pipeData, ok := archiveData["pipelines"]; ok {
-		if err := s.importPipelines(ctx, pipeData); err != nil {
-			fmt.Printf("Warning: failed to import pipelines: %v\n", err)
-		}
-	}
-
-	// Parse asset metadata from archive
-	assetMetaMap := make(map[string]map[string]any) // fileID -> metadata
-	if assetsData, ok := archiveData["assets"]; ok {
-		assetsBytes, _ := json.Marshal(assetsData)
-		var assetMetas []map[string]any
-		if err := json.Unmarshal(assetsBytes, &assetMetas); err == nil {
-			for _, meta := range assetMetas {
-				if fileID, ok := meta["file_id"].(string); ok && fileID != "" {
-					assetMetaMap[fileID] = meta
-				}
-			}
-		}
-	}
-
-	// Parse configs
-	if configData, ok := archiveData["business_configs"]; ok {
-		configBytes, _ := json.Marshal(configData)
-		if err := json.Unmarshal(configBytes, &allConfigs); err != nil {
-			return nil, err
-		}
-	}
-
-	// Filter configs based on selections
-	filteredConfigs := make([]*common.ResourceConfig, 0)
-	selectedEnvPipes := make(map[string]bool) // "env:pipe" -> true
-	for _, cfg := range allConfigs {
-		if shouldImport(cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetResourceKey()) {
-			// Normalize image and file references
-			if (cfg.Type == "image" || cfg.Type == "file") && cfg.Content != "" {
-				cfg.Content = normalizeImageReference(cfg.Content)
-			}
-			filteredConfigs = append(filteredConfigs, cfg)
-			// Track selected environment/pipeline combinations
-			key := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
-			selectedEnvPipes[key] = true
-		}
-	}
-
-	if len(filteredConfigs) == 0 {
-		return nil, errors.New("no configs selected for import")
-	}
-
-	// Import configs
-	configModels := make([]model.Config, 0, len(filteredConfigs))
-	for _, cfg := range filteredConfigs {
-		configModels = append(configModels, *pbConfigToModel(cfg))
-	}
-
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
-		return nil, err
-	}
-
-	// Restore all assets that belong to selected environments/pipelines
-	for path, f := range assetFiles {
-		fileID := filepath.Base(filepath.Dir(path))
-		fileName := filepath.Base(path)
-
-		// Get asset metadata
-		meta, hasMeta := assetMetaMap[fileID]
-		envKey := ""
-		pipeKey := ""
-		contentType := ""
-		remark := ""
-
-		if hasMeta {
-			if v, ok := meta["environment_key"].(string); ok {
-				envKey = v
-			}
-			if v, ok := meta["pipeline_key"].(string); ok {
-				pipeKey = v
-			}
-			if v, ok := meta["content_type"].(string); ok {
-				contentType = v
-			}
-			if v, ok := meta["remark"].(string); ok {
-				remark = v
-			}
-		}
-
-		// Check if this asset belongs to a selected environment/pipeline
-		key := fmt.Sprintf("%s:%s", envKey, pipeKey)
-		if !selectedEnvPipes[key] && envKey != "" && pipeKey != "" {
-			continue
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			continue
-		}
-		fileData, err := io.ReadAll(rc)
-		closeQuietly(rc)
-		if err != nil {
-			continue
-		}
-
-		if err := ensureUploadDir(fileID); err != nil {
-			continue
-		}
-
-		relativePath := filepath.Join(uploadDirectory, fileID, fileName)
-		fullPath := filepath.Join(dataDirectory, relativePath)
-		if err := os.WriteFile(fullPath, fileData, 0o644); err != nil {
-			continue
-		}
-
-		// Use metadata content type if available, otherwise detect
-		if contentType == "" {
-			contentType = http.DetectContentType(fileData)
-		}
-
-		asset := &model.Asset{
-			FileID:         fileID,
-			EnvironmentKey: envKey,
-			PipelineKey:    pipeKey,
-			FileName:       fileName,
-			FileSize:       int64(len(fileData)),
-			ContentType:    contentType,
-			Path:           relativePath,
-			Remark:         remark,
-		}
-
-		if err := s.logic.UpdateAsset(ctx, asset); err != nil {
-			if !errors.Is(err, ErrAssetNotFound) {
-				continue
-			}
-			// 资产不存在,创建新资产
-			if err := s.logic.CreateAsset(ctx, asset); err != nil {
-				// 忽略创建失败的资产
-				continue
-			}
-		}
-	}
-
-	return s.decorateConfigList(filteredConfigs), nil
-}
-
-// importConfigsFromTarGz imports configs from a tar.gz archive with selection filter.
-func (s *Service) importConfigsFromTarGz(ctx context.Context, data []byte, shouldImport func(string, string, string) bool, overwrite bool) ([]*common.ResourceConfig, error) {
-	gzReader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = gzReader.Close() }()
-
-	var allConfigs []*common.ResourceConfig
-	var archiveData map[string]any
-	assetFiles := make(map[string][]byte) // path -> data
-
-	tarReader := tar.NewReader(gzReader)
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		cleanName := filepath.Clean(header.Name)
-		if cleanName == "configs.json" {
-			payload, err := io.ReadAll(tarReader)
-			if err != nil {
-				return nil, err
-			}
-			if err := json.Unmarshal(payload, &archiveData); err != nil {
-				return nil, errors.New("invalid configs.json format")
-			}
-		} else if strings.HasPrefix(cleanName, "files/") {
-			fileData, err := io.ReadAll(tarReader)
-			if err != nil {
-				continue
-			}
-			assetFiles[cleanName] = fileData
-		}
-	}
-
-	if archiveData == nil {
-		return nil, errors.New("configs.json not found in archive")
-	}
-
-	// Import environments
-	if envData, ok := archiveData["environments"]; ok {
-		if err := s.importEnvironments(ctx, envData); err != nil {
-			fmt.Printf("Warning: failed to import environments: %v\n", err)
-		}
-	}
-
-	// Import pipelines
-	if pipeData, ok := archiveData["pipelines"]; ok {
-		if err := s.importPipelines(ctx, pipeData); err != nil {
-			fmt.Printf("Warning: failed to import pipelines: %v\n", err)
-		}
-	}
-
-	// Parse asset metadata from archive
-	assetMetaMap := make(map[string]map[string]any) // fileID -> metadata
-	if assetsData, ok := archiveData["assets"]; ok {
-		assetsBytes, _ := json.Marshal(assetsData)
-		var assetMetas []map[string]any
-		if err := json.Unmarshal(assetsBytes, &assetMetas); err == nil {
-			for _, meta := range assetMetas {
-				if fileID, ok := meta["file_id"].(string); ok && fileID != "" {
-					assetMetaMap[fileID] = meta
-				}
-			}
-		}
-	}
-
-	// Parse configs
-	if configData, ok := archiveData["business_configs"]; ok {
-		configBytes, _ := json.Marshal(configData)
-		if err := json.Unmarshal(configBytes, &allConfigs); err != nil {
-			return nil, err
-		}
-	}
-
-	// Filter configs based on selections
-	filteredConfigs := make([]*common.ResourceConfig, 0)
-	selectedEnvPipes := make(map[string]bool) // "env:pipe" -> true
-	for _, cfg := range allConfigs {
-		if shouldImport(cfg.GetEnvironmentKey(), cfg.GetPipelineKey(), cfg.GetResourceKey()) {
-			if (cfg.Type == "image" || cfg.Type == "file") && cfg.Content != "" {
-				cfg.Content = normalizeImageReference(cfg.Content)
-			}
-			filteredConfigs = append(filteredConfigs, cfg)
-			// Track selected environment/pipeline combinations
-			key := fmt.Sprintf("%s:%s", cfg.GetEnvironmentKey(), cfg.GetPipelineKey())
-			selectedEnvPipes[key] = true
-		}
-	}
-
-	if len(filteredConfigs) == 0 {
-		return nil, errors.New("no configs selected for import")
-	}
-
-	// Import configs
-	configModels := make([]model.Config, 0, len(filteredConfigs))
-	for _, cfg := range filteredConfigs {
-		configModels = append(configModels, *pbConfigToModel(cfg))
-	}
-
-	if err := s.logic.ImportConfigs(ctx, configModels, overwrite); err != nil {
-		return nil, err
-	}
-
-	// Restore all assets that belong to selected environments/pipelines
-	for path, fileData := range assetFiles {
-		fileID := filepath.Base(filepath.Dir(path))
-		fileName := filepath.Base(path)
-
-		// Get asset metadata
-		meta, hasMeta := assetMetaMap[fileID]
-		envKey := ""
-		pipeKey := ""
-		contentType := ""
-		remark := ""
-
-		if hasMeta {
-			if v, ok := meta["environment_key"].(string); ok {
-				envKey = v
-			}
-			if v, ok := meta["pipeline_key"].(string); ok {
-				pipeKey = v
-			}
-			if v, ok := meta["content_type"].(string); ok {
-				contentType = v
-			}
-			if v, ok := meta["remark"].(string); ok {
-				remark = v
-			}
-		}
-
-		// Check if this asset belongs to a selected environment/pipeline
-		key := fmt.Sprintf("%s:%s", envKey, pipeKey)
-		if !selectedEnvPipes[key] && envKey != "" && pipeKey != "" {
-			continue
-		}
-
-		if err := ensureUploadDir(fileID); err != nil {
-			continue
-		}
-
-		relativePath := filepath.Join(uploadDirectory, fileID, fileName)
-		fullPath := filepath.Join(dataDirectory, relativePath)
-		if err := os.WriteFile(fullPath, fileData, 0o644); err != nil {
-			continue
-		}
-
-		// Use metadata content type if available, otherwise detect
-		if contentType == "" {
-			contentType = http.DetectContentType(fileData)
-		}
-
-		asset := &model.Asset{
-			FileID:         fileID,
-			EnvironmentKey: envKey,
-			PipelineKey:    pipeKey,
-			FileName:       fileName,
-			FileSize:       int64(len(fileData)),
-			ContentType:    contentType,
-			Path:           relativePath,
-			Remark:         remark,
-		}
-
-		if err := s.logic.UpdateAsset(ctx, asset); err != nil {
-			if !errors.Is(err, ErrAssetNotFound) {
-				continue
-			}
-			// 资产不存在,创建新资产
-			if err := s.logic.CreateAsset(ctx, asset); err != nil {
-				// 忽略创建失败的资产
-				continue
-			}
-		}
-	}
-
-	return s.decorateConfigList(filteredConfigs), nil
+	return s.ImportArchiveWithResult(ctx, data, format, "", "", selected, overwrite)
 }

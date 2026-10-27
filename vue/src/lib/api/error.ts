@@ -23,6 +23,11 @@ export class ApiError extends Error {
   detail: string
   type: ErrorType
   context?: ErrorContext
+  /** machine-readable 错误分类(如 SCOPE_FROZEN);非冻结错误为空串 */
+  errorType: string
+  /** 原始响应体(供展示实际受阻范围等声明式字段) */
+  payload?: Record<string, unknown>
+  retryAfter = 0
 
   constructor(
     code: number,
@@ -36,6 +41,7 @@ export class ApiError extends Error {
     this.detail = detail
     this.type = type
     this.context = context
+    this.errorType = ''
     this.name = 'ApiError'
   }
 
@@ -46,9 +52,24 @@ export class ApiError extends Error {
       message: this.message,
       detail: this.detail,
       type: this.type,
+      errorType: this.errorType,
       context: this.context
     }
   }
+}
+
+/** 判断错误是否为冻结拦截(409 SCOPE_FROZEN 或相关 503)。 */
+export function isFreezeBlockedError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  return error.errorType === 'SCOPE_FROZEN'
+}
+
+/** 冻结类错误的可读信息(含实际受阻范围文本)。 */
+export function freezeErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error ? error.message : '未知错误'
+  }
+  return error.detail ? `${error.message}: ${error.detail}` : error.message
 }
 
 export function formatError(error: unknown): string {

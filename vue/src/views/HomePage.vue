@@ -1,17 +1,42 @@
 <script setup lang="ts">
-import { Layout } from '@/components/ui/layout'
+import { shallowRef } from 'vue'
+import { useStorage } from '@vueuse/core'
+import { ChevronDown, ChevronUp, Code2, Info } from 'lucide-vue-next'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumHero from '@/components/spectrum/SpectrumHero.vue'
+import type { ActiveReleaseView } from '@/composables/useActiveRelease'
 import ProjectIntro from '@/components/ProjectIntro.vue'
 import ApiDocs from '@/components/ApiDocs.vue'
 import RuntimeConfig from '@/components/RuntimeConfig.vue'
+
+const showIntroduction = useStorage(`rainbow-bridge:${import.meta.env.BASE_URL}:home-introduction`, true)
+const activeView = shallowRef<ActiveReleaseView | null>(null)
 </script>
 
 <template>
-  <Layout
-    title="项目概览"
-    description="虹桥计划 · 前端资源配置中台"
-  >
-    <ProjectIntro />
-    <ApiDocs />
-    <RuntimeConfig />
-  </Layout>
+  <SpectrumLayout elevated>
+    <div class="spectrum-home">
+      <div class="spectrum-home-heading">
+        <div><h1>项目概览</h1></div>
+        <button class="spectrum-text-button" :aria-expanded="showIntroduction" aria-controls="spectrum-introduction" @click="showIntroduction = !showIntroduction">
+          {{ showIntroduction ? '收起介绍' : '展开产品介绍' }}
+          <ChevronUp v-if="showIntroduction" :size="16" /><ChevronDown v-else :size="16" />
+        </button>
+      </div>
+      <div id="spectrum-introduction" class="spectrum-introduction" :class="{ 'is-collapsed': !showIntroduction }" :inert="!showIntroduction" :aria-hidden="!showIntroduction">
+        <div class="spectrum-introduction-inner"><SpectrumHero :active-view="activeView" /></div>
+      </div>
+      <RuntimeConfig @view-change="activeView = $event" />
+      <div class="spectrum-home-docs">
+        <details class="spectrum-disclosure">
+          <summary><span><Code2 :size="18" />API 对接能力</span><ChevronDown :size="18" /></summary>
+          <ApiDocs />
+        </details>
+        <details class="spectrum-disclosure">
+          <summary><span><Info :size="18" />关于虹桥计划</span><ChevronDown :size="18" /></summary>
+          <ProjectIntro />
+        </details>
+      </div>
+    </div>
+  </SpectrumLayout>
 </template>

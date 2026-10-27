@@ -1,0 +1,24 @@
+.spectrum-env-columns { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); align-items: start; gap: 24px; }
+.spectrum-env-row { display: flex; align-items: center; gap: 12px; padding: 16px 12px; border-bottom: 1px solid var(--border); border-radius: 8px; }
+.spectrum-env-row.is-selected { background: var(--secondary); border-color: transparent; }
+.spectrum-env-select { display: flex; align-items: center; gap: 16px; text-align: left; flex: 1; min-width: 0; padding: 4px 0; color: var(--foreground); border: 0; background: transparent; }
+.spectrum-env-select > svg { flex-shrink: 0; color: var(--muted-foreground); }
+.spectrum-env-select > span { min-width: 0; }
+.spectrum-env-select strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.spectrum-env-select code { display: block; color: var(--spectrum-secondary-text); font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+.spectrum-env-row > div { flex-wrap: wrap; justify-content: flex-end; }
+.spectrum-env-context { padding: 24px; margin-bottom: 16px; background: var(--spectrum-material-context); color: var(--foreground); border: 1px solid var(--spectrum-surface-line); border-left: 3px solid var(--spectrum-orange); border-radius: 12px; box-shadow: var(--spectrum-material-soft-shadow); }
+.spectrum-env-context .spectrum-eyebrow { color: var(--muted-foreground); }
+.spectrum-env-context h2 { margin: 16px 0 12px; font-size: 24px; overflow-wrap: anywhere; }
+.spectrum-env-context > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted-foreground); font-size: 12px; }
+.spectrum-env-context code { color: var(--spectrum-link); overflow-wrap: anywhere; }
+.spectrum-channel-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 12px; border-bottom: 1px solid var(--border); }
+.spectrum-channel-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.spectrum-channel-row > div:last-child { flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 800px) {
+  .spectrum-env-columns { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .spectrum-env-channels { border-top: 1px solid var(--border) !important; }
+  .spectrum-env-context { padding: 24px; }
+  .spectrum-env-context h2 { font-size: 24px; }
+  .spectrum-channel-row { padding: 16px 0; }
+}

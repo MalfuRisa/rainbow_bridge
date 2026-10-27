@@ -1,0 +1,149 @@
+{
+  "info": {
+    "name": "Rainbow Bridge runtime business reads",
+    "description": "Anonymous business reads for two independent sites A/B. No authentication, no cookies, no CSRF. Set api_root and the fixture variables from a real run. Run script/test-runtime-business.ps1 -KeepRunning before opening this collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    { "key": "api_root", "value": "http://127.0.0.1:18140/rainbow-bridge" },
+    { "key": "environment_a", "value": "<from run>" },
+    { "key": "environment_b", "value": "<from run>" },
+    { "key": "pipeline_a", "value": "default" },
+    { "key": "pipeline_b", "value": "default" },
+    { "key": "pipeline_beta", "value": "beta" },
+    { "key": "version_a1", "value": "<from run>" },
+    { "key": "version_fixed_a", "value": "<from run>" },
+    { "key": "snapshot_a1", "value": "<from run>" },
+    { "key": "version_b1", "value": "<from run>" },
+    { "key": "version_beta1", "value": "<from run>" },
+    { "key": "image_url", "value": "<absolute URL from run>" },
+    { "key": "environment_no_active", "value": "<optional empty scope>" },
+    { "key": "pipeline_no_active", "value": "default" },
+    { "key": "scope_no_active", "value": "<optional empty scope_id>" }
+  ],
+  "item": [
+    {
+      "name": "A default active config",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_a}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_a}}" }
+        ],
+        "url": { "raw": "{{api_root}}/api/v1/runtime/release", "host": ["{{api_root}}"], "path": ["api", "v1", "runtime", "release"] },
+        "description": "Must be HTTP 200, selection_mode=active, A marker, no B data. No Cookie/Authorization/CSRF."
+      }
+    },
+    {
+      "name": "A fixed version",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_a}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_a}}" }
+        ],
+        "url": {
+          "raw": "{{api_root}}/api/v1/runtime/release?version={{version_fixed_a}}",
+          "host": ["{{api_root}}"],
+          "path": ["api", "v1", "runtime", "release"],
+          "query": [{ "key": "version", "value": "{{version_fixed_a}}" }]
+        },
+        "description": "Must be selection_mode=fixed and omit active_revision/activated_at."
+      }
+    },
+    {
+      "name": "A raw content format",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_a}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_a}}" }
+        ],
+        "url": {
+          "raw": "{{api_root}}/api/v1/runtime/release?version={{version_a1}}&content_format=raw",
+          "host": ["{{api_root}}"],
+          "path": ["api", "v1", "runtime", "release"],
+          "query": [
+            { "key": "version", "value": "{{version_a1}}" },
+            { "key": "content_format", "value": "raw" }
+          ]
+        },
+        "description": "Every content field must be a string; raw big integer text is preserved."
+      }
+    },
+    {
+      "name": "B default active config",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_b}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_b}}" }
+        ],
+        "url": { "raw": "{{api_root}}/api/v1/runtime/release", "host": ["{{api_root}}"], "path": ["api", "v1", "runtime", "release"] },
+        "description": "Must return B's own marker and image URL; no A scope/config leakage."
+      }
+    },
+    {
+      "name": "A beta channel",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_a}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_beta}}" }
+        ],
+        "url": { "raw": "{{api_root}}/api/v1/runtime/release", "host": ["{{api_root}}"], "path": ["api", "v1", "runtime", "release"] },
+        "description": "Must return A_BETA_ONE and the beta snapshot, not A/default."
+      }
+    },
+    {
+      "name": "Banner image (absolute URL from a runtime response)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{image_url}}", "host": ["{{image_url}}"] },
+        "description": "Paste the exact image URL from the runtime banner config. Do not prepend api_root again. No Cookie, Authorization, CSRF, or scope headers."
+      }
+    },
+    {
+      "name": "Legacy runtime/config follows active",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_a}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_a}}" }
+        ],
+        "url": { "raw": "{{api_root}}/api/v1/runtime/config", "host": ["{{api_root}}"], "path": ["api", "v1", "runtime", "config"] },
+        "description": "Must match the active release version/snapshot/scope; must not read the editor."
+      }
+    },
+    {
+      "name": "Missing range headers",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{api_root}}/api/v1/runtime/release", "host": ["{{api_root}}"], "path": ["api", "v1", "runtime", "release"] },
+        "description": "Must be HTTP 400; it must never fall back to a default scope."
+      }
+    },
+    {
+      "name": "No active release",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "x-environment", "value": "{{environment_no_active}}" },
+          { "key": "x-pipeline", "value": "{{pipeline_no_active}}" }
+        ],
+        "url": {
+          "raw": "{{api_root}}/api/v1/runtime/release?scope_id={{scope_no_active}}",
+          "host": ["{{api_root}}"],
+          "path": ["api", "v1", "runtime", "release"],
+          "query": [{ "key": "scope_id", "value": "{{scope_no_active}}" }]
+        },
+        "description": "Must be HTTP 404 RELEASE_NOT_ACTIVE, not editor data."
+      }
+    }
+  ]
+}

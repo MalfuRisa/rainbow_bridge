@@ -4,11 +4,14 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/handler"
 	"github.com/yi-nology/rainbow_bridge/biz/model/common"
 	"github.com/yi-nology/rainbow_bridge/biz/model/config"
@@ -33,8 +36,20 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	cfg, err := svc.AddConfig(handler.EnrichContext(ctx, c), req.GetConfig())
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	cfg, err := svc.AddConfigWithIdentity(handler.EnrichContext(ctx, c), req.GetConfig(), req.GetExpectedScopeId())
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.ConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrConfigAliasExists) {
 			status = consts.StatusBadRequest
@@ -57,25 +72,38 @@ func Create(ctx context.Context, c *app.RequestContext) {
 // @router /api/v1/config/update [POST]
 func Update(ctx context.Context, c *app.RequestContext) {
 	req := &config.UpdateConfigRequest{}
-	if err := c.BindJSON(req); err != nil {
-		c.JSON(consts.StatusOK, &config.ConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: err.Error(),
-		})
+	if err := json.Unmarshal(c.Request.Body(), req); err != nil || req.Config == nil || req.Config.ResourceKey == "" || req.Config.EnvironmentKey == "" || req.Config.PipelineKey == "" || !configdb.ValidEditRevision(req.ExpectedEditRevision) {
+		c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: configdb.ErrEditRevisionInvalid.Error(), ErrorType: "CONFIG_EDIT_REVISION_INVALID"})
 		return
 	}
-	if req.Config == nil || req.Config.ResourceKey == "" {
-		c.JSON(consts.StatusOK, &config.ConfigResponse{
-			Code:  consts.StatusBadRequest,
-			Msg:   "error",
-			Error: "resource_key is required",
-		})
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
 		return
 	}
-	cfg, err := svc.UpdateConfig(handler.EnrichContext(ctx, c), req.GetConfig())
+	cfg, err := svc.UpdateConfigWithIdentity(handler.EnrichContext(ctx, c), req.GetConfig(), req.ExpectedEditRevision, req.GetExpectedScopeId())
 	if err != nil {
-		status := consts.StatusInternalServerError
+		status, kind := 0, ""
+		switch {
+		case errors.Is(err, configdb.ErrEditRevisionInvalid):
+			status, kind = 400, "CONFIG_EDIT_REVISION_INVALID"
+		case errors.Is(err, configdb.ErrEditConflict):
+			status, kind = 409, "CONFIG_EDIT_CONFLICT"
+		case errors.Is(err, configdb.ErrEditTargetNotFound):
+			status, kind = 404, "CONFIG_EDIT_TARGET_NOT_FOUND"
+		}
+		if status != 0 {
+			c.JSON(status, &config.ConfigResponse{Code: int32(status), Msg: "error", Error: err.Error(), ErrorType: kind, ResourceKey: req.Config.ResourceKey})
+			return
+		}
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType, ResourceKey: req.Config.ResourceKey})
+			return
+		}
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.ConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
+		status = consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound
 		}
@@ -113,7 +141,15 @@ func Delete(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
-	if err := svc.DeleteConfig(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetResourceKey()); err != nil {
+	if strings.TrimSpace(req.GetExpectedScopeId()) == "" {
+		c.JSON(400, &config.DeleteConfigResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
+		return
+	}
+	if err := svc.DeleteConfigWithIdentity(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetResourceKey(), req.GetExpectedScopeId()); err != nil {
+		if freezeErr, ok := service.AsFreezeError(err); ok {
+			c.JSON(freezeErr.HTTPStatus, &config.DeleteConfigResponse{Code: int32(freezeErr.Code), Msg: "error", Error: freezeErr.Message, ErrorType: freezeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound
@@ -140,6 +176,7 @@ func List(ctx context.Context, c *app.RequestContext) {
 		Type:           c.Query("type"),
 		MinVersion:     c.Query("min_version"),
 		MaxVersion:     c.Query("max_version"),
+		ScopeId:        c.Query("scope_id"),
 	}
 	if req.EnvironmentKey == "" || req.PipelineKey == "" {
 		c.JSON(consts.StatusOK, &config.ConfigListResponse{
@@ -147,6 +184,14 @@ func List(ctx context.Context, c *app.RequestContext) {
 			Msg:   "error",
 			Error: "environment_key and pipeline_key are required",
 		})
+		return
+	}
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.PipelineKey, req.GetScopeId()); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigListResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
+		c.JSON(consts.StatusInternalServerError, &config.ConfigListResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error()})
 		return
 	}
 	if val := c.Query("is_latest"); val != "" {
@@ -164,6 +209,10 @@ func List(ctx context.Context, c *app.RequestContext) {
 
 	list, err := svc.ListConfigs(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetType(), req.GetMinVersion(), req.GetMaxVersion(), req.GetIsLatest())
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigListResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		c.JSON(consts.StatusOK, &config.ConfigListResponse{
 			Code:  consts.StatusInternalServerError,
 			Msg:   "error",
@@ -188,10 +237,12 @@ func List(ctx context.Context, c *app.RequestContext) {
 // Detail .
 // @router /api/v1/config/detail [GET]
 func Detail(ctx context.Context, c *app.RequestContext) {
+	c.Header("Cache-Control", "no-store")
 	req := &config.ConfigDetailRequest{
 		EnvironmentKey: c.Query("environment_key"),
 		PipelineKey:    c.Query("pipeline_key"),
 		ResourceKey:    c.Query("resource_key"),
+		ScopeId:        c.Query("scope_id"),
 	}
 	if req.EnvironmentKey == "" || req.PipelineKey == "" || req.ResourceKey == "" {
 		c.JSON(consts.StatusOK, &config.ConfigDetailResponse{
@@ -201,8 +252,20 @@ func Detail(ctx context.Context, c *app.RequestContext) {
 		})
 		return
 	}
+	if err := svc.ValidateReadScope(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.PipelineKey, req.GetScopeId()); err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigDetailResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
+		c.JSON(consts.StatusInternalServerError, &config.ConfigDetailResponse{Code: consts.StatusInternalServerError, Msg: "error", Error: err.Error()})
+		return
+	}
 	cfg, err := svc.GetConfigDetail(handler.EnrichContext(ctx, c), req.GetEnvironmentKey(), req.GetPipelineKey(), req.GetResourceKey())
 	if err != nil {
+		if scopeErr, ok := service.AsScopeError(err); ok {
+			c.JSON(scopeErr.HTTPStatus, &config.ConfigDetailResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
+			return
+		}
 		status := consts.StatusInternalServerError
 		if errors.Is(err, service.ErrResourceNotFound) {
 			status = consts.StatusNotFound

@@ -8,6 +8,8 @@ import "common.proto";
 message ListAssetRequest {
   string environment_key = 1;
   string pipeline_key = 2;
+  string scope_id = 3;
+  string expected_scope_id = 4;
 }
 
 // AssetData is the data wrapper for a single asset.
@@ -29,6 +31,7 @@ message AssetListResponse {
   string msg = 2;
   string error = 3;
   AssetListData data = 4;
+  string error_type = 5;
 }
 
 // UploadAssetResponse is a unified response for asset upload.
@@ -38,6 +41,7 @@ message UploadAssetResponse {
   string msg = 2;
   string error = 3;
   AssetData data = 4;
+  string error_type = 5; // machine-readable error classification (e.g. SCOPE_FROZEN)
 }
 
 // GetFileRequest is used to get a file by ID.

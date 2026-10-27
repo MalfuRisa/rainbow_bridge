@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package auth;
+
+import "api.proto";
+
+option go_package = "github.com/yi-nology/rainbow_bridge/biz/model/auth";
+
+// ==================== Shared types ====================
+
+// AuthUserView is the safe view of the admin account; ids are decimal strings.
+message AuthUserView {
+  string id = 1;       // decimal string to avoid frontend number limits
+  string username = 2;
+  string role = 3;     // admin
+}
+
+// AuthSessionView carries server-side session deadlines (RFC3339 UTC).
+message AuthSessionView {
+  string expires_at = 1;
+  string idle_expires_at = 2;
+}
+
+// AuthSessionData is the shared payload of login and me responses.
+message AuthSessionData {
+  AuthUserView user = 1;
+  AuthSessionView session = 2;
+  string csrf_token = 3; // stable within one session; the client keeps it in memory only
+}
+
+// ==================== Login ====================
+
+message AuthLoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message AuthLoginResponse {
+  int32 code = 1;             // 0 on success, otherwise the HTTP status
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  AuthSessionData data = 5;
+}
+
+// ==================== Me ====================
+
+message AuthMeRequest {}
+
+message AuthMeResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  AuthSessionData data = 5;
+}
+
+// ==================== Logout ====================
+
+message AuthLogoutRequest {}
+
+message AuthLogoutData {
+  bool logged_out = 1;
+}
+
+message AuthLogoutResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  AuthLogoutData data = 5;
+}
+
+// ==================== Password ====================
+
+message AuthPasswordRequest {
+  string current_password = 1;
+  string new_password = 2;
+}
+
+message AuthPasswordData {
+  bool reauthentication_required = 1;
+}
+
+message AuthPasswordResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  AuthPasswordData data = 5;
+}
+
+// AuthService provides the single-admin login session contract.
+service AuthService {
+  // Login verifies credentials and sets a new session cookie.
+  rpc Login(AuthLoginRequest) returns (AuthLoginResponse) {
+    option (api.post) = "/api/v1/auth/login";
+  }
+
+  // Me restores the current session for page reloads (no cookie rotation).
+  rpc Me(AuthMeRequest) returns (AuthMeResponse) {
+    option (api.get) = "/api/v1/auth/me";
+  }
+
+  // Logout revokes the current session and clears the cookie.
+  rpc Logout(AuthLogoutRequest) returns (AuthLogoutResponse) {
+    option (api.post) = "/api/v1/auth/logout";
+  }
+
+  // Password changes the admin password and revokes every session.
+  rpc Password(AuthPasswordRequest) returns (AuthPasswordResponse) {
+    option (api.post) = "/api/v1/auth/password";
+  }
+}

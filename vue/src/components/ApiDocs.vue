@@ -1,90 +1,107 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Copy, Check, ExternalLink } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { getBasePath } from '@/lib/api/client'
 
 const copiedIndex = ref<number | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+onUnmounted(() => clearTimeout(copiedTimer))
 
-const apiEndpoints = [
+/** 复制的是真实请求路径(带部署前缀),避免漏前缀或前缀重复。 */
+const basePath = computed(() => getBasePath().replace(/\/$/, ''))
+
+const apiEndpoints = computed(() => [
   {
     method: 'GET',
-    path: '/api/v1/runtime/overview',
-    description: '获取运行时概览（环境和渠道列表）',
+    path: `${basePath.value}/api/v1/runtime/release`,
+    title: '读取生效配置',
+    description: '获取当前环境与渠道的生效配置，跟随版本切换更新。',
   },
   {
     method: 'GET',
-    path: '/api/v1/runtime/config',
-    description: '获取运行时配置',
+    path: `${basePath.value}/api/v1/runtime/release?version=<版本号>`,
+    title: '读取指定版本',
+    description: '按版本号获取对应配置，其他版本的生效切换不会改变读取目标。',
   },
   {
-    method: 'POST',
-    path: '/api/v1/runtime/static',
-    description: '实时获取运行时状态',
+    method: 'GET',
+    path: `${basePath.value}/api/v1/runtime/release/static?version=<版本号>&expected_snapshot_id=<UUID>`,
+    title: '导出版本资源包',
+    description: '下载指定版本的配置与配套资源，打包为 ZIP 文件。',
   },
-]
-
-const methodColors: Record<string, string> = {
-  GET: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
-  POST: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
-  PUT: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
-  DELETE: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
-}
+])
 
 const copyPath = async (path: string, index: number) => {
-  await navigator.clipboard.writeText(path)
+  try { await navigator.clipboard.writeText(path) }
+  catch { toast.error('复制失败，请手动选择路径复制'); return }
+  clearTimeout(copiedTimer)
   copiedIndex.value = index
-  toast.success('已复制到剪贴板')
-  setTimeout(() => {
+  toast.success('已复制接口路径')
+  copiedTimer = setTimeout(() => {
     copiedIndex.value = null
   }, 2000)
 }
 </script>
 
 <template>
-  <Card>
+  <!-- §2.1 / §3.6: capability and purpose first; method/path and copy are secondary.
+       Reuse spectrum text, spacing and semantic colors without adding API actions. -->
+  <Card class="spectrum-api-panel">
     <CardHeader>
-      <div class="flex items-center justify-between">
-        <CardTitle class="text-lg">前端对接</CardTitle>
+      <div class="spectrum-api-header">
+        <div class="min-w-0">
+          <CardTitle class="text-lg">API 接入</CardTitle>
+          <p class="text-sm text-muted-foreground mt-1">
+            业务系统可通过 API 获取配置、指定版本或下载资源包。
+          </p>
+        </div>
         <a
-          href="https://yi-nology.github.io/rainbow_bridge/api/"
+          href="https://github.com/MalfuRisa/rainbow_bridge/blob/main_v1/docs/docs/api/index.md"
           target="_blank"
-          class="text-sm text-muted-foreground hover:text-primary flex items-center gap-1"
+          rel="noopener noreferrer"
+          class="spectrum-api-document-link text-sm text-muted-foreground hover:text-primary flex items-center gap-1"
         >
           查看完整 API
           <ExternalLink class="w-3 h-3" />
         </a>
       </div>
     </CardHeader>
-    <CardContent>
-      <div class="space-y-2">
-        <div
-          v-for="(endpoint, index) in apiEndpoints"
-          :key="endpoint.path"
-          class="flex items-center justify-between p-3 rounded-lg border bg-muted/30"
-        >
-          <div class="flex items-center gap-3">
-            <Badge :class="methodColors[endpoint.method]" class="font-mono text-xs">
-              {{ endpoint.method }}
-            </Badge>
-            <code class="text-sm font-mono">{{ endpoint.path }}</code>
+    <CardContent class="space-y-2">
+      <div
+        v-for="(endpoint, index) in apiEndpoints"
+        :key="endpoint.path"
+        class="spectrum-api-row"
+      >
+        <div class="min-w-0">
+          <h3 class="spectrum-api-title">{{ endpoint.title }}</h3>
+          <p class="spectrum-api-description">{{ endpoint.description }}</p>
+          <div class="spectrum-api-path">
+            <Badge class="spectrum-api-method font-mono text-xs shrink-0">{{ endpoint.method }}</Badge>
+            <code>{{ endpoint.path }}</code>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-muted-foreground hidden md:block">{{ endpoint.description }}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-8 w-8"
-              @click="copyPath(endpoint.path, index)"
-            >
-              <Check v-if="copiedIndex === index" class="w-4 h-4 text-green-600" />
-              <Copy v-else class="w-4 h-4" />
-            </Button>
-          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <Button variant="ghost" size="icon" class="h-10 w-10" :aria-label="`复制接口路径 ${endpoint.title}`" @click="copyPath(endpoint.path, index)">
+            <Check v-if="copiedIndex === index" class="w-4 h-4 text-green-600" />
+            <Copy v-else class="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </CardContent>
   </Card>
 </template>
+
+<style scoped>
+.spectrum-api-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.spectrum-api-document-link { flex-shrink: 0; white-space: nowrap; }
+.spectrum-api-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding: 24px 0; }
+.spectrum-api-row:last-child { border-bottom: 0; }
+.spectrum-api-title { font-size: 16px; line-height: 1.5; }
+.spectrum-api-description { margin-top: 4px; }
+.spectrum-api-path { margin-top: 12px; }
+.spectrum-api-path code { min-width: 0; user-select: text; }
+</style>

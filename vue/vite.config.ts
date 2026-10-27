@@ -5,6 +5,7 @@ import { resolve } from 'path'
 
 const basePath = process.env.BASE_PATH || '/rainbow-bridge/'
 const normalizedBasePath = basePath.replace(/\/$/, '')
+const apiTarget = process.env.RAINBOW_API_TARGET || 'http://127.0.0.1:8080'
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
@@ -22,8 +23,8 @@ export default defineConfig({
     port: 3000,
     host: true,
     proxy: {
-      '/rainbow-bridge/api': {
-        target: 'http://127.0.0.1:8080',
+      [`${normalizedBasePath}/api`]: {
+        target: apiTarget,
         changeOrigin: true,
         secure: false,
       },

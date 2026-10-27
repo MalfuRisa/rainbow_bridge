@@ -1,370 +1,116 @@
-/**
- * API客户端工具类，封装了HTTP请求逻辑
- */
-import { getApiBaseUrl } from '../utils'
 import type { ApiResponse, OperateResponse } from './types'
 import { ApiError, ErrorType, handleApiError } from './error'
+import { apiURL } from './url'
+import { fetchApi, isSessionError, StaleSessionError, isSessionBoundRequest } from './http'
+import { sessionGeneration } from '../auth/session'
+import { operationMessage } from './messages'
+import { isScopeError, scopeProblem } from '@/lib/scope'
+export { getBasePath } from './url'
 
-export function getBasePath(): string {
-  // 生产环境：优先使用运行时注入的 basePath
-  if (typeof window !== 'undefined' && window.__BASE_PATH__) {
-    const injected = window.__BASE_PATH__
-    // 如果不是占位符，使用注入的值
-    if (injected !== '__BASE_PATH__') {
-      return injected
-    }
-  }
-  
-  const viteBase = import.meta.env.BASE_URL || ''
-  // 如果 Vite 的 BASE_URL 是占位符，返回空字符串
-  if (viteBase.includes('__BASE_PATH__')) {
-    return ''
-  }
-  return viteBase
+export interface RequestOptions {
+  headers?: Record<string, string>
+  showErrorToast?: boolean
+  handleAuth?: boolean
 }
 
-interface RawApiResponse<T = unknown> extends ApiResponse<T> {
-  operate_response?: OperateResponse
+async function readJson<T>(response: Response): Promise<ApiResponse<T>> {
+  if (!response.headers.get('content-type')?.includes('application/json')) {
+    throw new ApiError(502, '服务响应格式不正确，请重试')
+  }
+  const body = await response.json() as ApiResponse<T> & { operate_response?: OperateResponse; error_type?: string }
+  if (!body || typeof body !== 'object') throw new ApiError(502, '服务响应格式不正确，请重试')
+  const operation = body.operate_response
+  const operationFailed = operation && operation.code !== 0 && operation.code !== 200
+  const code = operationFailed ? operation.code : body.code
+  if (code !== undefined && code !== 0 && code !== 200) {
+    const error = new ApiError(code, body.error || (operationFailed ? operation.msg : body.msg) || '操作失败', '', ErrorType.API)
+    error.errorType = body.error_type ?? ''
+    error.message = operationMessage(error.errorType, error.message)
+    if (isScopeError(error)) scopeProblem.value = error.message
+    error.payload = body as unknown as Record<string, unknown>
+    throw error
+  }
+  return { code: body.code ?? 0, msg: body.msg || 'success', error: body.error || '', data: body.data }
 }
 
-async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
-  if (!response.ok) {
-    throw new ApiError(
-      response.status, 
-      `HTTP error: ${response.status}`,
-      '',
-      ErrorType.HTTP
-    )
-  }
-
-  const contentType = response.headers.get('content-type')
-  if (contentType?.includes('application/json')) {
-    const data: RawApiResponse<T> = await response.json()
-
-    if (
-      data.operate_response &&
-      data.operate_response.code !== 0 &&
-      data.operate_response.code !== 200
-    ) {
-      throw new ApiError(
-        data.operate_response.code,
-        data.operate_response.msg || '操作失败',
-        data.operate_response.error || '',
-        ErrorType.API
-      )
-    }
-
-    if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
-      throw new ApiError(
-        data.code, 
-        data.msg || '请求失败', 
-        data.error || '',
-        ErrorType.API
-      )
-    }
-
-    // 标准化响应格式
-    return {
-      code: data.code || 0,
-      msg: data.msg || 'success',
-      error: data.error || '',
-      data: data.data
-    }
-  }
-
-  return {
-    code: 0,
-    msg: 'success',
-    error: '',
-    data: {} as T
-  }
-}
-
-/**
- * API客户端类，封装了HTTP请求逻辑
- */
 export class ApiClient {
-  /**
-   * API基础URL
-   */
-  private baseUrl: string
-  /**
-   * 应用基础路径
-   */
-  private basePath: string
-
-  /**
-   * 构造函数
-   */
-  constructor() {
-    this.baseUrl = getApiBaseUrl() || ''
-    this.basePath = getBasePath()
-  }
-
-  /**
-   * 获取完整路径
-   * @param path - API路径
-   * @returns 完整路径
-   */
-  private getFullPath(path: string): string {
-    return path
-  }
-
-  /**
-   * 获取URL对象
-   * @param path - API路径
-   * @returns URL对象
-   */
-  private getUrl(path: string): URL {
-    if (path.startsWith('/api/')) {
-
-      const baseUrl = this.baseUrl || window.location.origin
-      // 如果baseUrl是相对路径，需要和basePath结合
-      if (this.baseUrl && !this.baseUrl.startsWith('http')) {
-        const normalizedBase = this.baseUrl.replace(/\/$/, '')
-        return new URL(`${normalizedBase}${path}`, window.location.origin)
-      }
-      // 如果没有设置baseUrl，使用basePath
-      if (!this.baseUrl) {
-        const normalizedBasePath = this.basePath.replace(/\/$/, '')
-        return new URL(`${normalizedBasePath}${path}`, window.location.origin)
-      }
-      return new URL(path, baseUrl)
-    }
-    const fullPath = this.getFullPath(path)
-    const baseUrl = this.baseUrl || window.location.origin
-    return new URL(`${fullPath}`, baseUrl)
-  }
-
-  /**
-   * 发送HTTP请求
-   * @param method - HTTP方法
-   * @param path - API路径
-   * @param data - 请求数据
-   * @param options - 选项
-   * @returns API响应
-   */
-  async request<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-    path: string,
-    data?: Record<string, unknown>,
-    options?: {
-      headers?: Record<string, string>
-      showErrorToast?: boolean
-    }
-  ): Promise<ApiResponse<T>> {
-    const url = this.getUrl(path)
-    const showErrorToast = options?.showErrorToast !== false
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    }
-
-    let body: string | undefined
-    if (method === 'GET' && data) {
-      Object.entries(data).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-          url.searchParams.append(key, String(value))
-        }
-      })
-    } else if (data) {
-      body = JSON.stringify(data)
-    }
-
+  private async send<T>(path: string, init: RequestInit, options: RequestOptions): Promise<ApiResponse<T>> {
+    const batch = sessionGeneration()
+    const bound = isSessionBoundRequest(apiURL(path))
     try {
-      const response = await fetch(url.toString(), {
-        method,
-        headers,
-        body,
-        credentials: 'include',
-      })
-
-      return await handleResponse<T>(response)
+      const response = await fetchApi(apiURL(path), init, options)
+      const body = await readJson<T>(response)
+      if (bound && batch !== sessionGeneration()) throw new StaleSessionError()
+      return body
     } catch (error) {
-      const context = {
-        endpoint: path,
-        method,
-        params: method === 'GET' ? data : undefined,
-        data: method !== 'GET' ? data : undefined,
-        timestamp: Date.now(),
-        userAgent: navigator.userAgent,
-        url: url.toString()
-      }
+      if (bound && batch !== sessionGeneration() && !isSessionError(error)) throw new StaleSessionError()
+      // Authentication errors belong to the auth form/lifecycle. No request body,
+      // password, CSRF, response payload or headers are logged here.
+      if (path.startsWith('/api/v1/auth/') || isSessionError(error) ||
+          (error instanceof ApiError && error.errorType.startsWith('AUTH_'))) throw error
+      handleApiError(error, { showErrorToast: options.showErrorToast })
+    }
+  }
 
-      handleApiError(error, {
-        showErrorToast,
-        context
+  request<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string,
+    data?: Record<string, unknown>, options: RequestOptions = {}): Promise<ApiResponse<T>> {
+    const url = apiURL(path)
+    if (method === 'GET') {
+      Object.entries(data ?? {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
       })
     }
+    // send accepts an API-relative path, including its query, so the base is added once.
+    const query = url.search
+    return this.send<T>(path.split('?')[0] + query, {
+      method, headers: { 'Content-Type': 'application/json', ...options.headers },
+      body: method === 'GET' || data === undefined ? undefined : JSON.stringify(data),
+    }, options)
   }
-
-  /**
-   * 标准化响应处理
-   * @param response - API响应
-   * @returns 标准化后的响应
-   */
-  private normalizeResponse<T>(response: ApiResponse<T>): ApiResponse<T> {
-    return {
-      code: response.code || 0,
-      msg: response.msg || 'success',
-      error: response.error || '',
-      data: response.data
-    }
-  }
-
-  /**
-   * 发送GET请求
-   * @param path - API路径
-   * @param params - 查询参数
-   * @param options - 选项
-   * @returns API响应
-   */
-  async get<T>(
-    path: string,
-    params?: Record<string, unknown>,
-    options?: {
-      headers?: Record<string, string>
-    }
-  ): Promise<ApiResponse<T>> {
+  get<T>(path: string, params?: Record<string, unknown>, options?: RequestOptions) {
     return this.request<T>('GET', path, params, options)
   }
-
-  /**
-   * 发送POST请求
-   * @param path - API路径
-   * @param data - 请求数据
-   * @param options - 选项
-   * @returns API响应
-   */
-  async post<T>(
-    path: string,
-    data?: Record<string, unknown>,
-    options?: {
-      headers?: Record<string, string>
-    }
-  ): Promise<ApiResponse<T>> {
+  post<T>(path: string, data?: Record<string, unknown>, options?: RequestOptions) {
     return this.request<T>('POST', path, data, options)
   }
-
-  /**
-   * 发送PUT请求
-   * @param path - API路径
-   * @param data - 请求数据
-   * @param options - 选项
-   * @returns API响应
-   */
-  async put<T>(
-    path: string,
-    data?: Record<string, unknown>,
-    options?: {
-      headers?: Record<string, string>
-    }
-  ): Promise<ApiResponse<T>> {
+  put<T>(path: string, data?: Record<string, unknown>, options?: RequestOptions) {
     return this.request<T>('PUT', path, data, options)
   }
-
-  /**
-   * 发送DELETE请求
-   * @param path - API路径
-   * @param data - 请求数据
-   * @param options - 选项
-   * @returns API响应
-   */
-  async delete<T>(
-    path: string,
-    data?: Record<string, unknown>,
-    options?: {
-      headers?: Record<string, string>
-    }
-  ): Promise<ApiResponse<T>> {
+  delete<T>(path: string, data?: Record<string, unknown>, options?: RequestOptions) {
     return this.request<T>('DELETE', path, data, options)
   }
-
-  /**
-   * 上传文件
-   * @param path - API路径
-   * @param formData - 表单数据
-   * @param options - 选项
-   * @returns API响应
-   */
-  async upload<T>(
-    path: string,
-    formData: FormData,
-    options?: {
-      headers?: Record<string, string>
-      showErrorToast?: boolean
+  upload<T>(path: string, data: FormData, options: RequestOptions = {}) {
+    return this.send<T>(path, { method: 'POST', body: data, headers: options.headers }, options)
+  }
+  async downloadArchive(path: string, init: RequestInit = {}) {
+    const batch = sessionGeneration()
+    const response = await fetchApi(apiURL(path), init)
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('json') || contentType.includes('text/')) {
+      throw new ApiError(502, '导出响应不是有效的归档文件，请重试')
     }
-  ): Promise<ApiResponse<T>> {
-    const url = this.getUrl(path)
-    const showErrorToast = options?.showErrorToast !== false
-
-    try {
-      const response = await fetch(url.toString(), {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      })
-
-      return await handleResponse<T>(response)
-    } catch (error) {
-      const file = formData.get('file')
-      const context = {
-        endpoint: path,
-        method: 'POST',
-        data: { fileSize: file instanceof File ? file.size : 0 },
-        timestamp: Date.now(),
-        userAgent: navigator.userAgent,
-        url: url.toString()
-      }
-
-      handleApiError(error, {
-        showErrorToast,
-        context
-      })
-    }
+    const blob = await response.blob()
+    if (batch !== sessionGeneration()) throw new StaleSessionError()
+    if (!blob.size) throw new ApiError(502, '导出文件为空，请重试')
+    const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+    if (batch !== sessionGeneration()) throw new StaleSessionError()
+    if (!((signature[0] === 0x50 && signature[1] === 0x4b && signature[2] === 3 && signature[3] === 4) ||
+      (signature[0] === 0x1f && signature[1] === 0x8b))) throw new ApiError(502, '下载内容不是有效的 ZIP 或 GZIP 文件')
+    const disposition = response.headers.get('content-disposition') || ''
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+    const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition)
+    let filename = plain?.[1] || plain?.[2]?.trim() || ''
+    if (encoded) { try { filename = decodeURIComponent(encoded) } catch { /* Keep plain filename. */ } }
+    filename = filename.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    return { blob, filename, source: response.headers.get('x-rainbow-export-source') || '',
+      snapshotId: response.headers.get('x-rainbow-snapshot-id') || '', version: response.headers.get('x-rainbow-version') || '' }
+  }
+  async download(path: string, init: RequestInit = {}): Promise<Blob> {
+    return (await this.downloadArchive(path, init)).blob
   }
 }
-
-// 创建单例实例
 export const apiClient = new ApiClient()
-
-// 保持向后兼容
-export async function request<T>(
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  path: string,
-  data?: Record<string, unknown>,
-  options?: {
-    headers?: Record<string, string>
-    showErrorToast?: boolean
-  }
-): Promise<ApiResponse<T>> {
-  return apiClient.request<T>(method, path, data, options)
-}
-
-export async function get<T>(
-  path: string,
-  params?: Record<string, unknown>,
-  options?: {
-    headers?: Record<string, string>
-  }
-): Promise<ApiResponse<T>> {
-  return apiClient.get<T>(path, params, options)
-}
-
-export async function post<T>(
-  path: string,
-  data?: Record<string, unknown>
-): Promise<ApiResponse<T>> {
-  return apiClient.post<T>(path, data)
-}
-
-export async function upload<T>(
-  path: string,
-  formData: FormData,
-  options?: {
-    headers?: Record<string, string>
-    showErrorToast?: boolean
-  }
-): Promise<ApiResponse<T>> {
-  return apiClient.upload<T>(path, formData, options)
-}
+export const request = apiClient.request.bind(apiClient)
+export const get = apiClient.get.bind(apiClient)
+export const post = apiClient.post.bind(apiClient)
+export const upload = apiClient.upload.bind(apiClient)

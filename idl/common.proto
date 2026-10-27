@@ -15,6 +15,8 @@ message ResourceConfig {
   string remark = 8;
   bool is_perm = 9;
   string description = 10;
+  string edit_revision = 11; // server-owned editing token
+  string scope_id = 12;      // current internal scope identity
 }
 
 // FileAsset represents an uploaded file.
@@ -27,6 +29,7 @@ message FileAsset {
   int64 file_size = 6;
   string url = 7;
   string remark = 8;
+  string scope_id = 9;
 }
 
 // BaseResponse is the base response structure for all API responses.

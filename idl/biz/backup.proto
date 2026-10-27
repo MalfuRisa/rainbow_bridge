@@ -1,0 +1,285 @@
+syntax = "proto3";
+
+package backup;
+
+import "api.proto";
+
+option go_package = "github.com/yi-nology/rainbow_bridge/biz/model/backup";
+
+// ==================== Shared views ====================
+
+// BackupCounts mirrors the manifest business row counts.
+message BackupCounts {
+  int32 environments = 1;
+  int32 pipelines = 2;
+  int32 configs = 3;
+  int32 assets = 4;
+  int32 versions = 5;
+  int32 deleted_versions = 6;
+  int32 freeze_events = 7;
+  int32 release_events = 8;
+  int32 configs_deleted = 9;
+  int32 assets_deleted = 10;
+}
+
+// BackupJobError is a sanitized terminal failure description.
+message BackupJobError {
+  string error_type = 1;
+  string msg = 2;
+}
+
+// BackupJobResult is null until the task reaches a state that has a result.
+message BackupJobResult {
+  string backup_id = 1;
+  string sha256 = 2;
+  int64 size = 3;
+  string consistent_at = 4;
+  BackupCounts counts = 5;
+  string preview_id = 6;
+  string package_sha256 = 7;
+  bool requires_restart = 8;
+  string message = 9;
+}
+
+// BackupJob is returned by create, status, execute and cancel.
+message BackupJob {
+  string job_id = 1;
+  string request_id = 2;
+  string kind = 3;        // create | validate | restore
+  string state = 4;       // queued | running | succeeded | failed | interrupted | restart_required | cancelled
+  string phase = 5;       // human-readable, no percentage or ETA
+  string created_at = 6;  // RFC3339 UTC
+  string updated_at = 7;
+  string actor = 8;
+  string reason = 9;
+  optional string backup_id = 10;
+  optional string preview_id = 11;
+  BackupJobResult result = 12;
+  BackupJobError error = 13;
+}
+
+// ==================== Capabilities ====================
+
+message BackupLimitView {
+  int64 package_bytes = 1;
+  int64 extracted_bytes = 2;
+  int32 files = 3;
+  int64 file_bytes = 4;
+  int64 manifest_bytes = 5;
+  int64 maintenance_wait_ms = 6;
+  int32 max_backups = 7;
+  int32 max_terminal_jobs = 8;
+}
+
+message BackupCapabilities {
+  bool supported = 1;
+  repeated string reasons = 2;
+  BackupLimitView limits = 3;
+  bool restore_requires_restart = 4;
+  string mode = 5;        // business_full
+}
+
+message CapabilitiesResponse {
+  int32 code = 1;
+  string msg = 2;
+  BackupCapabilities data = 3;
+}
+
+// ==================== Create / list / status ====================
+
+message CreateBackupRequest {
+  string request_id = 1;
+  string reason = 2;
+}
+
+message BackupListRequest {
+  int32 limit = 1;
+  string before_id = 2;
+}
+
+message BackupItem {
+  string backup_id = 1;
+  string created_at = 2;
+  string consistent_at = 3;
+  string sha256 = 4;
+  int64 size = 5;
+  BackupCounts counts = 6;
+  string actor = 7;
+  string reason = 8;
+}
+
+message BackupListData {
+  repeated BackupItem items = 1;
+  bool has_more = 2;
+  string next_before_id = 3;
+}
+
+message BackupListResponse {
+  int32 code = 1;
+  string msg = 2;
+  BackupListData data = 3;
+}
+
+message BackupStatusRequest {
+  string job_id = 1;
+}
+
+message BackupJobData {
+  BackupJob job = 1;
+}
+
+message BackupJobResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  BackupJobData data = 5;
+}
+
+// ==================== Download / delete ====================
+
+message DownloadBackupRequest {
+  string backup_id = 1;
+}
+
+// DownloadBackupResponse documents the binary response. The implementation
+// returns the ZIP body directly with Content-Disposition and
+// X-Rainbow-Backup-Sha256, not a JSON envelope.
+message DownloadBackupResponse {
+  bytes package = 1;
+}
+
+message DeleteBackupRequest {
+  string backup_id = 1;
+  string expected_sha256 = 2;
+  string request_id = 3;
+}
+
+message DeleteBackupData {
+  bool deleted = 1;
+}
+
+message DeleteBackupResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  DeleteBackupData data = 5;
+}
+
+// ==================== Restore preview ====================
+
+message RestorePreviewRequest {
+  string request_id = 1;  // multipart field, must precede the file part
+  // file is a multipart file part named "file"; it is streamed, not declared
+  // as a protobuf field.
+}
+
+message BackupProducer {
+  string app_version = 1;
+  string git_commit = 2;
+}
+
+message BackupSummary {
+  string backup_id = 1;
+  string created_at = 2;
+  string consistent_at = 3;
+  BackupProducer producer = 4;
+  int32 schema_version = 5;
+  BackupCounts counts = 6;
+  int32 files = 7;
+}
+
+message RestorePreview {
+  string preview_id = 1;
+  string job_id = 2;
+  bool valid = 3;
+  string package_sha256 = 4;
+  BackupSummary backup = 5;
+  repeated string warnings = 6;
+  repeated string issues = 7;
+  string expires_at = 8;
+  string target_instance_id = 9;
+  string created_at = 10;
+}
+
+message RestorePreviewData {
+  RestorePreview preview = 1;
+}
+
+message RestorePreviewResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  RestorePreview data = 5;
+}
+
+message GetRestorePreviewRequest {
+  string preview_id = 1;
+}
+
+// ==================== Restore execute / cancel ====================
+
+message ExecuteRestoreRequest {
+  string preview_id = 1;
+  string package_sha256 = 2;
+  string target_instance_id = 3;
+  string request_id = 4;
+  string confirmation = 5;  // RESTORE_ALL_BUSINESS_DATA
+  string reason = 6;
+}
+
+message CancelRestoreRequest {
+  string job_id = 1;
+  string request_id = 2;
+}
+
+message CancelRestoreData {
+  bool cancelled = 1;
+}
+
+message CancelRestoreResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  CancelRestoreData data = 5;
+}
+
+// BackupService exposes whole-instance business backup and restart-based
+// restore. Every endpoint requires an existing administrator session.
+service BackupService {
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse) {
+    option (api.get) = "/api/v1/backup/capabilities";
+  }
+  rpc Create(CreateBackupRequest) returns (BackupJobResponse) {
+    option (api.post) = "/api/v1/backup/create";
+  }
+  rpc List(BackupListRequest) returns (BackupListResponse) {
+    option (api.get) = "/api/v1/backup/list";
+  }
+  rpc Status(BackupStatusRequest) returns (BackupJobResponse) {
+    option (api.get) = "/api/v1/backup/status";
+  }
+  rpc Download(DownloadBackupRequest) returns (DownloadBackupResponse) {
+    option (api.get) = "/api/v1/backup/download";
+  }
+  rpc Delete(DeleteBackupRequest) returns (DeleteBackupResponse) {
+    option (api.post) = "/api/v1/backup/delete";
+  }
+  rpc UploadPreview(RestorePreviewRequest) returns (RestorePreviewResponse) {
+    option (api.post) = "/api/v1/backup/restore/preview";
+  }
+  rpc Preview(GetRestorePreviewRequest) returns (RestorePreviewResponse) {
+    option (api.get) = "/api/v1/backup/restore/preview";
+  }
+  rpc Execute(ExecuteRestoreRequest) returns (BackupJobResponse) {
+    option (api.post) = "/api/v1/backup/restore/execute";
+  }
+  rpc Cancel(CancelRestoreRequest) returns (CancelRestoreResponse) {
+    option (api.post) = "/api/v1/backup/restore/cancel";
+  }
+}
+
+message CapabilitiesRequest {}

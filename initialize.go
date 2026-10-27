@@ -8,6 +8,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	hconfig "github.com/cloudwego/hertz/pkg/common/config"
 	"github.com/redis/go-redis/v9"
+	"github.com/yi-nology/rainbow_bridge/biz/backup"
+	configdb "github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	versionhandler "github.com/yi-nology/rainbow_bridge/biz/handler/version"
 	"github.com/yi-nology/rainbow_bridge/biz/middleware"
@@ -41,8 +43,9 @@ type Application struct {
 	BasePath string
 }
 
-// Initialize initializes the application with the given configuration
-func Initialize(configPath string, buildConfig BuildConfig) (*Application, error) {
+// Initialize initializes the application with the given configuration.
+// backupInstance is nil when the feature is disabled or unsupported.
+func Initialize(configPath string, buildConfig BuildConfig, backupInstance *backup.Instance) (application *Application, err error) {
 	// Load configuration
 	cfg, err := appconfig.Load(configPath)
 	if err != nil {
@@ -59,19 +62,52 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			if sqlDB, dbErr := db.DB(); dbErr == nil {
+				_ = sqlDB.Close()
+			}
+		}
+	}()
 
 	// Auto migrate database tables
-	if err := db.AutoMigrate(&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.Config{}, &model.Asset{}, &model.Environment{}, &model.Pipeline{},
+		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
+		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.ScopeLifecycleEvent{},
+		&model.AuthUser{}, &model.AuthSession{},
+	); err != nil {
+		return nil, err
+	}
+
+	if err := configdb.BackfillConfigRevisions(context.Background(), db); err != nil {
 		return nil, err
 	}
 
 	// Migrate existing configs with default environment_key and pipeline_key
+	// before resolving their scope identities.
 	if err := service.MigrateConfigDefaults(db); err != nil {
 		return nil, err
 	}
 
-	// Ensure system defaults (create default environment and pipeline)
+	// Assign stable environment/scope identities and replace legacy key
+	// uniqueness with generation-aware constraints.
+	if err := configdb.MigrateScopeIdentity(context.Background(), db); err != nil {
+		return nil, err
+	}
+
+	// Seed only a never-initialized database; deleted defaults stay deleted.
 	if err := service.EnsureSystemDefaults(context.Background(), db); err != nil {
+		return nil, err
+	}
+
+	// Backfill per-scope release counters after scopes and seeds exist.
+	if err := configdb.EnsureReleaseNumbering(context.Background(), db); err != nil {
+		return nil, err
+	}
+
+	if err := database.PrepareConfigAliasConstraint(context.Background(), db); err != nil {
 		return nil, err
 	}
 
@@ -91,7 +127,20 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 
 	// Use build-time injected BasePath
 	basePath := appconfig.NormalizeBasePath(buildConfig.BasePath)
-	opts := []hconfig.Option{server.WithHostPorts(cfg.Server.Address)}
+	maxBodyBytes := backup.DefaultLimits().MaxPackageBytes + (64 << 20)
+	if maxInt := int64(^uint(0) >> 1); maxBodyBytes > maxInt {
+		maxBodyBytes = maxInt
+	}
+	opts := []hconfig.Option{
+		server.WithHostPorts(cfg.Server.Address),
+		// Backup uploads are streamed; ordinary handlers still read their
+		// bounded bodies through the same request API.
+		server.WithStreamBody(true),
+		// Keep the raw multipart stream available to the backup uploader;
+		// ordinary multipart handlers still read it through FormFile.
+		server.WithDisablePreParseMultipartForm(true),
+		server.WithMaxRequestBodySize(int(maxBodyBytes)),
+	}
 	if basePath != "" {
 		opts = append(opts, server.WithBasePath(basePath))
 	}
@@ -99,6 +148,40 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 
 	// Create service instance
 	svc := service.NewService(db, redisClient, basePath, cfg)
+	svc.SetProducer(buildConfig.Version, buildConfig.GitCommit)
+	if backupInstance != nil && backupInstance.Manager != nil {
+		backupInstance.Manager.AttachDatabase(db)
+		svc.SetBackupManager(backupInstance.Manager)
+	}
+
+	// 管理员账号与会话必须在上线前就绪:缺首次密码即失败退出,已存在则不覆盖。
+	authOrigins, err := appconfig.ValidateAuthConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	idleTimeout, absoluteTimeout, err := appconfig.AuthTimeoutPair(cfg)
+	if err != nil {
+		return nil, err
+	}
+	svc.SetAuthSettings(service.AuthSettings{
+		CookieName:      cfg.Auth.CookieName,
+		CookieSecure:    appconfig.AuthCookieSecure(cfg),
+		IdleTimeout:     idleTimeout,
+		AbsoluteTimeout: absoluteTimeout,
+		TrustedOrigins:  authOrigins,
+		BasePath:        basePath,
+	})
+	if err := svc.EnsureAuthBootstrap(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := svc.EnsureAuthSessionsReady(context.Background()); err != nil {
+		return nil, err
+	}
+
+	// 冻结基础结构必须在 HTTP 开放前就绪:协调行 + 存量渠道补初始 unlocked 状态(幂等,不重置既有状态)。
+	if err := svc.EnsureFreezeBootstrap(context.Background()); err != nil {
+		return nil, err
+	}
 
 	// Set version information
 	versionhandler.AppVersion = buildConfig.Version
@@ -117,8 +200,12 @@ func Initialize(configPath string, buildConfig BuildConfig) (*Application, error
 	// Register middleware
 	h.Use(middleware.Recovery())
 	h.Use(middleware.Logging())
-	h.Use(middleware.CORS(&cfg.CORS))
+	h.Use(middleware.CORS(&cfg.CORS, authOrigins, basePath))
 	h.Use(middleware.Auth())
+	// 管理接口统一鉴权:默认拒绝,公开范围在中间件内按方法 + 路由精确匹配
+	h.Use(middleware.AdminSession(svc, basePath))
+	// 备份/恢复维护期间拒绝新的业务写入(认证与备份接口本身保持可用)
+	h.Use(middleware.BackupMaintenance(svc))
 
 	// Register routes
 	bizrouter.GeneratedRegister(h)

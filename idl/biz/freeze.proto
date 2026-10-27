@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package freeze;
+
+import "api.proto";
+
+option go_package = "github.com/yi-nology/rainbow_bridge/biz/model/freeze";
+
+// ==================== Shared types ====================
+
+// FreezeStatusData is the current freeze state for one scope.
+// revision and event ids are decimal strings to avoid frontend number limits.
+message FreezeStatusData {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string state = 3;            // unlocked | locked
+  string revision = 4;         // decimal string; initial "0"
+  string last_changed_at = 5;  // RFC3339 UTC; initial empty
+  string last_changed_by = 6;  // initial empty
+  string last_reason = 7;      // initial empty
+  bool admin_configured = 8;   // whether the server has a usable admin token
+  string scope_id = 9;
+}
+
+// FreezeBlockedScope describes one frozen scope that blocked a write.
+message FreezeBlockedScope {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string state = 3;
+  string revision = 4; // decimal string
+  string scope_id = 5;
+}
+
+// FreezeResourceIssue reports one resource problem found during lock precheck.
+message FreezeResourceIssue {
+  string resource_key = 1;
+  string alias = 2;
+  string file_id = 3;
+  string reason = 4; // missing_metadata | file_missing | cross_scope_reference | unresolvable_reference
+}
+
+// ==================== Status ====================
+
+// FreezeStatusRequest reads current freeze state for one scope.
+message FreezeStatusRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string scope_id = 3;
+}
+
+// FreezeStatusResponse is the unified response for status reads.
+message FreezeStatusResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  FreezeStatusData data = 5;
+}
+
+// ==================== Lock / Unlock ====================
+
+// LockFreezeRequest locks one scope.
+message LockFreezeRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string reason = 3;            // optional; trimmed 0-500 Unicode characters
+  string expected_revision = 4; // decimal string
+  string expected_scope_id = 5;
+}
+
+// UnlockFreezeRequest unlocks one scope.
+message UnlockFreezeRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  string reason = 3;            // optional; trimmed 0-500 Unicode characters
+  string expected_revision = 4;
+  string expected_scope_id = 5;
+}
+
+// FreezeTransitionResponse is the unified response for lock/unlock.
+message FreezeTransitionResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  FreezeStatusData data = 5;
+  repeated FreezeBlockedScope blocked_scopes = 6;   // 409 SCOPE_FROZEN payloads
+  repeated FreezeResourceIssue resource_issues = 7; // 400 precheck failures
+  repeated string external_references = 8;          // external URLs not under freeze control
+  string latest_state = 9;                          // 409 conflicts: current state
+  string latest_revision = 10;                      // 409 conflicts: current revision
+}
+
+// ==================== History ====================
+
+// FreezeHistoryRequest pages the append-only audit history.
+message FreezeHistoryRequest {
+  string environment_key = 1;
+  string pipeline_key = 2;
+  int32 limit = 3;             // default 20, max 100
+  string before_event_id = 4;  // optional decimal string cursor
+  string scope_id = 5;
+}
+
+// FreezeEventItem is one audit event.
+message FreezeEventItem {
+  string event_id = 1;   // decimal string
+  string event_type = 2; // lock | unlock
+  string from_state = 3;
+  string to_state = 4;
+  string revision = 5;   // decimal string
+  string reason = 6;
+  string actor = 7;
+  string created_at = 8; // RFC3339 UTC
+  string scope_id = 9;
+}
+
+// FreezeHistoryData is the history page.
+message FreezeHistoryData {
+  repeated FreezeEventItem items = 1;
+  bool has_more = 2;
+  string next_before_event_id = 3;
+}
+
+// FreezeHistoryResponse is the unified response for history reads.
+message FreezeHistoryResponse {
+  int32 code = 1;
+  string msg = 2;
+  string error = 3;
+  string error_type = 4;
+  FreezeHistoryData data = 5;
+}
+
+// FreezeService provides revocable configuration freeze control.
+service FreezeService {
+  // Status returns the current freeze state for one scope.
+  rpc Status(FreezeStatusRequest) returns (FreezeStatusResponse) {
+    option (api.get) = "/api/v1/freeze/status";
+  }
+
+  // Lock freezes one scope; requires the admin bearer token.
+  rpc Lock(LockFreezeRequest) returns (FreezeTransitionResponse) {
+    option (api.post) = "/api/v1/freeze/lock";
+  }
+
+  // Unlock releases the freeze; requires the admin bearer token.
+  rpc Unlock(UnlockFreezeRequest) returns (FreezeTransitionResponse) {
+    option (api.post) = "/api/v1/freeze/unlock";
+  }
+
+  // History pages the append-only audit events for one scope.
+  rpc History(FreezeHistoryRequest) returns (FreezeHistoryResponse) {
+    option (api.get) = "/api/v1/freeze/history";
+  }
+}

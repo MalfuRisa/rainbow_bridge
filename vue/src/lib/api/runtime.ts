@@ -1,5 +1,6 @@
-import { apiClient, getBasePath } from './client'
+import { apiClient } from './client'
 import { toCamelCase } from '../utils'
+import { readScope } from '@/lib/scope'
 import type {
   ApiEnvironmentOverview,
   EnvironmentOverview,
@@ -21,12 +22,12 @@ export const runtimeApi = {
     environmentKey: string,
     pipelineKey: string
   ): Promise<RuntimeConfigData | null> => {
-    const resp = await apiClient.get<RuntimeConfigData>('/api/v1/runtime/config', undefined, {
+    const resp = await readScope(environmentKey, pipelineKey, scopeId => apiClient.get<RuntimeConfigData>('/api/v1/runtime/config', { scope_id: scopeId }, {
       headers: {
         'x-environment': environmentKey,
         'x-pipeline': pipelineKey,
       },
-    })
+    }))
     return resp.data || null
   },
 
@@ -34,27 +35,9 @@ export const runtimeApi = {
     environmentKey: string,
     pipelineKey: string
   ): Promise<Blob> => {
-    const url = new URL('/api/v1/runtime/static', window.location.origin)
-    url.searchParams.append('environment_key', environmentKey)
-    url.searchParams.append('pipeline_key', pipelineKey)
-    
-    // 添加基础路径
-    const basePath = getBasePath()
-    if (basePath) {
-      const pathname = url.pathname
-      // 移除 basePath 末尾的斜杠，避免与 pathname 开头的斜杠重复
-      const normalizedBasePath = basePath.replace(/\/$/, '')
-      url.pathname = normalizedBasePath + pathname
-    }
-
-    const response = await fetch(url.toString(), {
-      credentials: 'include',
+    return readScope(environmentKey, pipelineKey, scopeId => {
+      const query = new URLSearchParams({ environment_key: environmentKey, pipeline_key: pipelineKey, scope_id: scopeId })
+      return apiClient.download('/api/v1/runtime/static?' + query.toString())
     })
-
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`)
-    }
-
-    return response.blob()
   },
 }

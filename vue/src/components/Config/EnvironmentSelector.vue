@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { Layers, GitBranch } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 
@@ -26,7 +25,6 @@ const pipelines = computed(() => selectedEnvironment.value?.pipelines || [])
 
 const handleEnvChange = (envKey: string) => {
   emit('update:selectedEnvKey', envKey)
-  emit('update:selectedPipelineKey', '')
 }
 
 const handlePipelineChange = (pipelineKey: string) => {
@@ -35,12 +33,12 @@ const handlePipelineChange = (pipelineKey: string) => {
 </script>
 
 <template>
-  <Card class="overflow-hidden shadow-md hover:shadow-lg transition-shadow duration-300">
-    <CardHeader class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <CardTitle class="text-xl font-semibold text-gray-900 dark:text-white">选择环境与渠道</CardTitle>
+  <Card class="config-scope-selector">
+    <CardHeader class="config-scope-header">
+      <CardTitle class="config-scope-title">工作范围</CardTitle>
     </CardHeader>
-    <CardContent class="p-6">
-      <div class="flex flex-wrap items-center gap-6">
+    <CardContent class="config-scope-content">
+      <div class="config-scope-fields">
         <div class="flex items-center gap-3">
           <div class="flex items-center gap-2 text-muted-foreground">
             <Layers class="w-5 h-5" />
@@ -51,7 +49,7 @@ const handlePipelineChange = (pipelineKey: string) => {
             @update:model-value="handleEnvChange" 
             :disabled="environmentStore.loading"
           >
-            <SelectTrigger class="w-56 h-10">
+            <SelectTrigger class="config-scope-trigger w-56 h-10" aria-label="环境">
               <SelectValue :placeholder="environmentStore.loading ? '加载中...' : '请选择环境'" />
             </SelectTrigger>
             <SelectContent>
@@ -72,7 +70,7 @@ const handlePipelineChange = (pipelineKey: string) => {
             @update:model-value="handlePipelineChange"
             :disabled="!selectedEnvKey"
           >
-            <SelectTrigger class="w-56 h-10">
+            <SelectTrigger class="config-scope-trigger w-56 h-10" aria-label="渠道">
               <SelectValue :placeholder="selectedEnvKey ? '请选择渠道' : '先选择环境'" />
             </SelectTrigger>
             <SelectContent>
@@ -83,10 +81,8 @@ const handlePipelineChange = (pipelineKey: string) => {
           </Select>
         </div>
 
-        <Badge v-if="selectedEnvKey && selectedPipelineKey" variant="default" class="ml-auto px-3 py-1 text-sm">
-          已选择: {{ selectedEnvironment?.name }} / {{ pipelines.find(p => p.key === selectedPipelineKey)?.name }}
-        </Badge>
       </div>
+      <div v-if="environmentStore.error" class="config-environment-error" role="alert">{{ environmentStore.error }}<button class="spectrum-text-button" @click="environmentStore.fetchOverview()">重新加载环境</button></div>
     </CardContent>
   </Card>
 </template>

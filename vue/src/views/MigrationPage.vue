@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { Layout } from '@/components/ui/layout'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Lock, GitBranch } from 'lucide-vue-next'
 import SourceTargetSelector from '@/components/Migration/SourceTargetSelector.vue'
 import ChangePreview from '@/components/Migration/ChangePreview.vue'
 import MigrationOperation from '@/components/Migration/MigrationOperation.vue'
 import { useEnvironmentStore } from '@/stores/environment'
+import { useFreezeStore } from '@/stores/freeze'
 import { transferApi } from '@/lib/api/transfer'
 import { configApi } from '@/lib/api/config'
 import { fromApiConfig } from '@/lib/api/transformers'
+import { isFreezeBlockedError, freezeErrorMessage } from '@/lib/api/error'
+import { isSessionError } from '@/lib/api/http'
 import { toast } from 'vue-sonner'
 import type { ConfigItem, ConfigType } from '@/lib/types'
+import { captureScope, scopeIdFor, type ScopeTarget } from '@/lib/scope'
 
 type MigrationStatus = 'idle' | 'previewing' | 'migrating' | 'success' | 'error'
 
@@ -25,6 +32,7 @@ export interface MigrationConfig {
 }
 
 const environmentStore = useEnvironmentStore()
+const freezeStore = useFreezeStore()
 
 const sourceEnvKey = ref('')
 const sourcePipelineKey = ref('')
@@ -35,27 +43,61 @@ const status = ref<MigrationStatus>('idle')
 const previewData = ref<MigrationConfig[]>([])
 const overwriteConflicts = ref(false)
 const sourceConfigs = ref<ConfigItem[]>([])
+const previewed = ref(false)
+const previewScopes = ref<{ source: ScopeTarget; target: ScopeTarget } | null>(null)
+const sourceScopeId = computed(() => scopeIdFor(sourceEnvKey.value, sourcePipelineKey.value))
+const targetScopeId = computed(() => scopeIdFor(targetEnvKey.value, targetPipelineKey.value))
+let previewBatch = 0
+onUnmounted(() => { previewBatch += 1 })
+
+watch([sourceEnvKey, sourcePipelineKey, targetEnvKey, targetPipelineKey, sourceScopeId, targetScopeId], () => {
+  previewBatch += 1
+  previewData.value = []
+  sourceConfigs.value = []
+  selectedConfigs.value = []
+  previewed.value = false
+  previewScopes.value = null
+  overwriteConflicts.value = false
+  status.value = 'idle'
+})
 
 onMounted(() => {
   environmentStore.fetchOverview()
 })
 
+// 目标范围锁定状态:locked 时阻止启动迁移;源范围 locked 允许只读复制
+watch([targetEnvKey, targetPipelineKey], ([envKey, pipelineKey]) => {
+  if (envKey && pipelineKey) {
+    freezeStore.loadStatus(envKey, pipelineKey)
+  }
+})
+
+watch([sourceEnvKey, sourcePipelineKey], ([envKey, pipelineKey]) => {
+  if (envKey && pipelineKey) {
+    freezeStore.loadStatus(envKey, pipelineKey)
+  }
+})
+
+const targetLocked = computed(() => freezeStore.isLocked(targetEnvKey.value, targetPipelineKey.value))
+const targetFrozenReason = computed(() => freezeStore.statusFor(targetEnvKey.value, targetPipelineKey.value)?.last_reason || '')
+const sourceLocked = computed(() => freezeStore.isLocked(sourceEnvKey.value, sourcePipelineKey.value))
+
 const validatePreviewInputs = (): boolean => {
   return !!sourceEnvKey.value && !!sourcePipelineKey.value && !!targetEnvKey.value && !!targetPipelineKey.value
 }
 
-const fetchSourceConfigs = async (): Promise<ConfigItem[]> => {
+const fetchSourceConfigs = async (environmentKey: string, pipelineKey: string): Promise<ConfigItem[]> => {
   const sourceResponse = await configApi.list({
-    environmentKey: sourceEnvKey.value,
-    pipelineKey: sourcePipelineKey.value,
+    environmentKey,
+    pipelineKey,
   })
   return (sourceResponse.list || []).map(fromApiConfig)
 }
 
-const fetchTargetConfigs = async (): Promise<Map<string, ConfigItem>> => {
+const fetchTargetConfigs = async (environmentKey: string, pipelineKey: string): Promise<Map<string, ConfigItem>> => {
   const targetResponse = await configApi.list({
-    environmentKey: targetEnvKey.value,
-    pipelineKey: targetPipelineKey.value,
+    environmentKey,
+    pipelineKey,
   })
   const targetList = (targetResponse.list || []).map(fromApiConfig)
   return new Map(targetList.map((c: ConfigItem) => [c.name, c]))
@@ -82,20 +124,31 @@ const generatePreviewData = (sourceList: ConfigItem[], targetMap: Map<string, Co
 
 const handlePreview = async () => {
   if (!validatePreviewInputs()) return
+  if (targetLocked.value) {
+    toast.error(`目标范围已冻结,无法迁移到该范围${targetFrozenReason.value ? `(原因:${targetFrozenReason.value})` : ''}`)
+    return
+  }
 
   status.value = 'previewing'
+  const batch = ++previewBatch
 
   try {
-    const sourceList = await fetchSourceConfigs()
+    previewScopes.value = { source: captureScope(sourceEnvKey.value, sourcePipelineKey.value), target: captureScope(targetEnvKey.value, targetPipelineKey.value) }
+    const [sourceList, targetMap] = await Promise.all([
+      fetchSourceConfigs(sourceEnvKey.value, sourcePipelineKey.value),
+      fetchTargetConfigs(targetEnvKey.value, targetPipelineKey.value),
+    ])
+    if (batch !== previewBatch) return
     sourceConfigs.value = sourceList
-
-    const targetMap = await fetchTargetConfigs()
     const preview = generatePreviewData(sourceList, targetMap)
 
     previewData.value = preview
     selectedConfigs.value = preview.map((p) => p.id)
     status.value = 'idle'
+    previewed.value = true
   } catch (error) {
+    if (isSessionError(error)) return
+    if (batch !== previewBatch) return
     status.value = 'error'
     toast.error('获取配置失败，请重试')
   }
@@ -119,7 +172,11 @@ const getSelectedResourceKeys = (): string[] => {
 }
 
 const executeMigration = async (resourceKeys: string[]) => {
+  if (!previewScopes.value) throw new Error('范围已变化，请重新预览迁移。')
+  const { source, target } = previewScopes.value
   return transferApi.migrate({
+    sourceExpectedEnvironmentId: source.environmentId, sourceExpectedScopeId: source.scopeId,
+    targetExpectedEnvironmentId: target.environmentId, targetExpectedScopeId: target.scopeId,
     sourceEnvironmentKey: sourceEnvKey.value,
     sourcePipelineKey: sourcePipelineKey.value,
     targetEnvironmentKey: targetEnvKey.value,
@@ -155,16 +212,29 @@ const handleMigrationResult = (result: MigrationResult | null) => {
 
 const handleMigrate = async () => {
   if (!validateMigrationInputs()) return
+  if (targetLocked.value) {
+    toast.error('目标范围已冻结,迁移被阻止;请先解除冻结')
+    return
+  }
 
   status.value = 'migrating'
+  const batch = previewBatch
 
   try {
     const selectedResourceKeys = getSelectedResourceKeys()
     const result = await executeMigration(selectedResourceKeys)
+    if (batch !== previewBatch) return
     handleMigrationResult(result)
   } catch (error) {
+    if (batch !== previewBatch) return
+    if (isSessionError(error)) return
     status.value = 'error'
-    toast.error('迁移失败，请重试')
+    if (isFreezeBlockedError(error)) {
+      await freezeStore.loadStatus(targetEnvKey.value, targetPipelineKey.value)
+      toast.error(freezeErrorMessage(error))
+    } else {
+      toast.error(error instanceof Error ? error.message : '迁移失败，请重试')
+    }
   }
 }
 
@@ -182,10 +252,14 @@ const handleReset = () => {
 </script>
 
 <template>
-  <Layout
-    title="配置迁移"
-    description="在不同环境和渠道之间迁移配置项"
-  >
+  <SpectrumLayout>
+    <div class="spectrum-operations spectrum-migration-page">
+    <SpectrumPageHeader eyebrow="MIGRATION / BETWEEN WORKSPACES" title="配置迁移" description="复制配置到目标范围，源配置不变。" />
+    <ol class="spectrum-workflow-steps" aria-label="迁移步骤">
+      <li :class="{ 'is-current': !previewed && status !== 'success' }"><span>01</span>选择源与目标</li>
+      <li :class="{ 'is-current': previewed && status !== 'success' }"><span>02</span>核对变更与冲突</li>
+      <li :class="{ 'is-current': status === 'success' }"><span>03</span>确认迁移结果</li>
+    </ol>
     <MigrationOperation 
       v-if="status === 'success' || status === 'error'"
       :status="status" 
@@ -194,12 +268,31 @@ const handleReset = () => {
     />
 
     <template v-else>
+      <Alert v-if="targetLocked" variant="destructive" class="mb-4">
+        <Lock class="h-4 w-4" />
+        <AlertTitle>目标范围已冻结,迁移被阻止</AlertTitle>
+        <AlertDescription>
+          {{ targetEnvKey }}/{{ targetPipelineKey }}
+          <span v-if="targetFrozenReason">(原因:{{ targetFrozenReason }})</span>
+          。请先解除目标冻结后再迁移。
+        </AlertDescription>
+      </Alert>
+      <Alert v-else-if="sourceLocked" class="mb-4">
+        <Lock class="h-4 w-4" />
+        <AlertTitle>源范围已冻结</AlertTitle>
+        <AlertDescription>
+          仍可复制到未冻结的目标。
+        </AlertDescription>
+      </Alert>
+
       <SourceTargetSelector 
         v-model:source-env-key="sourceEnvKey"
         v-model:source-pipeline-key="sourcePipelineKey"
         v-model:target-env-key="targetEnvKey"
         v-model:target-pipeline-key="targetPipelineKey"
         :status="status"
+        :target-locked="targetLocked"
+        :target-frozen-reason="targetFrozenReason"
         @preview="handlePreview"
       />
 
@@ -211,6 +304,8 @@ const handleReset = () => {
         @reset="handleReset"
         @migrate="handleMigrate"
       />
+      <div v-if="previewed && previewData.length === 0" class="spectrum-empty mt-8"><GitBranch :size="32" /><h3>源范围暂无配置</h3><p>请选择其他源环境和渠道。</p></div>
     </template>
-  </Layout>
+    </div>
+  </SpectrumLayout>
 </template>

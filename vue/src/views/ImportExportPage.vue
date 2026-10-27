@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Layout } from '@/components/ui/layout'
+import SpectrumLayout from '@/components/spectrum/SpectrumLayout.vue'
+import SpectrumPageHeader from '@/components/spectrum/SpectrumPageHeader.vue'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FolderDown, FolderUp } from 'lucide-vue-next'
 import ExportFunctionality from '@/components/ImportExport/ExportFunctionality.vue'
 import ImportFunctionality from '@/components/ImportExport/ImportFunctionality.vue'
 import { transferApi, type ExportTreeEnvironment } from '@/lib/api/transfer'
+import { useEnvironmentStore } from '@/stores/environment'
 
 const exportTree = ref<ExportTreeEnvironment[]>([])
+const environments = useEnvironmentStore()
 const isLoadingTree = ref(true)
+const treeError = ref('')
 
 onMounted(() => {
   loadExportTree()
@@ -16,11 +21,13 @@ onMounted(() => {
 
 const loadExportTree = async () => {
   isLoadingTree.value = true
+  treeError.value = ''
   try {
-    const tree = await transferApi.getExportTree()
+    const [tree] = await Promise.all([transferApi.getExportTree(), environments.fetchOverview()])
+    if (environments.error) throw new Error(environments.error)
     exportTree.value = tree
   } catch (err) {
-    console.error('加载数据失败:', err)
+    treeError.value = err instanceof Error ? err.message : '加载导出内容失败'
   } finally {
     isLoadingTree.value = false
   }
@@ -28,12 +35,12 @@ const loadExportTree = async () => {
 </script>
 
 <template>
-  <Layout
-    title="导入导出"
-    description="批量导入导出配置数据，支持 ZIP 和 TAR.GZ 格式"
-  >
+  <SpectrumLayout>
+    <div class="spectrum-operations spectrum-transfer-page">
+    <SpectrumPageHeader eyebrow="ARCHIVE / IMPORT & EXPORT" title="导入导出" />
+    <div v-if="treeError" class="spectrum-error" role="alert">{{ treeError }}<Button variant="outline" @click="loadExportTree">重新加载导出内容</Button></div>
     <Tabs default-value="export" class="space-y-6">
-      <TabsList class="grid w-full max-w-md grid-cols-2">
+      <TabsList class="spectrum-transfer-tabs">
         <TabsTrigger value="export" class="gap-2">
           <FolderDown class="w-4 h-4" />
           数据导出
@@ -56,5 +63,6 @@ const loadExportTree = async () => {
         <ImportFunctionality @load-tree="loadExportTree" />
       </TabsContent>
     </Tabs>
-  </Layout>
+    </div>
+  </SpectrumLayout>
 </template>

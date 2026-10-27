@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	envpb "github.com/yi-nology/rainbow_bridge/biz/model/environment"
 	"gorm.io/gorm"
@@ -15,64 +16,54 @@ var (
 	ErrEnvironmentKeyExists   = errors.New("environment_key already exists")
 )
 
-// AddEnvironment creates a new environment with default pipeline.
+// AddEnvironment creates a new environment generation and its default pipeline.
+// A key whose old generation was deleted can be created again with fresh
+// internal identities.
 func (s *Service) AddEnvironment(ctx context.Context, env *envpb.Environment) error {
 	if env == nil || env.GetEnvironmentKey() == "" {
 		return ErrEnvironmentKeyRequired
 	}
-
-	exists, err := s.logic.environmentDAO.ExistsByKey(ctx, s.logic.db, env.GetEnvironmentKey())
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrEnvironmentKeyExists
-	}
-
 	entity := &model.Environment{
+		EnvironmentID:   uuid.NewString(),
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
 		Description:     env.GetDescription(),
 		SortOrder:       int(env.GetSortOrder()),
 		IsActive:        env.GetIsActive(),
 	}
-
-	// Use transaction to ensure atomicity
-	return s.logic.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Create environment
-		if err := s.logic.environmentDAO.Create(ctx, tx, entity); err != nil {
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		exists, err := txLogic.environmentDAO.ExistsByKey(gateCtx, txLogic.db, entity.EnvironmentKey)
+		if err != nil {
 			return err
 		}
-		// 2. Create default pipeline
+		if exists {
+			return ErrEnvironmentKeyExists
+		}
+		if err := txLogic.environmentDAO.Create(gateCtx, txLogic.db, entity); err != nil {
+			return err
+		}
 		defaultPipeline := &model.Pipeline{
-			EnvironmentKey: env.GetEnvironmentKey(),
+			ScopeID:        uuid.NewString(),
+			EnvironmentID:  entity.EnvironmentID,
+			EnvironmentKey: entity.EnvironmentKey,
 			PipelineKey:    "default",
 			PipelineName:   "默认渠道",
 			Description:    "系统默认渠道",
 			SortOrder:      0,
 			IsActive:       true,
 		}
-		if err := s.logic.pipelineDAO.Create(ctx, tx, defaultPipeline); err != nil {
+		if err := txLogic.pipelineDAO.Create(gateCtx, txLogic.db, defaultPipeline); err != nil {
 			return err
 		}
-		return nil
+		return txLogic.ensurePipelineStateExists(gateCtx, entity.EnvironmentKey, defaultPipeline.PipelineKey)
 	})
 }
 
-// UpdateEnvironment updates an existing environment.
-func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment) error {
+// UpdateEnvironment updates the live generation selected by expected id.
+func (s *Service) UpdateEnvironmentWithIdentity(ctx context.Context, env *envpb.Environment, expectedEnvironmentID string) error {
 	if env == nil || env.GetEnvironmentKey() == "" {
 		return ErrEnvironmentKeyRequired
 	}
-
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, env.GetEnvironmentKey())
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrEnvironmentNotFound
-		}
-		return err
-	}
-
 	entity := &model.Environment{
 		EnvironmentKey:  env.GetEnvironmentKey(),
 		EnvironmentName: env.GetEnvironmentName(),
@@ -80,50 +71,53 @@ func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment)
 		SortOrder:       int(env.GetSortOrder()),
 		IsActive:        env.GetIsActive(),
 	}
-	return s.logic.environmentDAO.Update(ctx, s.logic.db, entity)
+	return s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
+		current, err := resolveEnvironmentForWrite(gateCtx, txLogic, entity.EnvironmentKey, expectedEnvironmentID)
+		if err != nil {
+			return err
+		}
+		if err := txLogic.ensureEnvironmentMetadataUnlocked(gateCtx, entity.EnvironmentKey); err != nil {
+			return err
+		}
+		entity.EnvironmentID = current.EnvironmentID
+		return txLogic.environmentDAO.Update(gateCtx, txLogic.db, entity)
+	})
 }
 
-// DeleteEnvironment deletes an environment by key.
-func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) error {
-	if environmentKey == "" {
+// UpdateEnvironment is the internal/test convenience wrapper; management
+// handlers must call UpdateEnvironmentWithIdentity so a stale page cannot
+// modify a recreated generation.
+func (s *Service) UpdateEnvironment(ctx context.Context, env *envpb.Environment) error {
+	if env == nil {
 		return ErrEnvironmentKeyRequired
 	}
-
-	_, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, environmentKey)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrEnvironmentNotFound
-		}
-		return err
-	}
-
-	return s.logic.environmentDAO.Delete(ctx, s.logic.db, environmentKey)
+	return s.UpdateEnvironmentWithIdentity(ctx, env, "")
 }
 
-// GetEnvironment returns an environment by key.
+// DeleteEnvironment is the internal/test convenience wrapper.
+func (s *Service) DeleteEnvironment(ctx context.Context, environmentKey string) error {
+	_, err := s.DeleteEnvironmentWithIdentity(ctx, environmentKey, "")
+	return err
+}
+
+// GetEnvironment returns the live generation by key.
 func (s *Service) GetEnvironment(ctx context.Context, environmentKey string) (*envpb.Environment, error) {
 	if environmentKey == "" {
 		return nil, ErrEnvironmentKeyRequired
 	}
-
-	entity, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, environmentKey)
+	env, err := resolveEnvironmentByKey(ctx, s.logic, environmentKey)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrEnvironmentNotFound
-		}
 		return nil, err
 	}
-
-	return modelEnvironmentToPB(entity), nil
+	return modelEnvironmentToPB(env), nil
 }
 
-// ListEnvironments returns all environments with optional active filter.
+// ListEnvironments returns live environments.
 func (s *Service) ListEnvironments(ctx context.Context, isActive *bool) ([]*envpb.Environment, error) {
 	entities, err := s.logic.environmentDAO.List(ctx, s.logic.db, isActive, 0, 0)
 	if err != nil {
 		return nil, err
 	}
-
 	return environmentSliceToPB(entities), nil
 }
 
@@ -132,6 +126,7 @@ func modelEnvironmentToPB(env *model.Environment) *envpb.Environment {
 		return nil
 	}
 	return &envpb.Environment{
+		EnvironmentId:   env.EnvironmentID,
 		EnvironmentKey:  env.EnvironmentKey,
 		EnvironmentName: env.EnvironmentName,
 		Description:     env.Description,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/google/uuid"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/db"
 	"github.com/yi-nology/rainbow_bridge/biz/dal/model"
 	"gorm.io/gorm"
@@ -16,43 +17,51 @@ const (
 	DefaultPipelineName    = "默认渠道"
 )
 
-// InitDefaultEnvironment creates the default environment if it doesn't exist.
+// InitDefaultEnvironment creates the default environment only when the
+// database has never contained any environment row.
 func (s *Service) InitDefaultEnvironment(ctx context.Context) error {
-	exists, err := s.logic.environmentDAO.ExistsByKey(ctx, s.logic.db, DefaultEnvironmentKey)
+	count, err := s.logic.environmentDAO.CountAllIncludingDeleted(ctx, s.logic.db)
 	if err != nil {
 		return err
 	}
-	if exists {
-		log.Printf("[Init] Default environment already exists")
+	if count > 0 {
 		return nil
 	}
-
 	env := &model.Environment{
+		EnvironmentID:   uuid.NewString(),
 		EnvironmentKey:  DefaultEnvironmentKey,
 		EnvironmentName: DefaultEnvironmentName,
 		Description:     "系统默认环境",
 		SortOrder:       0,
 		IsActive:        true,
 	}
-	if err := s.logic.environmentDAO.Create(ctx, s.logic.db, env); err != nil {
+	active := model.ActiveSlotActive
+	env.ActiveSlot = &active
+	if err := s.logic.db.WithContext(ctx).Create(env).Error; err != nil {
 		return err
 	}
 	log.Printf("[Init] Created default environment: %s", DefaultEnvironmentKey)
 	return nil
 }
 
-// InitDefaultPipeline creates the default pipeline if it doesn't exist.
+// InitDefaultPipeline creates the default pipeline only when the database has
+// never contained any pipeline row.
 func (s *Service) InitDefaultPipeline(ctx context.Context) error {
-	exists, err := s.logic.pipelineDAO.ExistsByKey(ctx, s.logic.db, DefaultEnvironmentKey, DefaultPipelineKey)
+	count, err := s.logic.pipelineDAO.CountAllIncludingDeleted(ctx, s.logic.db)
 	if err != nil {
 		return err
 	}
-	if exists {
-		log.Printf("[Init] Default pipeline already exists")
+	if count > 0 {
 		return nil
 	}
-
+	env, err := s.logic.environmentDAO.GetByKey(ctx, s.logic.db, DefaultEnvironmentKey)
+	if err != nil {
+		// A user who deleted the default environment must not get it back.
+		return nil
+	}
 	pl := &model.Pipeline{
+		ScopeID:        uuid.NewString(),
+		EnvironmentID:  env.EnvironmentID,
 		EnvironmentKey: DefaultEnvironmentKey,
 		PipelineKey:    DefaultPipelineKey,
 		PipelineName:   DefaultPipelineName,
@@ -60,93 +69,90 @@ func (s *Service) InitDefaultPipeline(ctx context.Context) error {
 		SortOrder:      0,
 		IsActive:       true,
 	}
-	if err := s.logic.pipelineDAO.Create(ctx, s.logic.db, pl); err != nil {
+	active := model.ActiveSlotActive
+	pl.ActiveSlot = &active
+	if err := s.logic.db.WithContext(ctx).Create(pl).Error; err != nil {
 		return err
 	}
 	log.Printf("[Init] Created default pipeline: %s", DefaultPipelineKey)
 	return nil
 }
 
-// InitDefaults initializes default environment and pipeline.
 func (s *Service) InitDefaults(ctx context.Context) error {
 	if err := s.InitDefaultEnvironment(ctx); err != nil {
 		return err
 	}
-	if err := s.InitDefaultPipeline(ctx); err != nil {
+	return s.InitDefaultPipeline(ctx)
+}
+
+// MigrateConfigDefaults sets default environment_key and pipeline_key for
+// existing configs before scope identity backfill.
+func MigrateConfigDefaults(db *gorm.DB) error {
+	var rows []model.Config
+	if err := db.Where("environment_key = '' OR environment_key IS NULL OR pipeline_key = '' OR pipeline_key IS NULL").Find(&rows).Error; err != nil {
 		return err
 	}
+	for _, row := range rows {
+		fields := map[string]any{"edit_revision": uuid.NewString()}
+		if row.EnvironmentKey == "" {
+			fields["environment_key"] = DefaultEnvironmentKey
+		}
+		if row.PipelineKey == "" {
+			fields["pipeline_key"] = DefaultPipelineKey
+		}
+		if err := db.Model(&model.Config{}).Where("id = ? AND (environment_key = '' OR environment_key IS NULL OR pipeline_key = '' OR pipeline_key IS NULL)", row.ID).Updates(fields).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// MigrateConfigDefaults sets default environment_key and pipeline_key for existing configs.
-func MigrateConfigDefaults(db *gorm.DB) error {
-	result := db.Model(&model.Config{}).
-		Where("environment_key = '' OR environment_key IS NULL").
-		Update("environment_key", DefaultEnvironmentKey)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected > 0 {
-		log.Printf("[Migration] Updated %d configs with default environment_key", result.RowsAffected)
-	}
-
-	result = db.Model(&model.Config{}).
-		Where("pipeline_key = '' OR pipeline_key IS NULL").
-		Update("pipeline_key", DefaultPipelineKey)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected > 0 {
-		log.Printf("[Migration] Updated %d configs with default pipeline_key", result.RowsAffected)
-	}
-
-	return nil
-}
-
-// EnsureSystemDefaults initializes default environment and pipeline at startup.
-// This is a package-level function that can be called before Service is created.
+// EnsureSystemDefaults seeds only a never-initialized database. Rows are
+// counted including soft-deleted generations, so a user who deleted the
+// default environment/pipeline does not have them recreated on every restart.
 func EnsureSystemDefaults(ctx context.Context, dbConn *gorm.DB) error {
 	envDAO := db.NewEnvironmentDAO()
 	plDAO := db.NewPipelineDAO()
 
-	// Create default environment
-	envExists, err := envDAO.ExistsByKey(ctx, dbConn, DefaultEnvironmentKey)
+	envCount, err := envDAO.CountAllIncludingDeleted(ctx, dbConn)
 	if err != nil {
 		return err
 	}
-	if !envExists {
-		env := &model.Environment{
-			EnvironmentKey:  DefaultEnvironmentKey,
-			EnvironmentName: DefaultEnvironmentName,
-			Description:     "系统默认环境",
-			SortOrder:       0,
-			IsActive:        true,
-		}
-		if err := envDAO.Create(ctx, dbConn, env); err != nil {
-			return err
-		}
-		log.Printf("[Init] Created default environment: %s", DefaultEnvironmentKey)
-	}
-
-	// Create default pipeline
-	plExists, err := plDAO.ExistsByKey(ctx, dbConn, DefaultEnvironmentKey, DefaultPipelineKey)
+	pipelineCount, err := plDAO.CountAllIncludingDeleted(ctx, dbConn)
 	if err != nil {
 		return err
 	}
-	if !plExists {
-		pl := &model.Pipeline{
-			EnvironmentKey: DefaultEnvironmentKey,
-			PipelineKey:    DefaultPipelineKey,
-			PipelineName:   DefaultPipelineName,
-			Description:    "系统默认渠道",
-			SortOrder:      0,
-			IsActive:       true,
-		}
-		if err := plDAO.Create(ctx, dbConn, pl); err != nil {
-			return err
-		}
-		log.Printf("[Init] Created default pipeline: %s", DefaultPipelineKey)
+	if envCount > 0 || pipelineCount > 0 {
+		return nil
 	}
 
+	active := model.ActiveSlotActive
+	env := &model.Environment{
+		EnvironmentID:   uuid.NewString(),
+		EnvironmentKey:  DefaultEnvironmentKey,
+		EnvironmentName: DefaultEnvironmentName,
+		Description:     "系统默认环境",
+		SortOrder:       0,
+		IsActive:        true,
+		ActiveSlot:      &active,
+	}
+	if err := dbConn.WithContext(ctx).Create(env).Error; err != nil {
+		return err
+	}
+	pl := &model.Pipeline{
+		ScopeID:        uuid.NewString(),
+		EnvironmentID:  env.EnvironmentID,
+		EnvironmentKey: DefaultEnvironmentKey,
+		PipelineKey:    DefaultPipelineKey,
+		PipelineName:   DefaultPipelineName,
+		Description:    "系统默认渠道",
+		SortOrder:      0,
+		IsActive:       true,
+		ActiveSlot:     &active,
+	}
+	if err := dbConn.WithContext(ctx).Create(pl).Error; err != nil {
+		return err
+	}
+	log.Printf("[Init] Created default environment and pipeline")
 	return nil
 }

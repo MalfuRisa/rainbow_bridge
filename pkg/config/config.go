@@ -15,12 +15,41 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	Auth     AuthConfig     `yaml:"auth"`
 	CORS     CORSConfig     `yaml:"cors"`
 	Upload   UploadConfig   `yaml:"upload"`
 	Intranet IntranetConfig `yaml:"intranet"`
 	Redis    RedisConfig    `yaml:"redis"`
 	Storage  StorageConfig  `yaml:"storage"`
+	Backup   BackupConfig   `yaml:"backup"`
 	Log      LogConfig      `yaml:"log"`
+}
+
+// BackupConfig controls the whole-instance business backup feature.
+// The feature stays disabled unless explicitly enabled; control_dir is an
+// absolute path outside the replaceable <cwd>/data business root.
+type BackupConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	ControlDir        string `yaml:"control_dir"`
+	RollbackKeepCount int    `yaml:"rollback_keep_count"` // default 3, allowed 1-20
+}
+
+const (
+	DefaultBackupRollbackKeepCount = 3
+	MaxBackupRollbackKeepCount     = 20
+)
+
+// NormalizeBackupRollbackKeepCount applies the default and rejects values
+// outside the supported range instead of silently changing policy.
+func NormalizeBackupRollbackKeepCount(value int) (int, error) {
+	if value == 0 {
+		return DefaultBackupRollbackKeepCount, nil
+	}
+	if value < 1 || value > MaxBackupRollbackKeepCount {
+		return 0, fmt.Errorf("backup.rollback_keep_count must be between 1 and %d, got %d",
+			MaxBackupRollbackKeepCount, value)
+	}
+	return value, nil
 }
 
 // LogConfig defines logging configuration.
@@ -57,6 +86,16 @@ type RedisConfig struct {
 	Address  string `yaml:"address"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+}
+
+// AuthConfig defines admin login session settings.
+type AuthConfig struct {
+	CookieName         string   `yaml:"cookie_name"`
+	CookieSecure       *bool    `yaml:"cookie_secure"`
+	AllowInsecureLocal bool     `yaml:"allow_insecure_localhost"`
+	IdleTimeout        string   `yaml:"idle_timeout"`
+	AbsoluteTimeout    string   `yaml:"absolute_timeout"`
+	TrustedOrigins     []string `yaml:"trusted_origins"`
 }
 
 // CORSConfig defines CORS middleware settings.
@@ -122,6 +161,13 @@ func Load(name string) (*Config, error) {
 	}
 	if configPath == "" {
 		log.Printf("Warning: config file %q not found, using defaults", name)
+		ApplyAuthDefaults(cfg)
+		if _, err := ValidateAuthConfig(cfg); err != nil {
+			return nil, err
+		}
+		if err := validateBackupConfig(cfg); err != nil {
+			return nil, err
+		}
 		return cfg, nil
 	}
 
@@ -139,7 +185,23 @@ func Load(name string) (*Config, error) {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	applyDefaults(&parsed)
+	ApplyAuthDefaults(&parsed)
+	if _, err := ValidateAuthConfig(&parsed); err != nil {
+		return nil, err
+	}
+	if err := validateBackupConfig(&parsed); err != nil {
+		return nil, err
+	}
 	return &parsed, nil
+}
+
+func validateBackupConfig(cfg *Config) error {
+	keep, err := NormalizeBackupRollbackKeepCount(cfg.Backup.RollbackKeepCount)
+	if err != nil {
+		return err
+	}
+	cfg.Backup.RollbackKeepCount = keep
+	return nil
 }
 
 func defaultConfig() *Config {
@@ -293,6 +355,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Log.MaxAge <= 0 {
 		cfg.Log.MaxAge = 30
+	}
+	if cfg.Backup.RollbackKeepCount == 0 {
+		cfg.Backup.RollbackKeepCount = DefaultBackupRollbackKeepCount
 	}
 }
 
