@@ -88,10 +88,10 @@ func ValidateAuthConfig(cfg *Config) ([]string, error) {
 		}
 		origins = append(origins, normalized)
 	}
-	if !AuthCookieSecure(cfg) && !cfg.Auth.AllowInsecureLocal {
-		return nil, errors.New("auth.cookie_secure=false requires auth.allow_insecure_localhost=true")
+	if !AuthCookieSecure(cfg) && !cfg.Auth.AllowInsecureLocal && !cfg.Auth.AllowInsecureRemote {
+		return nil, errors.New("auth.cookie_secure=false requires auth.allow_insecure_localhost=true (loopback binds) or auth.allow_insecure_remote=true (plain-HTTP sessions are transmitted unencrypted)")
 	}
-	if !AuthCookieSecure(cfg) && cfg.Auth.AllowInsecureLocal && !isLoopbackAddress(cfg.Server.Address) {
+	if !AuthCookieSecure(cfg) && cfg.Auth.AllowInsecureLocal && !cfg.Auth.AllowInsecureRemote && !isLoopbackAddress(cfg.Server.Address) {
 		return nil, errors.New("insecure auth configuration requires the server to bind a loopback address")
 	}
 	return origins, nil

@@ -90,12 +90,16 @@ type RedisConfig struct {
 
 // AuthConfig defines admin login session settings.
 type AuthConfig struct {
-	CookieName         string   `yaml:"cookie_name"`
-	CookieSecure       *bool    `yaml:"cookie_secure"`
-	AllowInsecureLocal bool     `yaml:"allow_insecure_localhost"`
-	IdleTimeout        string   `yaml:"idle_timeout"`
-	AbsoluteTimeout    string   `yaml:"absolute_timeout"`
-	TrustedOrigins     []string `yaml:"trusted_origins"`
+	CookieName   string `yaml:"cookie_name"`
+	CookieSecure *bool  `yaml:"cookie_secure"`
+	// AllowInsecureLocal permits cookie_secure=false on loopback binds only.
+	AllowInsecureLocal bool `yaml:"allow_insecure_localhost"`
+	// AllowInsecureRemote explicitly permits cookie_secure=false on any bind.
+	// Plain-HTTP sessions are transmitted unencrypted; enable only on trusted networks.
+	AllowInsecureRemote bool     `yaml:"allow_insecure_remote"`
+	IdleTimeout         string   `yaml:"idle_timeout"`
+	AbsoluteTimeout     string   `yaml:"absolute_timeout"`
+	TrustedOrigins      []string `yaml:"trusted_origins"`
 }
 
 // CORSConfig defines CORS middleware settings.
