@@ -4,8 +4,10 @@
 ## Build configuration
 ##
 ARG BINARY_ARTIFACT_URL
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# 无默认值:让 BuildKit 按 --platform 注入目标架构。
+# 写默认值(如 =amd64)会被 stage 内的 ARG 继承,导致 arm64 变体也下载 amd64 包。
+ARG TARGETOS
+ARG TARGETARCH
 
 ##
 ## Binary artifact stage
