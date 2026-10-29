@@ -80,6 +80,30 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 			strconv.FormatInt(expectedRevision, 10), reason}
 	}
 	fingerprint := releaseFingerprint(fingerprintOperation, fingerprintParts...)
+	// Register ownership independently before the business transaction. A
+	// committed replay must not depend on today's storage configuration.
+	var attempt *model.ReleaseStorageAttempt
+	existing, lookupErr := s.logic.releaseDAO.GetVersionByCreationRequestID(ctx, s.logic.db, requestID)
+	if lookupErr != nil {
+		return nil, releaseInternalError(lookupErr)
+	}
+	if existing == nil {
+		backend, err := s.newSnapshotBackend()
+		if err != nil {
+			return nil, err
+		}
+		if backend == "minio" {
+			pipeline, err := s.logic.pipelineDAO.GetByKey(ctx, s.logic.db, environmentKey, pipelineKey)
+			if err != nil {
+				return nil, releaseScopeNotFoundError(environmentKey, pipelineKey)
+			}
+			attempt, err = s.registerSnapshotAttempt(ctx, uuid.NewString(), requestID, fingerprint, pipeline.ScopeID, "create")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	defer func() { s.finishSnapshotAttempt(attempt) }()
 
 	var (
 		result      *ReleaseCreateResult
@@ -88,6 +112,12 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 		finalMoved  bool
 		snapshotID  string
 	)
+	var removeTemporary func()
+	defer func() {
+		if removeTemporary != nil {
+			removeTemporary()
+		}
+	}()
 	err = s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
 		// 1) 幂等重放与冲突:先于源存储能力、快照目录与冻结状态,
 		//    已提交结果在任何后续配置变化下都必须能被确认
@@ -133,11 +163,20 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 		if err != nil {
 			return releaseScopeNotFoundError(environmentKey, pipelineKey)
 		}
-		// 3) 源存储能力与快照目录:只有真的要新建时才校验(创建从本地源存储读取,MinIO 源本版不支持)
-		if s.config != nil && s.config.Storage.Type == "minio" {
-			return releaseStorageUnsupportedError()
+		// 3) Both original backends use bounded local capture; MinIO snapshot
+		// mode uses disposable staging independent of the permanent local root.
+		var resolvedStorage *releaseStorage
+		if attempt != nil {
+			if attempt.ScopeID != pipelineRow.ScopeID {
+				return scopeDeletedError("snapshot attempt belongs to a previous scope")
+			}
+			if err := checkSnapshotAttempt(gateCtx, txLogic, attempt); err != nil {
+				return err
+			}
+			resolvedStorage, removeTemporary, err = temporarySnapshotStorage()
+		} else {
+			resolvedStorage, err = s.releaseStorage()
 		}
-		resolvedStorage, err := s.releaseStorage()
 		if err != nil {
 			return err
 		}
@@ -169,16 +208,26 @@ func (s *Service) CreateRelease(ctx context.Context, input ReleaseCreateInput) (
 			return err
 		}
 		snapshotID = uuid.NewString()
+		if attempt != nil {
+			snapshotID = attempt.SnapshotID
+		}
 		if err := storage.removeStaging(snapshotID); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return releaseStorageError(err)
 		}
 		stagingUsed = true
 		return s.materializeRelease(gateCtx, txLogic, storage, snapshotID, plan, scopeRow, pipelineRow,
-			version, requestID, fingerprint, expectedRevision, reason, identity.Username, &finalMoved, &result)
+			version, requestID, fingerprint, expectedRevision, reason, identity.Username, &finalMoved, &result, attempt)
 	})
 	if err != nil {
 		if storage != nil {
 			s.cleanupReleaseArtifacts(ctx, storage, snapshotID, stagingUsed, finalMoved)
+		}
+		if attempt != nil {
+			if business, ok := AsReleaseError(err); ok {
+				annotated := *business
+				annotated.Message += "; storage attempt " + attempt.ID
+				err = &annotated
+			}
 		}
 		return nil, err
 	}
@@ -203,6 +252,7 @@ func (s *Service) materializeRelease(
 	reason, actor string,
 	finalMoved *bool,
 	result **ReleaseCreateResult,
+	attempt *model.ReleaseStorageAttempt,
 ) error {
 	// 无资源快照也必须存在准备目录(空范围/无资源版本允许创建)
 	if err := os.MkdirAll(filepath.Join(storage.stagingDir(snapshotID), releaseAssetsDirName), 0o755); err != nil {
@@ -211,7 +261,7 @@ func (s *Service) materializeRelease(
 	copied := make([]releaseCopiedAsset, 0, len(plan.Assets))
 	var realTotal int64
 	for _, item := range plan.Assets {
-		record, err := storage.copyAssetToStaging(snapshotID, item.AssetID, item.SourcePath, item.FileName, item.ContentType, model.ReleaseMaxAssetByte)
+		record, err := s.copyReleaseSource(ctx, storage, snapshotID, item)
 		if err != nil {
 			return err
 		}
@@ -251,6 +301,7 @@ func (s *Service) materializeRelease(
 	}
 	now := time.Now().UTC()
 	versionRow := &model.ConfigReleaseVersion{
+		StorageBackend:       "local",
 		SnapshotID:           snapshotID,
 		ScopeID:              pipelineRow.ScopeID,
 		EnvironmentKey:       scopeRow.EnvironmentKey,
@@ -271,6 +322,14 @@ func (s *Service) materializeRelease(
 		Reason:               reason,
 		Actor:                actor,
 		CreatedAt:            now,
+	}
+	if attempt != nil {
+		if err := s.publishSnapshotObjects(ctx, storage, versionRow, assetRows, attempt); err != nil {
+			return err
+		}
+		if err := commitSnapshotAttempt(ctx, txLogic, attempt); err != nil {
+			return err
+		}
 	}
 	if err := txLogic.releaseDAO.CreateVersion(ctx, txLogic.db, versionRow); err != nil {
 		return mapReleaseUniqueViolation(err)
@@ -364,7 +423,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 
 	var (
 		result  *ReleaseActivateResult
-		storage *releaseStorage
+		storage releaseAssetStore
 	)
 	err = s.withWriteGate(ctx, func(gateCtx context.Context, txLogic *Logic, _ *gorm.DB) error {
 		// 幂等重放:返回原 applied_revision 与此刻最新的 active 状态;
@@ -434,7 +493,7 @@ func (s *Service) ActivateRelease(ctx context.Context, input ReleaseActivateInpu
 			return releaseActiveUnchangedError(latest)
 		}
 		// 目标版本完整性与资源可读校验
-		resolvedStorage, err := s.releaseStorage()
+		resolvedStorage, err := s.snapshotStore(gateCtx, txLogic, target)
 		if err != nil {
 			return err
 		}
@@ -720,7 +779,7 @@ func (s *Service) assertReleaseScopeExists(ctx context.Context, l *Logic, enviro
 }
 
 // verifyReleaseComplete 校验版本 payload 摘要与全部资源清单行可读且 SHA 一致。
-func (s *Service) verifyReleaseComplete(ctx context.Context, l *Logic, storage *releaseStorage, row *model.ConfigReleaseVersion) error {
+func (s *Service) verifyReleaseComplete(ctx context.Context, l *Logic, storage releaseAssetStore, row *model.ConfigReleaseVersion) error {
 	if payloadDigest(row.Payload) != row.PayloadSha256 {
 		return releaseIncompleteError("release payload digest mismatch")
 	}
@@ -730,6 +789,26 @@ func (s *Service) verifyReleaseComplete(ctx context.Context, l *Logic, storage *
 	}
 	if buildReleaseManifest(assets) != row.ManifestSha256 {
 		return releaseIncompleteError("release manifest digest mismatch")
+	}
+	var total int64
+	for _, a := range assets {
+		total += a.Size
+	}
+	if len(assets) != row.AssetCount || total != row.AssetBytes {
+		return releaseIncompleteError("release asset totals mismatch")
+	}
+	payload, err := decodeReleasePayload(row.Payload)
+	if err != nil || len(payload.Configs) != row.ConfigCount {
+		return releaseIncompleteError("release payload count mismatch")
+	}
+	listed := make(map[string]bool, len(assets))
+	for _, a := range assets {
+		listed[a.AssetID] = true
+	}
+	for id := range referencedReleaseAssets(payload) {
+		if !listed[id] {
+			return releaseIncompleteError("release asset manifest row missing")
+		}
 	}
 	for _, asset := range assets {
 		if err := storage.verifyAssetFile(row.SnapshotID, asset.AssetID, asset.Size, asset.Sha256); err != nil {

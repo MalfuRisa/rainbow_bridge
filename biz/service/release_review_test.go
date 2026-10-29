@@ -139,7 +139,7 @@ func TestReleaseRichTextManagedMediaRoundTrip(t *testing.T) {
 		`<img src=asset://` + fileA + `>`,
 		`<a href="https://example.com/docs">说明</a>`,
 		// 复核补充:引号内的大于号不得影响后续属性;srcset 首项不带描述符时两个受管候选都要重写;
-// CSS 字符串里的 ')' 不得截断 url() 的值(含后缀里带 ')' 的受管引用)
+		// CSS 字符串里的 ')' 不得截断 url() 的值(含后缀里带 ')' 的受管引用)
 		`<img alt="a > b" src="asset://` + fileA + `">`,
 		`<img srcset="asset://` + fileA + `, asset://` + fileB + ` 2x">`,
 		`<div style="background-image:url('asset://` + fileA + `?v=1#top')"></div>`,
@@ -183,9 +183,9 @@ func TestReleaseRichTextManagedMediaRoundTrip(t *testing.T) {
 	prefix := "/rainbow-bridge/api/v1/release/asset/" + result.Meta.SnapshotID + "/"
 	for _, want := range []string{
 		`src="` + prefix,
-		`src=` + prefix,          // 无引号形式保持无引号
-		`alt="a > b"`,           // 引号内的大于号原样保留
-		`'` + prefix,             // poster 单引号
+		`src=` + prefix, // 无引号形式保持无引号
+		`alt="a > b"`,   // 引号内的大于号原样保留
+		`'` + prefix,    // poster 单引号
 		"url(" + prefix,
 		`href="` + prefix,
 		"?v=1#top",
@@ -638,16 +638,8 @@ func TestReleaseReplayIndependentOfSourceChanges(t *testing.T) {
 		t.Fatalf("first create: %v", err)
 	}
 
-	// 源存储改为 MinIO:新请求明确不支持(503),已提交结果不受影响
+	// Replaying a committed request must bypass even a now-unavailable MinIO source.
 	svc.config = &config.Config{Storage: config.StorageConfig{Type: "minio"}}
-	unsupported := input
-	unsupported.RequestID = uuid.NewString()
-	unsupported.Version = "v1.1"
-	if _, err := svc.CreateRelease(ctx, unsupported); err == nil {
-		t.Fatal("new create under minio source must fail")
-	} else {
-		requireReleaseErrorType(t, err, ErrTypeReleaseStorageUnsupported)
-	}
 	replay, err := svc.CreateRelease(ctx, input)
 	if err != nil {
 		t.Fatalf("replay must survive source storage change: %v", err)

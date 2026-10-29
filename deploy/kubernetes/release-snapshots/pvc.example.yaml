@@ -1,0 +1,14 @@
+# Review and replace namespace/storageClassName/capacity before applying.
+# Never bind this claim to the PostgreSQL or original-upload volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rainbow-release-snapshots
+  namespace: rainbow-bridge
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: REPLACE_WITH_VERIFIED_STORAGE_CLASS
+  resources:
+    requests:
+      storage: 20Gi

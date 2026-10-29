@@ -90,6 +90,14 @@ func unsupportedReasons(cfg *config.Config) []string {
 	if !strings.EqualFold(strings.TrimSpace(cfg.Storage.Type), "local") {
 		reasons = append(reasons, "storage_not_local")
 	}
+	if cfg.ReleaseStorage.Type != "" && cfg.ReleaseStorage.Type != "local" {
+		reasons = append(reasons, "snapshot_storage_not_local")
+	}
+	if driver == "sqlite" || driver == "sqlite3" {
+		if reason := snapshotBackupInventory(cfg.Database.SQLite.Path); reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
 	if cfg.Redis.Enabled {
 		reasons = append(reasons, "redis_enabled")
 	}

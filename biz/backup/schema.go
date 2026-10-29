@@ -80,7 +80,19 @@ var schemaV2Tables = []tableSpec{
 
 // businessTables is the current schema-v3 allowlist: schema 2 plus the
 // per-scope last_version_number counter.
-var businessTables = withReleaseNumberColumn(schemaV2Tables)
+var schemaV3Tables = withReleaseNumberColumn(schemaV2Tables)
+var businessTables = withReleaseStorageColumns(schemaV3Tables)
+
+func withReleaseStorageColumns(base []tableSpec) []tableSpec {
+	result := make([]tableSpec, len(base))
+	copy(result, base)
+	for i := range result {
+		if result[i].Name == "config_release_version" {
+			result[i].Columns = append(append([]string{}, result[i].Columns...), "storage_backend", "storage_bucket", "storage_prefix", "storage_attempt", "legacy_local")
+		}
+	}
+	return result
+}
 
 func withReleaseNumberColumn(base []tableSpec) []tableSpec {
 	result := make([]tableSpec, len(base))

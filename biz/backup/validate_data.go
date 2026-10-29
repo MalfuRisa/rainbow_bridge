@@ -23,7 +23,14 @@ var (
 // exact column sets. Views, triggers, virtual tables and unknown columns mean
 // the package was not produced by this version and must not be restored.
 func validateBusinessSchema(ctx context.Context, db *sql.DB) []string {
-	return validateSchemaObjects(ctx, db, businessTables, nil)
+	issues := validateSchemaObjects(ctx, db, businessTables, nil)
+	if sqliteColumnExists(db, "config_release_version", "storage_backend") {
+		var count int64
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM config_release_version WHERE storage_backend NOT IN ('','local') OR storage_bucket <> '' OR storage_prefix <> '' OR storage_attempt <> ''").Scan(&count); err != nil || count != 0 {
+			issues = append(issues, "nonlocal_snapshots_not_supported")
+		}
+	}
+	return issues
 }
 
 // validateBusinessSchemaV2 validates the identity-aware package layout that
@@ -42,6 +49,9 @@ func validateBusinessSchemaV1(ctx context.Context, db *sql.DB) []string {
 // contain them.
 func validateInstalledSchema(ctx context.Context, db *sql.DB) []string {
 	specs := businessTables
+	if !sqliteColumnExists(db, "config_release_version", "storage_backend") {
+		specs = schemaV3Tables
+	}
 	if !sqliteColumnExists(db, "config_release_head", "last_version_number") {
 		// A committed journal may survive an upgrade from the previous binary.
 		// AutoMigrate adds the counter during the normal initialization that
@@ -50,6 +60,7 @@ func validateInstalledSchema(ctx context.Context, db *sql.DB) []string {
 	}
 	return validateSchemaObjects(ctx, db, specs, map[string]bool{
 		"auth_users": true, "auth_sessions": true, "config_write_gate": true,
+		"release_storage_attempt": true,
 	})
 }
 

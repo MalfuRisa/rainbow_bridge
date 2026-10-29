@@ -8,7 +8,7 @@ import (
 // Format identifies the first stable backup package layout.
 const (
 	PackageFormat = "rainbow-business-backup-v1"
-	SchemaVersion = 3
+	SchemaVersion = 4
 
 	ManifestEntry   = "manifest.json"
 	DatabaseEntry   = "database/business.sqlite"

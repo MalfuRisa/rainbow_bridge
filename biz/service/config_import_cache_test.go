@@ -53,6 +53,8 @@ func (h *importCacheHook) ProcessHook(next redisclient.ProcessHook) redisclient.
 			c.SetVal(1)
 		case *redisclient.StringSliceCmd:
 			c.SetVal([]string{"matched-list-key"})
+		case *redisclient.ScanCmd:
+			c.SetVal([]string{"matched-list-key"}, 0)
 		}
 		return nil
 	}
@@ -78,13 +80,16 @@ func TestImportCacheInvalidationAfterCommit(t *testing.T) {
 	if err := s.logic.ImportConfigs(context.Background(), []model.Config{input}, true); err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{"del " + redis.GenerateConfigKey("dev", "main", old.ResourceKey), "del rainbow_bridge:config:key:" + old.ResourceKey, "keys rainbow_bridge:config:list:dev:main:*", "del matched-list-key", "del " + redis.GenerateConfigMapKey("dev", "main")}
-	if len(hook.calls) != len(expected) {
-		t.Fatalf("calls=%v", hook.calls)
-	}
-	for i := range expected {
-		if hook.calls[i] != expected[i] {
-			t.Fatalf("calls=%v", hook.calls)
+	expected := []string{"del " + redis.GenerateScopedConfigKey(old.ScopeID, old.ResourceKey), "scan match " + redis.GenerateScopedConfigListPrefix(old.ScopeID) + ":* count", "del " + redis.GenerateScopedConfigMapKey(old.ScopeID), "del " + redis.GenerateConfigKey("dev", "main", old.ResourceKey), "del " + redis.GenerateConfigMapKey("dev", "main")}
+	for _, want := range expected {
+		found := false
+		for _, call := range hook.calls {
+			if call == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %q in calls=%v", want, hook.calls)
 		}
 	}
 	hook.calls = nil
@@ -123,11 +128,12 @@ func TestConfigCacheScopeUsesLiteralKeys(t *testing.T) {
 	if err := s.logic.ImportConfigs(context.Background(), []model.Config{cfg}, true); err != nil {
 		t.Fatal(err)
 	}
-	pattern := `keys rainbow_bridge:config:list:dev\*:main\?\[x\]:*`
+	pattern := `scan match rainbow_bridge:config:list:dev\*:main\?\[x\]:* count`
+	scopedPattern := "scan match " + configCacheGlobEscaper.Replace(redis.GenerateScopedConfigListPrefix(allConfigRows(t, s)[0].ScopeID)) + ":* count"
 	found := false
 	for _, call := range hook.calls {
-		if strings.HasPrefix(call, "keys ") {
-			if call != pattern {
+		if strings.HasPrefix(call, "scan ") {
+			if call != pattern && call != scopedPattern {
 				t.Fatalf("scope became a wildcard: %s", call)
 			}
 			found = true

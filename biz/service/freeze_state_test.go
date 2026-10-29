@@ -41,6 +41,7 @@ func newFreezeService(t *testing.T) *Service {
 		&model.Environment{}, &model.Pipeline{}, &model.Config{}, &model.Asset{},
 		&model.ConfigFreezeState{}, &model.ConfigFreezeEvent{}, &model.ConfigWriteGate{},
 		&model.ConfigReleaseVersion{}, &model.ConfigReleaseAsset{}, &model.ConfigReleaseHead{}, &model.ConfigReleaseEvent{},
+		&model.ReleaseStorageAttempt{},
 		&model.ScopeLifecycleEvent{},
 		&model.AuthUser{}, &model.AuthSession{},
 	); err != nil {

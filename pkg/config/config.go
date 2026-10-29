@@ -13,16 +13,17 @@ import (
 
 // Config captures service level configuration loaded from config.yaml.
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Auth     AuthConfig     `yaml:"auth"`
-	CORS     CORSConfig     `yaml:"cors"`
-	Upload   UploadConfig   `yaml:"upload"`
-	Intranet IntranetConfig `yaml:"intranet"`
-	Redis    RedisConfig    `yaml:"redis"`
-	Storage  StorageConfig  `yaml:"storage"`
-	Backup   BackupConfig   `yaml:"backup"`
-	Log      LogConfig      `yaml:"log"`
+	Server         ServerConfig         `yaml:"server"`
+	Database       DatabaseConfig       `yaml:"database"`
+	Auth           AuthConfig           `yaml:"auth"`
+	CORS           CORSConfig           `yaml:"cors"`
+	Upload         UploadConfig         `yaml:"upload"`
+	Intranet       IntranetConfig       `yaml:"intranet"`
+	Redis          RedisConfig          `yaml:"redis"`
+	Storage        StorageConfig        `yaml:"storage"`
+	ReleaseStorage ReleaseStorageConfig `yaml:"release_storage"`
+	Backup         BackupConfig         `yaml:"backup"`
+	Log            LogConfig            `yaml:"log"`
 }
 
 // BackupConfig controls the whole-instance business backup feature.
@@ -70,6 +71,12 @@ type StorageConfig struct {
 	Minio MinioConfig `yaml:"minio"`
 }
 
+// ReleaseStorageConfig selects only NEW snapshots. History uses its persisted locator.
+type ReleaseStorageConfig struct {
+	Type   string `yaml:"type"`
+	Bucket string `yaml:"bucket"`
+}
+
 // MinioConfig contains MinIO specific connection details.
 type MinioConfig struct {
 	Endpoint  string `yaml:"endpoint"`
@@ -90,12 +97,14 @@ type RedisConfig struct {
 
 // AuthConfig defines admin login session settings.
 type AuthConfig struct {
-	CookieName         string   `yaml:"cookie_name"`
-	CookieSecure       *bool    `yaml:"cookie_secure"`
-	AllowInsecureLocal bool     `yaml:"allow_insecure_localhost"`
-	IdleTimeout        string   `yaml:"idle_timeout"`
-	AbsoluteTimeout    string   `yaml:"absolute_timeout"`
-	TrustedOrigins     []string `yaml:"trusted_origins"`
+	CookieName         string `yaml:"cookie_name"`
+	CookieSecure       *bool  `yaml:"cookie_secure"`
+	AllowInsecureLocal bool   `yaml:"allow_insecure_localhost"`
+	// Explicit remote opt-in retained from c49194a; loopback-only flag stays restricted.
+	AllowInsecureRemote bool     `yaml:"allow_insecure_remote"`
+	IdleTimeout         string   `yaml:"idle_timeout"`
+	AbsoluteTimeout     string   `yaml:"absolute_timeout"`
+	TrustedOrigins      []string `yaml:"trusted_origins"`
 }
 
 // CORSConfig defines CORS middleware settings.

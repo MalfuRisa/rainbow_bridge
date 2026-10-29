@@ -1,0 +1,15 @@
+# MinIO快照部署审核单（本轮未应用）
+
+PG保存版本索引、payload、业务资源清单及attempt；MinIO保存独立快照资源和完整性清单。与原始资源共用现有MinIO连接，使用**另一只私有bucket**。缺省release_storage.type为local，明确选minio后不能失败回退local。新版本持久保存backend/bucket/prefix/attempt，历史定位不跟随全局bucket配置变化。旧空backend仍读RAINBOW_RELEASE_DIR。
+
+部署准备：
+
+1. 审核并固定包含本批补丁、远程HTTP会话显式opt-in和ARM64打包修正的镜像digest；本批已定向保留c49194a的这两项修正，未整体合并远程分支、未构建或发布正式镜像，不得直接覆盖旧镜像。新列及attempt表由新版正常启动增量迁移。先备份部署和业务数据库；PG整实例备份能力未由本功能提供。
+2. 运维预建独立快照bucket并验证私有策略、区域、容量和连接；业务请求不建桶。禁止对快照区配置自动TTL/生命周期删除。禁止原始区脚本扫描快照bucket。运行账号至少具备精确bucket的Get/Put/List、查看版本、ListMultipartUploads；补清工具还需DeleteObject/DeleteObjectVersion/AbortMultipartUpload。对象锁或拒删策略可能导致cleanup_pending，必须先审核恢复权限；不能通过关闭校验宣称清理完成。
+3. 配置示例见minio-snapshots.example.yaml，仅按现有Secret注入方式取凭据。桶名不能相同、不能回退原始bucket；内部key/签名URL不会返回给网页。endpoint变更需要确保旧bucket仍可访问，或执行明确迁移；不会自动寻找同名本地文件或原始对象兜底。
+4. 仍有local历史时保留原卷和RAINBOW_RELEASE_DIR；运行release-storage plan逐版本验证，明确选择后再迁移。新MinIO发布只需有界可写临时目录（每版资源总量上限100MiB＋导出临时ZIP余量），可在受控TMPDIR内使用临时盘，进程崩溃后按拥有目录盘点清理，不能把临时盘当永久快照依赖。
+5. 正式批准后部署，再在独占验收范围验证创建不生效→生效→active/fixed/runtime/资源/新旧ZIP/transfer归档、改变原始对象历史不变。跨进程真实测试通过不等于全系统K8s多副本验收；继续采用现有单实例部署，Redis及其他模块的多副本行为未评估。
+
+回退限制：旧二进制不识别MinIO locator，产生MinIO版本后不能直接回退旧镜像。先停写，使用支持混合locator的版本保留读取；只有通过工具逐版本核对旧local文件并显式回退**迁移而来**的locator，且不存在原生MinIO版本后，才有条件评估旧二进制回退。原生MinIO版本没有local副本，不能改backend冒充回退。不要恢复旧业务库来丢弃新版本，不删除快照bucket。只在全部仍需保留历史迁完并应用验收后，另行授权移除旧卷/文件。本轮未做业务迁移、未删卷、未部署。
+
+备份：SQLite+原始local+快照local保留原整实例备份；配置快照MinIO或库存含MinIO locator（包括逻辑删除历史）均明确unsupported，不能把缺快照的文件包视为完整备份。attempt不进入恢复包，也不在启动时自动清理。

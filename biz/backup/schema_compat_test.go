@@ -20,7 +20,13 @@ import (
 // TestSchema2PackageStillInspectsAndUpgradesToSchema3 builds a genuine
 // schema-2 package by removing the schema-3 counter column and rewrites the
 // manifest/digests. It must pass validation and be upgraded in isolation.
-func TestSchema2PackageStillInspectsAndUpgradesToSchema3(t *testing.T) {
+func TestLegacySchema2And3PackagesUpgradeToSchema4(t *testing.T) {
+	for _, version := range []int{2, 3} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) { testLegacySnapshotSchemaPackage(t, version) })
+	}
+}
+
+func testLegacySnapshotSchemaPackage(t *testing.T, version int) {
 	root := t.TempDir()
 	layout := &Layout{
 		BusinessRoot: filepath.Join(root, "data"), ControlDir: filepath.Join(root, "control"),
@@ -48,9 +54,14 @@ func TestSchema2PackageStillInspectsAndUpgradesToSchema3(t *testing.T) {
 	work := filepath.Join(root, "schema2")
 	extractZipTo(t, source, work)
 	databasePath := filepath.Join(work, filepath.FromSlash(DatabaseEntry))
-	dropSQLiteColumn(t, databasePath, "config_release_head", "last_version_number")
+	for _, column := range []string{"storage_backend", "storage_bucket", "storage_prefix", "storage_attempt", "legacy_local"} {
+		dropSQLiteColumn(t, databasePath, "config_release_version", column)
+	}
+	if version == 2 {
+		dropSQLiteColumn(t, databasePath, "config_release_head", "last_version_number")
+	}
 	manifest := readManifestFile(t, filepath.Join(work, ManifestEntry))
-	manifest.SchemaVersion = 2
+	manifest.SchemaVersion = version
 	manifest.BackupID = uuid.NewString()
 	updateManifestDatabaseEntry(t, manifest, databasePath)
 	plans := manifestFilePlans(t, work, manifest)

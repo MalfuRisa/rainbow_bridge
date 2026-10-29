@@ -1,0 +1,28 @@
+# Strategic-merge patch for the OBSERVED remote deployment/container names.
+# Do not apply until PVC, new image digest, permissions and rollback are reviewed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rainbow-bridge-app
+  namespace: rainbow-bridge
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  template:
+    spec:
+      containers:
+        - name: app
+          # Set a verified image digest containing the backend and HTTP-session
+          # / ARM64 packaging fixes. No floating tag is supplied by this patch.
+          env:
+            - name: RAINBOW_RELEASE_DIR
+              value: /var/lib/rainbow/releases
+          volumeMounts:
+            - name: release-snapshots
+              mountPath: /var/lib/rainbow/releases
+      volumes:
+        - name: release-snapshots
+          persistentVolumeClaim:
+            claimName: rainbow-release-snapshots

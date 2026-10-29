@@ -112,6 +112,15 @@ func (m *Manager) runCreate(ctx context.Context, jobID string) error {
 		return storageError(err)
 	}
 	defer closeGorm(snapshot)
+	if snapshot.Migrator().HasColumn("config_release_version", "storage_backend") {
+		var remote int64
+		if err := snapshot.WithContext(ctx).Table("config_release_version").Where("storage_backend NOT IN ?", []string{"", "local"}).Count(&remote).Error; err != nil {
+			return storageError(err)
+		}
+		if remote != 0 {
+			return &Error{HTTPStatus: 503, Type: ErrUnsupported, Message: "complete backup does not support remote snapshot history"}
+		}
+	}
 
 	cleanPath := filepath.Join(staging, "business.sqlite")
 	clean, err := openBusinessDB(cleanPath)

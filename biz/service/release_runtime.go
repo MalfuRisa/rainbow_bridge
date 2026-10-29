@@ -54,6 +54,8 @@ func normalizeLegacyScopeID(raw string) (string, error) {
 // The captured pipeline identity is used for every following head/version read.
 func (s *Service) RuntimeReleaseWithScope(ctx context.Context, environmentKey, pipelineKey string,
 	versionParam *string, requestedScopeID string) (*ReleaseRuntimeConfig, error) {
+	ctx, cancel := context.WithTimeout(ctx, writeGateTotalTimeout)
+	defer cancel()
 	environmentKey = strings.TrimSpace(environmentKey)
 	pipelineKey = strings.TrimSpace(pipelineKey)
 	if environmentKey == "" || pipelineKey == "" {
@@ -115,7 +117,7 @@ func (s *Service) RuntimeReleaseWithScope(ctx context.Context, environmentKey, p
 		}
 		return nil, releaseVersionDeletedError()
 	}
-	storage, err := s.releaseStorage()
+	storage, err := s.snapshotStore(ctx, s.logic, versionRow)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +159,9 @@ func (s *Service) RuntimeReleaseWithScope(ctx context.Context, environmentKey, p
 	}, nil
 }
 
-// verifyReleaseReadIntegrity 校验 payload 摘要、清单摘要与引用资源的存在与长度。
-// 完整 SHA-256 校验在资源下载时执行,这里保证"存在且长度一致"。
-func verifyReleaseReadIntegrity(ctx context.Context, l *Logic, storage *releaseStorage, row *model.ConfigReleaseVersion) error {
+// verifyReleaseReadIntegrity checks payload/manifest and referenced resource hashes.
+// Both local and MinIO readers reject same-length corruption before rendering runtime.
+func verifyReleaseReadIntegrity(ctx context.Context, l *Logic, storage releaseAssetStore, row *model.ConfigReleaseVersion) error {
 	if payloadDigest(row.Payload) != row.PayloadSha256 {
 		return releaseIncompleteError("release payload digest mismatch")
 	}
@@ -183,12 +185,8 @@ func verifyReleaseReadIntegrity(ctx context.Context, l *Logic, storage *releaseS
 		if !ok {
 			return releaseIncompleteError("release asset manifest row is missing")
 		}
-		size, _, err := storage.verifyFile(storage.assetPath(row.SnapshotID, asset.AssetID))
-		if err != nil {
+		if err := storage.verifyAssetFile(row.SnapshotID, asset.AssetID, asset.Size, asset.Sha256); err != nil {
 			return err
-		}
-		if size != asset.Size {
-			return releaseIncompleteError("release asset size mismatch")
 		}
 	}
 	return nil
@@ -196,6 +194,8 @@ func verifyReleaseReadIntegrity(ctx context.Context, l *Logic, storage *releaseS
 
 // ReleaseAssetDownload 仅从已提交清单定位本版本文件;先校验完整 SHA-256 再返回字节。
 func (s *Service) ReleaseAssetDownload(ctx context.Context, snapshotID, assetID string) (string, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, writeGateTotalTimeout)
+	defer cancel()
 	snapshotID = strings.TrimSpace(snapshotID)
 	assetID = strings.TrimSpace(assetID)
 	if snapshotID == "" || assetID == "" {
@@ -225,7 +225,7 @@ func (s *Service) ReleaseAssetDownload(ctx context.Context, snapshotID, assetID 
 		}
 		return "", nil, releaseInternalError(err)
 	}
-	storage, err := s.releaseStorage()
+	storage, err := s.snapshotStore(ctx, s.logic, version)
 	if err != nil {
 		return "", nil, err
 	}

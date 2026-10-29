@@ -1,0 +1,14 @@
+# Merge these blocks into the reviewed application config; never apply this
+# fragment as a full ConfigMap or copy real credentials into the repository.
+storage:
+  type: minio
+  minio:
+    endpoint: "<existing-minio-endpoint>"
+    region: "<existing-region>"
+    use_ssl: true
+    access_key: "<secret-managed-access-key>"
+    secret_key: "<secret-managed-secret-key>"
+    bucket: "<private-originals-bucket>"
+release_storage:
+  type: minio
+  bucket: "<distinct-private-snapshots-bucket>"

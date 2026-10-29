@@ -383,7 +383,7 @@ func (s *Service) buildReleaseExportPlan(ctx context.Context, env *model.Environ
 		Configs: []model.Config{}, Assets: []exportAssetData{}, Warnings: []string{},
 		Version: row.Version, SnapshotID: row.SnapshotID,
 	}
-	storage, err := s.releaseStorage()
+	storage, err := s.snapshotStore(ctx, s.logic, row)
 	if err != nil {
 		return nil, err
 	}

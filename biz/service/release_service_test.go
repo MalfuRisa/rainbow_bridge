@@ -598,7 +598,7 @@ func TestReleaseRuntimeIntegrityFailures(t *testing.T) {
 
 	original := append([]byte(nil), readFileBytes(t, assetPath)...)
 
-	// 同长度篡改:读取(存在+长度)仍可服务,下载与激活被 503 拒绝
+	// Both stores now verify referenced hashes for runtime as well as download/activation.
 	tampered := append([]byte(nil), original...)
 	tampered[0] = tampered[0] ^ 0xff
 	writeFileBytes(t, assetPath, tampered)
@@ -607,8 +607,10 @@ func TestReleaseRuntimeIntegrityFailures(t *testing.T) {
 	} else {
 		requireReleaseErrorType(t, err, ErrTypeReleaseIncomplete)
 	}
-	if _, err := svc.RuntimeRelease(ctx, "qa_prod", "main", strPtr("v1.0")); err != nil {
-		t.Fatalf("size-equal tamper may still serve reads: %v", err)
+	if _, err := svc.RuntimeRelease(ctx, "qa_prod", "main", strPtr("v1.0")); err == nil {
+		t.Fatal("runtime accepted same-size corruption")
+	} else {
+		requireReleaseErrorType(t, err, ErrTypeReleaseIncomplete)
 	}
 	// 激活校验检出同长度损坏
 	if _, err := svc.ActivateRelease(ctx, ReleaseActivateInput{

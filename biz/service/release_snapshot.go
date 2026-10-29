@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -31,7 +30,9 @@ type releaseAssetPlan struct {
 	FileName     string
 	ContentType  string
 	DeclaredSize int64
-	SourcePath   string
+	Source       releaseSource
+	ResourceKey  string
+	Alias        string
 }
 
 // releaseCapturePlan 是一次快照捕获的完整计划(payload 已生成,资源待复制)。
@@ -64,6 +65,7 @@ func (s *Service) captureReleasePlan(ctx context.Context, l *Logic, environmentK
 		logic:          l,
 		environmentKey: environmentKey,
 		pipelineKey:    pipelineKey,
+		scopeID:        pipeline.ScopeID,
 		assetIDs:       map[string]string{},
 		assets:         []releaseAssetPlan{},
 		issues:         []ReleaseResourceIssue{},
@@ -146,6 +148,7 @@ type releasePlanBuilder struct {
 	logic          *Logic
 	environmentKey string
 	pipelineKey    string
+	scopeID        string
 	assetIDs       map[string]string // source_file_id -> release asset_id
 	assets         []releaseAssetPlan
 	issues         []ReleaseResourceIssue
@@ -323,7 +326,7 @@ func (b *releasePlanBuilder) resolveAsset(cfg *model.Config, fileID string) (str
 		}
 		return "", releaseInternalError(err)
 	}
-	if asset.EnvironmentKey != b.environmentKey || asset.PipelineKey != b.pipelineKey {
+	if asset.EnvironmentKey != b.environmentKey || asset.PipelineKey != b.pipelineKey || asset.ScopeID != b.scopeID {
 		b.issue(cfg.ResourceKey, cfg.Alias, fileID, "cross_scope_reference")
 		return fileID, nil
 	}
@@ -331,17 +334,20 @@ func (b *releasePlanBuilder) resolveAsset(cfg *model.Config, fileID string) (str
 		b.issue(cfg.ResourceKey, cfg.Alias, fileID, "unresolvable_reference")
 		return fileID, nil
 	}
-	sourcePath := filepath.Join(dataDirectory, asset.Path)
-	info, err := os.Stat(sourcePath)
+	source, err := b.service.inspectReleaseSource(b.ctx, asset)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			b.issue(cfg.ResourceKey, cfg.Alias, fileID, "file_missing")
 			return fileID, nil
 		}
-		return "", releaseStorageError(err)
+		return "", err
 	}
-	if info.Size() > model.ReleaseMaxAssetByte {
-		return "", releaseLimitExceededError(ReleaseLimitInfo{Item: "asset_bytes", Limit: model.ReleaseMaxAssetByte, Actual: info.Size()})
+	if source.Size > model.ReleaseMaxAssetByte {
+		return "", releaseLimitExceededError(ReleaseLimitInfo{Item: "asset_bytes", Limit: model.ReleaseMaxAssetByte, Actual: source.Size})
+	}
+	if source.Size != asset.FileSize || source.Size < 0 {
+		b.issue(cfg.ResourceKey, cfg.Alias, fileID, "size_mismatch")
+		return fileID, nil
 	}
 	assetID := uuid.NewString()
 	b.assetIDs[fileID] = assetID
@@ -350,10 +356,12 @@ func (b *releasePlanBuilder) resolveAsset(cfg *model.Config, fileID string) (str
 		SourceFileID: fileID,
 		FileName:     asset.FileName,
 		ContentType:  asset.ContentType,
-		DeclaredSize: info.Size(),
-		SourcePath:   sourcePath,
+		DeclaredSize: source.Size,
+		Source:       source,
+		ResourceKey:  cfg.ResourceKey,
+		Alias:        cfg.Alias,
 	})
-	b.totalDeclared += info.Size()
+	b.totalDeclared += source.Size
 	return assetID, nil
 }
 

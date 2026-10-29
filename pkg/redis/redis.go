@@ -101,6 +101,37 @@ func DeleteByPattern(ctx context.Context, client *redis.Client, pattern string) 
 	return nil
 }
 
+// DeleteByPatternScan bounds each scan and delete batch. Callers supply a
+// deadline and an escaped, scope-specific pattern; this never uses KEYS.
+func DeleteByPatternScan(ctx context.Context, client *redis.Client, pattern string) error {
+	if client == nil {
+		return nil
+	}
+	var cursor uint64
+	for {
+		keys, next, err := client.Scan(ctx, cursor, pattern, 128).Result()
+		if err != nil {
+			return fmt.Errorf("scan cache keys: %w", err)
+		}
+		for start := 0; start < len(keys); start += 128 {
+			end := start + 128
+			if end > len(keys) {
+				end = len(keys)
+			}
+			if err := client.Del(ctx, keys[start:end]...).Err(); err != nil {
+				return err
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
 // Exists checks if a key exists in Redis
 func Exists(ctx context.Context, client *redis.Client, key string) (bool, error) {
 	if client == nil {

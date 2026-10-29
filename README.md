@@ -165,7 +165,7 @@ curl --fail-with-body 'http://127.0.0.1:8080/rainbow-bridge/api/v1/runtime/relea
 | 业务静态包 | 把某个快照的配置和资源交给业务离线部署 | 包含 `config.json`、`manifest.json` 和 `assets/`，用于静态分发 |
 | 整实例业务备份 | 保存配置、资源、锁版状态、发布版本和历史，以便恢复 | 校验并确认后准备恢复计划，重启服务完成替换；保留当前管理员账号，旧会话失效 |
 
-业务备份目前只支持 **SQLite + 本地资源 + Redis 关闭的单实例部署**，需开启 `backup.enabled` 并配置业务根之外、同卷的绝对 `control_dir`。成功恢复后的旧副本由系统自动保留与轮换，默认保留最近 3 份；未完成或需要回退的异常恢复仍需处理。此功能不是热恢复，也不适用于 K8s 多 Pod。
+业务备份目前只支持 **SQLite + 本地原始资源 + 本地发布快照 + Redis 关闭的单实例部署**，库存中也不能有 MinIO 快照定位（包括已删除历史）；需开启 `backup.enabled` 并配置业务根之外、同卷的绝对 `control_dir`。成功恢复后的旧副本由系统自动保留与轮换，默认保留最近 3 份；未完成或需要回退的异常恢复仍需处理。此功能不是热恢复，也不适用于 K8s 多 Pod。
 
 详见 [导出来源与迁移归档](docs/docs/api/transfer-export.md)、[业务备份与恢复](docs/docs/api/backup.md)。
 
@@ -230,6 +230,16 @@ npm run build
 
 Windows 隔离业务读取验证：`powershell -NoProfile -ExecutionPolicy Bypass -File script/test-runtime-business.ps1`。该脚本构建并启动临时实例，验证默认/指定版本读取、资源字节、切版、重启、浏览器与静态包，结束后清理测试进程；详见 [运行时验证说明](tests/e2e/runtime-business/README.md)。其他场景见 [测试目录说明](tests/README.md) 与 `tests/e2e/`。
 
-v5.0.0 的五个平台应用包及独立前端包已由 Release 工作流构建。容器与 Kubernetes 配置位于 [deploy/](deploy/README.md)，部署前需按当前鉴权、数据库与存储配置调整。**不把示例配置视为多 Pod 验收结论**：多实例需要另行验证共享快照存储、数据库并发与恢复协调；MinIO 源创建发布快照目前不支持，整实例业务备份也有上述单实例限制。
+v5.0.0 的五个平台应用包及独立前端包已由 Release 工作流构建。容器与 Kubernetes 配置位于 [deploy/](deploy/README.md)，部署前需按当前鉴权、数据库与存储配置调整。当前源码支持从本地或 MinIO 原始资源创建发布，并选择 local 或 MinIO 保存不可变快照；这些修改已完成隔离验证，现有运行部署尚未更新，不代表旧版安装包已具备该能力。**不把示例配置或跨进程验证视为多 Pod 验收结论**：多实例仍需验证数据库并发与恢复协调，整实例备份保持上述支持限制。
+
+快照存储缺省为 local。使用 MinIO 快照时，在已有 `storage.minio` 连接配置基础上显式添加：
+
+```yaml
+release_storage:
+  type: minio
+  bucket: rainbow-bridge-snapshots  # 运维预建的私有桶，必须与原始资源桶不同
+```
+
+原始资源区与快照区分桶；每份版本保存自身存储定位，切换全局配置不会迁移旧历史。已有 local 快照通过 [release-storage 工具](cmd/release-storage/README.md) 先只读盘点、明确选择后迁移，源文件保留；有 local 历史时继续保留旧卷。完整配置、权限和回退限制见 [MinIO 快照部署说明](deploy/kubernetes/release-snapshots/minio-snapshots.md) 与 [配置片段](deploy/kubernetes/release-snapshots/minio-snapshots.example.yaml)。生产部署、业务历史切换与旧卷移除尚未执行。
 
 升级前先保存数据库、原始资源和发布快照的一致副本；数据库迁移后不要直接降级二进制。兼容变更与安装包内容见 [v5.0.0 发布说明](docs/releases/v5.0.0.md)。

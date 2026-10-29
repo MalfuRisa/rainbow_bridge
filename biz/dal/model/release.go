@@ -16,6 +16,11 @@ const (
 // 版本创建后配置、名称、描述、资源字节、发布说明、来源冻结 revision、创建时间与摘要
 // 都不可通过应用修改;逻辑删除仅改变生命周期字段,不修改快照内容。
 type ConfigReleaseVersion struct {
+	StorageBackend       string     `gorm:"size:16;not null;default:''" json:"-"`
+	StorageBucket        string     `gorm:"size:63;not null;default:''" json:"-"`
+	StoragePrefix        string     `gorm:"size:255;not null;default:''" json:"-"`
+	StorageAttempt       string     `gorm:"size:36;not null;default:''" json:"-"`
+	LegacyLocal          bool       `gorm:"not null;default:false" json:"-"`
 	ID                   uint       `gorm:"primaryKey" json:"id"`
 	SnapshotID           string     `gorm:"size:64;uniqueIndex:uk_release_snapshot;not null" json:"snapshot_id"`
 	ScopeID              string     `gorm:"size:36;not null;default:'';index:idx_release_version_scope" json:"scope_id"`

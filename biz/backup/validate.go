@@ -367,6 +367,18 @@ func validateExtractedDatabase(ctx context.Context, path string, manifest *Manif
 		if err := upgradeSchemaV2(ctx, path); err != nil {
 			return []string{"schema_v2_upgrade_failed"}, nil
 		}
+	case 3:
+		issues = append(issues, validateSchemaObjects(ctx, db, schemaV3Tables, nil)...)
+		issues = append(issues, validateBusinessData(ctx, db, manifest.fileMap())...)
+		issues = append(issues, validateReleaseNumberingData(ctx, db)...)
+		issues = append(issues, validateManifestCounts(ctx, db, manifest)...)
+		if len(issues) > 0 {
+			return issues, nil
+		}
+		_ = db.Close()
+		if err := upgradeSchemaV2(ctx, path); err != nil {
+			return []string{"schema_v3_upgrade_failed"}, nil
+		}
 	default:
 		return validateExtractedDatabaseV3(ctx, db, manifest), nil
 	}

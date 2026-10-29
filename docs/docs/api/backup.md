@@ -11,13 +11,14 @@
 - 单进程；
 - SQLite 文件库；
 - 本地 `uploads` 存储（`storage.type: local`）；
+- 本地发布快照（`release_storage.type` 缺省或为 `local`），且全部版本库存（包括逻辑删除版本及已删范围历史）均无 MinIO locator；
 - Redis 关闭；
 - 数据库、上传目录、快照目录都位于 `<cwd>/data` 业务根内，且快照自定义目录解析后仍在业务根内；
 - `control_dir` 是绝对路径、与业务根同一本地卷、位于业务根之外。
 
-PostgreSQL、MySQL、MinIO、Redis 开启、多副本或跨卷目录会返回 `supported=false` 和具体原因。此时实际操作返回 503 `BACKUP_UNSUPPORTED`，不会退化成“只备份一部分”。
+PostgreSQL、MySQL、原始资源或快照使用 MinIO、Redis 开启、多副本或跨卷目录会返回 `supported=false` 和具体原因。即使原始资源为 local，或已把快照全局设置改回 local，只要库存仍有 MinIO locator，就不能备份为完整文件包；对应原因包括 `snapshot_storage_not_local`、`snapshot_history_not_local`。此时实际操作返回 503 `BACKUP_UNSUPPORTED`，不会退化成“只备份一部分”。
 
-生产仓库自带的 `config.yaml` 使用 PostgreSQL + MinIO + Redis，因此能力接口会明确显示不支持；需要 SQLite + 本地存储 + Redis 关闭的部署才能启用。
+生产仓库自带的 `config.yaml` 使用 PostgreSQL + MinIO + Redis，因此能力接口会明确显示不支持；需要 SQLite + 本地原始资源 + 本地快照（含全部历史）+ Redis 关闭的部署才能启用。MinIO 快照迁移与故障补清属于独立运维工具，不等于整实例备份或恢复。
 
 ## 2. 配置
 
@@ -214,7 +215,7 @@ GET /api/v1/backup/restore/preview?preview_id=...
       "created_at": "2026-10-25T02:00:00Z",
       "consistent_at": "2026-10-25T02:00:01Z",
       "producer": {"app_version":"v1.2.3","git_commit":"abc123"},
-      "schema_version": 3,
+      "schema_version": 4,
       "counts": {"environments":2,"pipelines":2,"configs":10,"assets":4,
                  "versions":3,"deleted_versions":1,"freeze_events":2,
                  "release_events":6,"configs_deleted":0,"assets_deleted":0},
@@ -361,7 +362,8 @@ backup-restore -config config.yaml -command cleanup \
 
 ## 12. 安全说明
 
-- 备份 `schema_version` 为 3，在 schema 2（范围身份、`active_slot`、范围删除审计）基础上包含 `config_release_head.last_version_number`；schema 1 先升级到 2 再到 3，schema 2 直接补列并回填，均在隔离候选库完成，不执行包内 DDL。schema 1/2 的真实旧包仍可验证和恢复。
+- 备份 `schema_version` 为 4：保留 schema 2 的范围身份、`active_slot`、范围删除审计及 schema 3 的 `config_release_head.last_version_number`，新增版本内部存储定位列。schema 1/2/3 的旧包仍可验证和恢复，在隔离候选库按服务端模型补列、完成身份/编号升级；旧包缺失定位按 local 处理，不执行包内 DDL。包含 MinIO locator 的包不属于受支持的完整备份。
+- `release_storage_attempt` 运行状态不进入备份包，恢复后不把历史 attempt 当成在线任务自动删除远程对象。
 - 下载包不包含 `auth_users`、`auth_sessions`、密码哈希、Cookie、CSRF、`config.yaml`、MinIO/数据库凭据或控制目录记录。
 - 私有一致性快照可能含认证表，只存在于控制目录 staging，任务结束即删除，绝不进入 ZIP。
 - 配置正文本身可能包含业务敏感值；备份仍只允许管理员下载。

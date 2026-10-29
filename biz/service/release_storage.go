@@ -1,10 +1,10 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +27,14 @@ type releaseStorage struct {
 // releaseStorage 解析并校验快照根:RAINBOW_RELEASE_DIR(必须绝对)或 <cwd>/data/release-snapshots。
 // 首次创建后解析为确定的绝对根;该路径不进入 HTTP 响应与审计。
 func (s *Service) releaseStorage() (*releaseStorage, error) {
+	return s.resolveReleaseStorage(true)
+}
+
+func (s *Service) existingReleaseStorage() (*releaseStorage, error) {
+	return s.resolveReleaseStorage(false)
+}
+
+func (s *Service) resolveReleaseStorage(create bool) (*releaseStorage, error) {
 	root := strings.TrimSpace(os.Getenv(releaseDirEnv))
 	if root != "" {
 		if !filepath.IsAbs(root) {
@@ -39,8 +47,15 @@ func (s *Service) releaseStorage() (*releaseStorage, error) {
 		}
 		root = filepath.Join(cwd, dataDirectory, releaseDefaultDirName)
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, releaseStorageError(err)
+	if create {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, releaseStorageError(err)
+		}
+	} else {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			return nil, releaseIncompleteError("local snapshot root is unavailable")
+		}
 	}
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -104,6 +119,15 @@ type releaseCopiedAsset struct {
 // copyAssetToStaging 流式复制单个资源到准备目录,边复制边统计与计算 SHA-256,
 // 落盘后复读校验;超过单份上限返回 413。
 func (st *releaseStorage) copyAssetToStaging(snapshotID, assetID, sourcePath, fileName, contentType string, maxBytes int64) (releaseCopiedAsset, error) {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return releaseCopiedAsset{}, releaseStorageError(err)
+	}
+	defer source.Close()
+	return st.copyAssetStreamToStaging(context.Background(), snapshotID, assetID, source, fileName, contentType, -1, maxBytes)
+}
+
+func (st *releaseStorage) copyAssetStreamToStaging(ctx context.Context, snapshotID, assetID string, source io.Reader, fileName, contentType string, expectedSize, maxBytes int64) (releaseCopiedAsset, error) {
 	target := st.stagingAssetPath(snapshotID, assetID)
 	if err := st.ensureWithinRoot(target); err != nil {
 		return releaseCopiedAsset{}, err
@@ -111,29 +135,27 @@ func (st *releaseStorage) copyAssetToStaging(snapshotID, assetID, sourcePath, fi
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return releaseCopiedAsset{}, releaseStorageError(err)
 	}
-	source, err := os.Open(sourcePath)
-	if err != nil {
-		return releaseCopiedAsset{}, releaseStorageError(err)
-	}
-	defer source.Close()
-
 	destination, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return releaseCopiedAsset{}, releaseStorageError(err)
 	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(destination, hasher), io.LimitReader(source, maxBytes+1))
+	written, copyErr := io.Copy(io.MultiWriter(destination, hasher), io.LimitReader(releaseContextReader{ctx: ctx, source: source}, maxBytes+1))
 	closeErr := destination.Close()
 	if copyErr != nil || closeErr != nil {
 		_ = os.Remove(target)
 		if copyErr != nil {
-			return releaseCopiedAsset{}, releaseStorageError(copyErr)
+			return releaseCopiedAsset{}, copyErr
 		}
 		return releaseCopiedAsset{}, releaseStorageError(closeErr)
 	}
 	if written > maxBytes {
 		_ = os.Remove(target)
 		return releaseCopiedAsset{}, releaseLimitExceededError(ReleaseLimitInfo{Item: "asset_bytes", Limit: maxBytes, Actual: written})
+	}
+	if expectedSize >= 0 && written != expectedSize {
+		_ = os.Remove(target)
+		return releaseCopiedAsset{}, releaseStorageError(errors.New("release source size differs from captured metadata"))
 	}
 	digest := hex.EncodeToString(hasher.Sum(nil))
 
@@ -177,33 +199,17 @@ func (st *releaseStorage) verifyFile(path string) (int64, string, error) {
 
 // verifyAssetFile 校验清单行与磁盘文件一致(激活与下载共用)。
 func (st *releaseStorage) verifyAssetFile(snapshotID, assetID string, expectedSize int64, expectedSha string) error {
-	path := st.assetPath(snapshotID, assetID)
-	if err := st.ensureWithinRoot(path); err != nil {
-		return err
-	}
-	size, digest, err := st.verifyFile(path)
+	stream, err := st.openAsset(snapshotID, assetID)
 	if err != nil {
 		return err
 	}
-	if size != expectedSize || digest != expectedSha {
-		return releaseIncompleteError(fmt.Sprintf("release asset %s/%s failed integrity verification", snapshotID, assetID))
-	}
-	return nil
+	defer stream.Close()
+	return verifySnapshotStream(context.Background(), stream, expectedSize, expectedSha, io.Discard)
 }
 
 // readAssetBytes 读取并校验完整 SHA-256 后返回字节(下载路径)。
 func (st *releaseStorage) readAssetBytes(snapshotID, assetID string, expectedSize int64, expectedSha string) ([]byte, error) {
-	if err := st.verifyAssetFile(snapshotID, assetID, expectedSize, expectedSha); err != nil {
-		return nil, err
-	}
-	payload, err := os.ReadFile(st.assetPath(snapshotID, assetID))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, releaseIncompleteError("release asset file is missing")
-		}
-		return nil, releaseStorageError(err)
-	}
-	return payload, nil
+	return readSnapshotAsset(context.Background(), st, snapshotID, assetID, expectedSize, expectedSha)
 }
 
 // moveStagingToFinal 将准备目录移动到最终 UUID 目录;不覆盖任何已有目录。

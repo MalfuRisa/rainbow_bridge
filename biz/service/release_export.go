@@ -97,7 +97,7 @@ func (s *Service) ReleaseStaticExport(ctx context.Context, input ReleaseStaticEx
 		}
 		return nil, err
 	}
-	storage, err := s.releaseStorage()
+	storage, err := s.snapshotStore(ctx, s.logic, plan.versionRow)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func buildReleaseStaticManifest(row *model.ConfigReleaseVersion, payload *releas
 }
 
 // writeReleaseStaticArchive 写临时 ZIP:JSON 用 Deflate,资源原样写入并在写入过程中核对字节数与摘要。
-func writeReleaseStaticArchive(ctx context.Context, storage *releaseStorage, plan *releaseStaticExportPlan) (string, int64, error) {
+func writeReleaseStaticArchive(ctx context.Context, storage releaseAssetStore, plan *releaseStaticExportPlan) (string, int64, error) {
 	temp, err := os.CreateTemp("", releaseExportTempPrefix+"*.zip")
 	if err != nil {
 		return "", 0, releaseStorageError(err)
@@ -362,7 +362,7 @@ func writeReleaseStaticArchive(ctx context.Context, storage *releaseStorage, pla
 			cleanup()
 			return "", 0, releaseExportLimitError(total)
 		}
-		if err := writeReleaseStaticAsset(writer, storage, plan.versionRow.SnapshotID, asset); err != nil {
+		if err := writeReleaseStaticAsset(ctx, writer, storage, plan.versionRow.SnapshotID, asset); err != nil {
 			cleanup()
 			return "", 0, err
 		}
@@ -397,17 +397,10 @@ func writeZipEntry(writer *zip.Writer, name string, content []byte, method uint1
 }
 
 // writeReleaseStaticAsset 只打开一次文件:写入包的同时计算摘要,写完立即核对字节数与 SHA-256。
-func writeReleaseStaticAsset(writer *zip.Writer, storage *releaseStorage, snapshotID string, asset model.ConfigReleaseAsset) error {
-	assetPath := storage.assetPath(snapshotID, asset.AssetID)
-	if err := storage.ensureWithinRoot(assetPath); err != nil {
-		return err
-	}
-	source, err := os.Open(assetPath)
+func writeReleaseStaticAsset(ctx context.Context, writer *zip.Writer, storage releaseAssetStore, snapshotID string, asset model.ConfigReleaseAsset) error {
+	source, err := storage.openAsset(snapshotID, asset.AssetID)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return releaseIncompleteError("release asset file is missing")
-		}
-		return releaseStorageError(err)
+		return err
 	}
 	defer source.Close()
 
@@ -419,7 +412,7 @@ func writeReleaseStaticAsset(writer *zip.Writer, storage *releaseStorage, snapsh
 		return releaseStorageError(err)
 	}
 	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(entry, hasher), source)
+	written, err := io.Copy(io.MultiWriter(entry, hasher), io.LimitReader(releaseContextReader{ctx: ctx, source: source}, asset.Size+1))
 	if err != nil {
 		return releaseStorageError(err)
 	}
@@ -520,7 +513,7 @@ func (s *Service) ExportActiveReleasePackageWithScope(ctx context.Context,
 		}
 		return nil, err
 	}
-	storage, err := s.releaseStorage()
+	storage, err := s.snapshotStore(ctx, s.logic, row)
 	if err != nil {
 		return nil, err
 	}
