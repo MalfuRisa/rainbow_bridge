@@ -3,6 +3,7 @@ import { backupApi, type BackupCapabilities, type BackupIntent, type BackupItem,
 import { ApiError } from '@/lib/api/error'
 import { isSessionError } from '@/lib/api/http'
 import { useAuthStore } from '@/stores/auth'
+import { createRequestId } from '@/lib/request-id'
 import { backupError, inProgress } from '@/components/backup/presentation'
 import { readBackupState, saveBackupState } from './backupPersistence'
 
@@ -180,16 +181,20 @@ export function useBackups() {
   function start(action: BackupIntent['action'], payload: Record<string, string>, selected?: File) {
     if (busy.value || !capabilities.value?.supported || storageError.value) return Promise.resolve(false)
     if (selected) file.value = selected
-    pending.value = { action, payload: { ...payload, request_id: crypto.randomUUID() },
-      ...(selected ? { file: { name: selected.name, size: selected.size, lastModified: selected.lastModified } } : {}) }
-    if (!persist()) { pending.value = null; return Promise.resolve(false) }
-    return sendPending()
+    try {
+      pending.value = { action, payload: { ...payload, request_id: createRequestId() },
+        ...(selected ? { file: { name: selected.name, size: selected.size, lastModified: selected.lastModified } } : {}) }
+      if (!persist()) { pending.value = null; return Promise.resolve(false) }
+      return sendPending()
+    } catch (cause) { error.value = backupError(cause); return Promise.resolve(false) }
   }
   async function cancelRestore() {
     if (!waitingRestart.value || submitting.value || pending.value || unresolved.value) return false
-    pending.value = { action: 'restore/cancel', payload: { job_id: waitingRestart.value.job_id, request_id: crypto.randomUUID() } }
-    if (!persist()) { pending.value = null; return false }
-    return sendPending()
+    try {
+      pending.value = { action: 'restore/cancel', payload: { job_id: waitingRestart.value.job_id, request_id: createRequestId() } }
+      if (!persist()) { pending.value = null; return false }
+      return sendPending()
+    } catch (cause) { error.value = backupError(cause); return false }
   }
   async function download(item: BackupItem) {
     if (downloading.value || !capabilities.value?.supported) return

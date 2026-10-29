@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ApiError } from '@/lib/api/error'
 import { isSessionError } from '@/lib/api/http'
 import { noteTooLong, displayNote } from '@/lib/operation-note'
+import { createRequestId } from '@/lib/request-id'
 import { useDialogAttempt } from '@/composables/useDialogAttempt'
 import { useReleaseStore } from '@/stores/release'
 import { useAuthStore } from '@/stores/auth'
@@ -52,16 +53,16 @@ async function submit(confirm = false) {
   if (!confirm && !validTarget.value) return
   if (noteTooLong(reason.value)) { error.value = '备注最多500字'; return }
   const selected = { ...target.value }
-  const payload = confirm && pending.value ? pending.value : Object.freeze({
-    environment_key: selected.environmentKey, pipeline_key: selected.pipelineKey,
-    expected_scope_id: selected.scopeId,
-    version: selected.version, expected_snapshot_id: selected.snapshotId,
-    request_id: crypto.randomUUID(), reason: reason.value.trim(),
-  })
-  pending.value = payload
   const current = startAttempt()
   submitting.value = true; error.value = ''; uncertain.value = false
   try {
+    const payload = confirm && pending.value ? pending.value : Object.freeze({
+      environment_key: selected.environmentKey, pipeline_key: selected.pipelineKey,
+      expected_scope_id: selected.scopeId,
+      version: selected.version, expected_snapshot_id: selected.snapshotId,
+      request_id: createRequestId(), reason: reason.value.trim(),
+    })
+    pending.value = payload
     const outcome = await store.deleteVersion(payload)
     if (!current()) return
     if (outcome.refreshFailed) {
@@ -88,9 +89,9 @@ async function submit(confirm = false) {
     if (terminal) {
       if (cause instanceof ApiError && cause.code === 404) error.value = '目标版本或范围不存在，请刷新后重新选择'
       stopped.value = true; pending.value = null
-      await store.refreshScope(payload.environment_key, payload.pipeline_key)
+      await store.refreshScope(selected.environmentKey, selected.pipelineKey)
     } else {
-      uncertain.value = !(cause instanceof ApiError) || cause.type === 'network' || cause.code >= 500
+      uncertain.value = Boolean(pending.value) && (!(cause instanceof ApiError) || cause.type === 'network' || cause.code >= 500)
     }
   } finally {
     if (current()) submitting.value = false

@@ -12,6 +12,7 @@ import { useFreezeStore } from '@/stores/freeze'
 import { useReleaseStore } from '@/stores/release'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/lib/api/error'
+import { createRequestId } from '@/lib/request-id'
 import { operationMessage } from '@/lib/api/messages'
 import { pendingReleaseKey, readPendingRelease, writePendingRelease } from '@/composables/releaseReviewPending'
 import type { ReleaseCreatePayload, ReleaseResourceIssue } from '@/lib/api/release'
@@ -140,29 +141,29 @@ const submit = async (reuseRequestId: boolean) => {
     errorMessage.value = '该范围尚未锁定;请先在配置页使用“锁版”完成验收锁定'
     return
   }
-  let payload: ReleaseCreatePayload
-  if (replaying) {
-    // 原样重发首次提交的整份请求(含当时的冻结 revision),不重新读取来源状态
-    payload = pendingPayload.value as ReleaseCreatePayload
-  } else {
-    const trimmedReason = reason.value.trim()
-    if (noteTooLong(trimmedReason)) {
-      errorMessage.value = '备注最多500字'
-      return
-    }
-    payload = {
-      environment_key: scopeSnapshot.value.environmentKey,
-      pipeline_key: scopeSnapshot.value.pipelineKey,
-      expected_scope_id: scopeSnapshot.value.scopeId,
-      expected_freeze_revision: freezeRevision.value,
-      request_id: crypto.randomUUID(),
-      reason: trimmedReason,
-    }
-  }
   const current = startAttempt()
   submitting.value = true
   retryAvailable.value = false
   try {
+    let payload: ReleaseCreatePayload
+    if (replaying) {
+      // 原样重发首次提交的整份请求(含当时的冻结 revision),不重新读取来源状态
+      payload = pendingPayload.value as ReleaseCreatePayload
+    } else {
+      const trimmedReason = reason.value.trim()
+      if (noteTooLong(trimmedReason)) {
+        errorMessage.value = '备注最多500字'
+        return
+      }
+      payload = {
+        environment_key: scopeSnapshot.value.environmentKey,
+        pipeline_key: scopeSnapshot.value.pipelineKey,
+        expected_scope_id: scopeSnapshot.value.scopeId,
+        expected_freeze_revision: freezeRevision.value,
+        request_id: createRequestId(),
+        reason: trimmedReason,
+      }
+    }
     savePending(payload)
     const result = await releaseStore.create(payload)
     if (!current()) return
@@ -236,8 +237,8 @@ const submit = async (reuseRequestId: boolean) => {
           }
       }
     } else {
-      retryAvailable.value = true
-      errorMessage.value = error instanceof Error ? `${error.message}(网络结果不确定时可重试本次请求)` : '创建失败'
+      retryAvailable.value = Boolean(pendingPayload.value)
+      errorMessage.value = error instanceof Error ? error.message : '创建失败'
     }
     if (current() && error instanceof ApiError && error.code >= 400 && error.code < 500) savePending(null)
   } finally {

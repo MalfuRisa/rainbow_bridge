@@ -8,6 +8,7 @@ import { freezeApi, type FreezeStatusData } from '@/lib/api/freeze'
 import { ApiError } from '@/lib/api/error'
 import { assertScope } from '@/lib/scope'
 import { noteTooLong } from '@/lib/operation-note'
+import { createRequestId } from '@/lib/request-id'
 import { useAuthStore } from '@/stores/auth'
 import { sessionIdentity } from '@/lib/auth/session'
 import { operationMessage } from '@/lib/api/messages'
@@ -117,6 +118,8 @@ export function useReleaseReview(open: () => boolean, scope: () => ReviewScope, 
     const valid = begin()
     busy.value = true; error.value = ''; issues.value = []
     try {
+      // A new intent must have a usable ID before it can freeze the editor.
+      const requestId = createRequestId()
       // Always re-read before locking; a failed lock never proceeds to create.
       let status = await freezeApi.status(selected.environmentKey, selected.pipelineKey)
       if (!valid()) return
@@ -131,7 +134,7 @@ export function useReleaseReview(open: () => boolean, scope: () => ReviewScope, 
       freeze.value = status
       const intent: PendingRelease = { kind: 'create', payload: {
         environment_key: selected.environmentKey, pipeline_key: selected.pipelineKey, expected_scope_id: selected.scopeId,
-        reason: note, request_id: crypto.randomUUID(), expected_freeze_revision: status.revision,
+        reason: note, request_id: requestId, expected_freeze_revision: status.revision,
       } }
       save(intent)
       await execute(intent, valid)
@@ -147,7 +150,7 @@ export function useReleaseReview(open: () => boolean, scope: () => ReviewScope, 
       const intent: PendingRelease = { kind: 'activate', target: { ...candidate.value }, payload: {
         environment_key: selected.environmentKey, pipeline_key: selected.pipelineKey, expected_scope_id: selected.scopeId,
         version: candidate.value.version, expected_active_revision: comparison.result.value.active_revision,
-        request_id: crypto.randomUUID(), reason: reason.value.trim(),
+        request_id: createRequestId(), reason: reason.value.trim(),
       } }
       save(intent)
       await execute(intent, valid)
