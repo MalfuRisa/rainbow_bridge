@@ -45,6 +45,10 @@ func Create(ctx context.Context, c *app.RequestContext) {
 		if handler.WriteAssetError(c, err) {
 			return
 		}
+		if validationErr, ok := service.AsConfigContentValidationError(err); ok {
+			c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: validationErr.Message, ErrorType: service.ErrTypeConfigInvalidRequest})
+			return
+		}
 		if scopeErr, ok := service.AsScopeError(err); ok {
 			c.JSON(scopeErr.HTTPStatus, &config.ConfigResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
 			return
@@ -86,6 +90,10 @@ func Update(ctx context.Context, c *app.RequestContext) {
 	cfg, err := svc.UpdateConfigWithIdentity(handler.EnrichContext(ctx, c), req.GetConfig(), req.ExpectedEditRevision, req.GetExpectedScopeId())
 	if err != nil {
 		if handler.WriteAssetError(c, err) {
+			return
+		}
+		if validationErr, ok := service.AsConfigContentValidationError(err); ok {
+			c.JSON(400, &config.ConfigResponse{Code: 400, Msg: "error", Error: validationErr.Message, ErrorType: service.ErrTypeConfigInvalidRequest, ResourceKey: req.Config.ResourceKey})
 			return
 		}
 		status, kind := 0, ""

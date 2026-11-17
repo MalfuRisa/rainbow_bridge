@@ -116,6 +116,13 @@ func (l *Logic) validateConfigContent(ctx context.Context, cfg *model.Config) er
 		}
 		cfg.Content = colorValue
 		return nil
+	case "web_link":
+		normalized, err := normalizeWebLinkContent(cfg.Content)
+		if err != nil {
+			return err
+		}
+		cfg.Content = normalized
+		return nil
 	default:
 		if cfg.Content == "" {
 			return errors.New("配置内容不能为空")

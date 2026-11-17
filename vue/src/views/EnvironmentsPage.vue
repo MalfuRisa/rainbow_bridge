@@ -8,12 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, GitBranch, ArrowUpRight, Layers, Loader2, Lock } from 'lucide-vue-next'
+import { Plus, Trash2, GitBranch, ArrowUpRight, Layers, Loader2, Lock, Pencil } from 'lucide-vue-next'
 import { useEnvironmentStore } from '@/stores/environment'
 import { useFreezeStore } from '@/stores/freeze'
 import { reactive } from 'vue'
 import { useScopeDeletion } from '@/composables/useScopeDeletion'
-import type { Environment } from '@/lib/types'
+import type { Environment, Pipeline } from '@/lib/types'
 
 const environmentStore = useEnvironmentStore()
 const freezeStore = useFreezeStore()
@@ -29,6 +29,22 @@ const envSaveError = ref('')
 const pipelineSaveError = ref('')
 const deletion = reactive(useScopeDeletion())
 const pipelineEnvironmentId = ref('')
+const isPipelineEditOpen = ref(false)
+const pipelineEditTarget = ref<Pipeline | null>(null)
+const pipelineEditFormData = ref({ name: '', sortOrder: '0' })
+const pipelineEditLoading = ref(false)
+const pipelineEditSaving = ref(false)
+const pipelineEditReady = ref(false)
+const pipelineEditError = ref('')
+const closePipelineEdit = () => {
+  if (pipelineEditSaving.value) return
+  isPipelineEditOpen.value = false
+  pipelineEditTarget.value = null
+  pipelineEditReady.value = false
+  pipelineEditError.value = ''
+  pipelineEditLoading.value = false
+}
+
 watch(isPipelineDialogOpen, open => { if (open) pipelineEnvironmentId.value = selectedEnv.value?.environmentId || '' })
 const channelCount = computed(() => environmentStore.environments.reduce((sum, env) => sum + env.pipelines.length, 0))
 
@@ -58,10 +74,15 @@ watch(() => environmentStore.environments, (envs) => {
   if (selectedEnv.value) {
     const updated = envs.find((e) => e.key === selectedEnv.value?.key)
     if (updated) {
-      if (updated.environmentId !== selectedEnv.value.environmentId) { isPipelineDialogOpen.value = false; pipelineFormData.value = { key: '', name: '' } }
+      if (updated.environmentId !== selectedEnv.value.environmentId) {
+        isPipelineDialogOpen.value = false
+        pipelineFormData.value = { key: '', name: '' }
+        closePipelineEdit()
+      }
       selectedEnv.value = updated
     } else {
       selectedEnv.value = null
+      closePipelineEdit()
     }
   }
 })
@@ -93,6 +114,56 @@ const handleAddPipeline = async () => {
     pipelineSaveError.value = error instanceof Error ? error.message : '保存失败，请重试'
   } finally {
     savingPipeline.value = false
+  }
+}
+
+const pipelineSortOrderValid = computed(() => {
+  const raw = pipelineEditFormData.value.sortOrder.trim()
+  if (!/^-?\d+$/.test(raw)) return false
+  const value = Number(raw)
+  return Number.isInteger(value) && value >= -2147483648 && value <= 2147483647
+})
+
+const openPipelineEdit = async (env: Environment, pipeline: Pipeline) => {
+  if (pipelineLocked(env.key, pipeline.key)) return
+  isPipelineEditOpen.value = true
+  pipelineEditTarget.value = pipeline
+  pipelineEditFormData.value = { name: pipeline.name, sortOrder: String(pipeline.sortOrder ?? 0) }
+  pipelineEditReady.value = false
+  pipelineEditError.value = ''
+  pipelineEditLoading.value = true
+  try {
+    const detail = await environmentStore.getPipelineForEdit(env.key, pipeline.key)
+    if (!isPipelineEditOpen.value || pipelineEditTarget.value?.key !== pipeline.key) return
+    pipelineEditTarget.value = detail
+    pipelineEditFormData.value = { name: detail.name, sortOrder: String(detail.sortOrder ?? 0) }
+    pipelineEditReady.value = true
+  } catch (error) {
+    pipelineEditError.value = error instanceof Error ? error.message : '读取渠道详情失败，请重试'
+  } finally {
+    pipelineEditLoading.value = false
+  }
+}
+
+const handleSavePipelineEdit = async () => {
+  if (!selectedEnv.value || !pipelineEditTarget.value || !pipelineEditReady.value ||
+    pipelineEditSaving.value || !pipelineEditFormData.value.name.trim() || !pipelineSortOrderValid.value) return
+  pipelineEditSaving.value = true
+  pipelineEditError.value = ''
+  try {
+    await environmentStore.updatePipeline(selectedEnv.value.key, {
+      key: pipelineEditTarget.value.key,
+      name: pipelineEditFormData.value.name.trim(),
+      scopeId: pipelineEditTarget.value.scopeId,
+      sortOrder: Number(pipelineEditFormData.value.sortOrder.trim()),
+    })
+    isPipelineEditOpen.value = false
+    pipelineEditTarget.value = null
+    pipelineEditReady.value = false
+  } catch (error) {
+    pipelineEditError.value = error instanceof Error ? error.message : '保存失败，请重试'
+  } finally {
+    pipelineEditSaving.value = false
   }
 }
 
@@ -290,6 +361,17 @@ const handleAddPipeline = async () => {
                   size="icon"
                   class="h-8 w-8"
                   :disabled="environmentStore.loading || pipelineLocked(selectedEnv.key, pipeline.key)"
+                  :title="pipelineLocked(selectedEnv.key, pipeline.key) ? `已冻结:${pipelineFreezeReason(selectedEnv.key, pipeline.key) || '该渠道不可编辑'}` : '编辑渠道'"
+                  :aria-label="`编辑渠道 ${pipeline.name}`"
+                  @click.stop="openPipelineEdit(selectedEnv, pipeline)"
+                >
+                  <Pencil class="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8"
+                  :disabled="environmentStore.loading || pipelineLocked(selectedEnv.key, pipeline.key)"
                   :title="pipelineLocked(selectedEnv.key, pipeline.key) ? `已冻结:${pipelineFreezeReason(selectedEnv.key, pipeline.key) || '该渠道不可删除'}` : undefined"
                   :aria-label="`删除渠道 ${pipeline.name}`"
                   @click="deletion.request('pipeline', pipeline.key, pipeline.name, selectedEnv.key)"
@@ -307,6 +389,44 @@ const handleAddPipeline = async () => {
         </CardContent>
       </Card>
     </div>
+    <Dialog v-model:open="isPipelineEditOpen" @update:open="open => { if (!open) closePipelineEdit() }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>编辑渠道</DialogTitle>
+          <DialogDescription>修改显示名称和排序值。渠道标识只读，生效卡片请在配置工作台维护。</DialogDescription>
+        </DialogHeader>
+        <div v-if="pipelineEditLoading" class="flex items-center justify-center py-8">
+          <Loader2 class="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+        <div v-else class="space-y-4">
+          <div class="space-y-2">
+            <Label for="pipeline-edit-key">渠道标识</Label>
+            <Input id="pipeline-edit-key" :model-value="pipelineEditTarget?.key || ''" disabled />
+          </div>
+          <div class="space-y-2">
+            <Label for="pipeline-edit-name">渠道名称</Label>
+            <Input id="pipeline-edit-name" v-model="pipelineEditFormData.name" placeholder="例如: 研发联调" />
+          </div>
+          <div class="space-y-2">
+            <Label for="pipeline-edit-sort">排序值</Label>
+            <Input id="pipeline-edit-sort" v-model="pipelineEditFormData.sortOrder" inputmode="numeric" placeholder="0" />
+            <p class="text-xs text-muted-foreground">数值越小越靠前；0 是有效值。</p>
+            <p v-if="pipelineEditFormData.sortOrder && !pipelineSortOrderValid" class="text-xs text-destructive" role="alert">请输入 32 位整数。</p>
+          </div>
+          <p v-if="pipelineEditError" class="text-sm text-destructive" role="alert">{{ pipelineEditError }}</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" :disabled="pipelineEditSaving" @click="closePipelineEdit">取消</Button>
+          <Button
+            :disabled="pipelineEditSaving || pipelineEditLoading || !pipelineEditReady || !pipelineEditFormData.name.trim() || !pipelineSortOrderValid"
+            @click="handleSavePipelineEdit"
+          >
+            <Loader2 v-if="pipelineEditSaving" class="w-4 h-4 mr-2 animate-spin" />
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog :open="Boolean(deletion.target)" @update:open="open => { if (!open && !deletion.deleting) deletion.target = null }">
       <DialogContent>
         <DialogHeader><DialogTitle>{{ deletion.target?.kind === 'environment' ? '删除环境' : '删除渠道' }} · {{ deletion.target?.name }}</DialogTitle>

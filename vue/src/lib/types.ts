@@ -12,6 +12,9 @@ export interface Pipeline {
   id: string
   key: string
   name: string
+  sortOrder?: number
+  description?: string
+  isActive?: boolean
 }
 
 export type ConfigType = 
@@ -23,6 +26,7 @@ export type ConfigType =
   | 'boolean'
   | 'keyvalue'
   | 'object'
+  | 'web_link'
   | 'color'
   | 'file'
   | 'image'
@@ -67,6 +71,11 @@ export const CONFIG_TYPE_META: Record<ConfigType, { label: string; color: string
     label: "对象", 
     color: "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary/80",
     description: "JSON对象"
+  },
+  web_link: {
+    label: "网页链接",
+    color: "bg-sky-100 text-sky-800 dark:bg-sky-900/20 dark:text-sky-400",
+    description: "带网址的导航卡片"
   },
   color: { 
     label: "色彩", 

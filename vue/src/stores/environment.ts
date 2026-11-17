@@ -128,10 +128,31 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
-  const updatePipeline = async (environmentKey: string, pipeline: { key: string; name: string; scopeId: string }) => {
+  const getPipelineForEdit = async (environmentKey: string, pipelineKey: string): Promise<Pipeline> => {
+    const response = await pipelineApi.list({ environmentKey })
+    const item = response.list.find((pipeline) => pipeline.pipelineKey === pipelineKey)
+    if (!item) throw new Error('渠道不存在或已更新，请刷新后重试')
+    return {
+      environmentId: item.environmentId,
+      scopeId: item.scopeId,
+      id: item.scopeId,
+      key: item.pipelineKey,
+      name: item.pipelineName,
+      sortOrder: item.sortOrder,
+      description: item.description,
+      isActive: item.isActive,
+    }
+  }
+
+  const updatePipeline = async (environmentKey: string, pipeline: { key: string; name: string; scopeId: string; sortOrder: number }) => {
     try {
-      const apiPipeline = toApiPipeline(pipeline, environmentKey)
-      await pipelineApi.update(apiPipeline as any)
+      await pipelineApi.update({
+        environmentKey,
+        scopeId: pipeline.scopeId,
+        pipelineKey: pipeline.key,
+        pipelineName: pipeline.name,
+        sortOrder: pipeline.sortOrder,
+      })
       await fetchOverview()
       toast.success('渠道更新成功')
     } catch (e) {
@@ -167,6 +188,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     updateEnvironment,
     deleteEnvironment,
     createPipeline,
+    getPipelineForEdit,
     updatePipeline,
     deletePipeline,
   }

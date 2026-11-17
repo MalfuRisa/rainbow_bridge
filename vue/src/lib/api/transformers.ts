@@ -38,6 +38,9 @@ export function fromApiPipeline(api: ApiPipeline): Pipeline {
     environmentId: api.environment_id,
     key: api.pipeline_key,
     name: api.pipeline_name,
+    sortOrder: api.sort_order,
+    description: api.description,
+    isActive: api.is_active,
   }
 }
 
@@ -51,11 +54,12 @@ export function toApiPipeline(
     environment_key: environmentKey,
     pipeline_key: pipeline.key,
     pipeline_name: pipeline.name,
-    description: '',
-    sort_order: 0,
-    is_active: true,
+    description: pipeline.description ?? '',
+    sort_order: pipeline.sortOrder ?? 0,
+    is_active: pipeline.isActive ?? true,
   }
 }
+
 
 function mapFrontendTypeToBackend(frontendType: string): string {
   return frontendType

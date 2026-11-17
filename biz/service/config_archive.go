@@ -15,7 +15,7 @@ func archiveConfigData(configs []model.Config) []map[string]any {
 	for _, cfg := range configs {
 		var content any = cfg.Content
 		switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
-		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对":
+		case "object", "keyvalue", "json", "config", "kv", "key-value", "键值对", "web_link":
 			var parsed any
 			if DecodeConfigJSON([]byte(cfg.Content), &parsed) == nil {
 				content = parsed
@@ -56,7 +56,7 @@ func decodeArchiveConfigs(data []byte) ([]*common.ResourceConfig, error) {
 					return nil, err
 				}
 				switch normalizeConfigTypeString(metadata.Type) {
-				case "object", "keyvalue":
+				case "object", "keyvalue", "web_link":
 					fields["content"], _ = json.Marshal(string(raw))
 				default:
 					return nil, fmt.Errorf("config %d: content must be a string", i+1)

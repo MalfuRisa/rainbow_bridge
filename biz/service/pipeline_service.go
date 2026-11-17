@@ -58,6 +58,13 @@ func (s *Service) AddPipelineWithIdentity(ctx context.Context, environmentKey st
 // UpdatePipeline updates the live scope selected by expected_scope_id.
 func (s *Service) UpdatePipelineWithIdentity(ctx context.Context, environmentKey string, pl *plpb.Pipeline,
 	expectedScopeID string) error {
+	return s.UpdatePipelineWithIdentityAndSort(ctx, environmentKey, pl, expectedScopeID, nil)
+}
+
+// UpdatePipelineWithIdentityAndSort optionally carries the HTTP field
+// presence for sort_order so an explicit zero is not lost as a Go zero value.
+func (s *Service) UpdatePipelineWithIdentityAndSort(ctx context.Context, environmentKey string, pl *plpb.Pipeline,
+	expectedScopeID string, sortOrder *int) error {
 	if pl == nil || pl.GetPipelineKey() == "" {
 		return ErrPipelineKeyRequired
 	}
@@ -82,7 +89,7 @@ func (s *Service) UpdatePipelineWithIdentity(ctx context.Context, environmentKey
 		}
 		entity.ScopeID = pipeline.ScopeID
 		entity.EnvironmentID = pipeline.EnvironmentID
-		return txLogic.pipelineDAO.Update(gateCtx, txLogic.db, entity)
+		return txLogic.pipelineDAO.UpdateWithSortOrder(gateCtx, txLogic.db, entity, sortOrder)
 	})
 }
 

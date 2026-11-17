@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch'
 import { Plus, X, Upload, AlertCircle, Loader2 } from 'lucide-vue-next'
 import { useAssetStore } from '@/stores/asset'
 import { type ConfigItem, type ConfigType, CONFIG_TYPE_META } from '@/lib/types'
+import { isValidWebLinkUrl, parseWebLinkContent } from '@/lib/web-link'
 import ConfigImageUpload from './ConfigImageUpload.vue'
 import { imageSelectionError } from '@/lib/image-upload'
 
@@ -69,6 +70,9 @@ const keyValuePairs = ref<{ key: string; value: string }[]>([{ key: '', value: '
 let originalValueTokens = new Map<string, string>()
 const booleanValue = ref(false)
 const colorValue = ref('#3B82F6')
+const webLinkUrl = ref('')
+const webLinkIconUrl = ref('')
+const webLinkSortOrder = ref('')
 const errors = ref<{ field: string; message: string }[]>([])
 
 const isEditing = computed(() => !!props.editingConfig)
@@ -113,12 +117,27 @@ const getFieldError = (field: string) => {
   return errors.value.find(e => e.field === field)?.message
 }
 
+function applyWebLinkServerError(message: string): boolean {
+  if (formData.value.type !== 'web_link' || !message) return false
+  let field = ''
+  if (/图标/.test(message)) field = 'web-link-icon'
+  else if (/排序/.test(message)) field = 'web-link-sort'
+  else if (/网址|url|http|主机|端口/i.test(message)) field = 'web-link-url'
+  if (!field) return false
+  errors.value = [{ field, message }]
+  focusFirstError()
+  return true
+}
+
 const resetForm = () => {
   originalValueTokens = new Map()
   formData.value = { name: '', alias: '', type: 'text', content: '', description: '' }
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
   colorValue.value = '#3B82F6'
+  webLinkUrl.value = ''
+  webLinkIconUrl.value = ''
+  webLinkSortOrder.value = ''
   errors.value = []
   saveError.value = ''
   baseline.value = ''
@@ -134,7 +153,19 @@ const handleTypeChange = (type: string) => {
   keyValuePairs.value = [{ key: '', value: '' }]
   booleanValue.value = false
   colorValue.value = '#3B82F6'
+  webLinkUrl.value = ''
+  webLinkIconUrl.value = ''
+  webLinkSortOrder.value = ''
   errors.value = []
+}
+
+function buildWebLinkContent(): string {
+  const payload: Record<string, unknown> = { url: webLinkUrl.value.trim() }
+  const iconUrl = webLinkIconUrl.value.trim()
+  if (iconUrl) payload.icon_url = iconUrl
+  const sortText = webLinkSortOrder.value.trim()
+  if (sortText) payload.sort_order = Number(sortText)
+  return JSON.stringify(payload)
 }
 
 const getFinalContent = (): string => {
@@ -150,6 +181,8 @@ const getFinalContent = (): string => {
       return String(booleanValue.value)
     case 'color':
       return colorValue.value
+    case 'web_link':
+      return buildWebLinkContent()
     default:
       return formData.value.content
   }
@@ -225,6 +258,30 @@ const validateForm = (): boolean => {
         errors.value.push({ field: 'content', message: '请输入有效的颜色值' })
       }
       break
+    case 'web_link': {
+      const url = webLinkUrl.value.trim()
+      if (!url) {
+        errors.value.push({ field: 'web-link-url', message: '请填写网页链接的网址' })
+      } else if (!isValidWebLinkUrl(url)) {
+        errors.value.push({ field: 'web-link-url', message: '请输入带 http:// 或 https:// 的完整网址' })
+      }
+      const iconUrl = webLinkIconUrl.value.trim()
+      if (iconUrl && !isValidWebLinkUrl(iconUrl)) {
+        errors.value.push({ field: 'web-link-icon', message: '图标网址需为有效的 http:// 或 https:// 地址' })
+      }
+      const sortText = webLinkSortOrder.value.trim()
+      if (sortText) {
+        if (!/^-?\d+$/.test(sortText)) {
+          errors.value.push({ field: 'web-link-sort', message: '排序值需为整数' })
+        } else {
+          const sort = Number(sortText)
+          if (sort < -2147483648 || sort > 2147483647) {
+            errors.value.push({ field: 'web-link-sort', message: '排序值需在 int32 范围内' })
+          }
+        }
+      }
+      break
+    }
     case 'file':
     case 'image':
       if (!formData.value.content.trim()) {
@@ -264,7 +321,7 @@ const handleAdd = () => {
     }
     // 失败时保留用户输入,不显示成功;服务端错误(含冻结范围)在此展示
     if (kind?.startsWith('SCOPE_') && kind !== 'SCOPE_FROZEN') blocked.value = kind
-    showSaveError(message || '保存失败')
+    if (!applyWebLinkServerError(message || '')) showSaveError(message || '保存失败')
   })
 }
 
@@ -295,7 +352,9 @@ const handleUpdate = () => {
       return
     }
     blocked.value = ['CONFIG_EDIT_CONFLICT', 'CONFIG_EDIT_TARGET_NOT_FOUND', 'UNKNOWN_RESULT', 'SCOPE_INVALID_REQUEST', 'SCOPE_IDENTITY_CONFLICT', 'SCOPE_DELETED'].includes(kind || '') ? kind! : ''
-    showSaveError(kind === 'CONFIG_EDIT_CONFLICT' ? '这条配置已被其他操作更新。你的修改尚未保存，请重新加载后核对。' : kind === 'UNKNOWN_RESULT' ? '保存结果未确认，请重新加载核对' : message || '保存失败')
+    if (!applyWebLinkServerError(message || '')) {
+      showSaveError(kind === 'CONFIG_EDIT_CONFLICT' ? '这条配置已被其他操作更新。你的修改尚未保存，请重新加载后核对。' : kind === 'UNKNOWN_RESULT' ? '保存结果未确认，请重新加载核对' : message || '保存失败')
+    }
   })
 }
 
@@ -361,6 +420,9 @@ function initializeEdit(config: ConfigItem) {
 
   originalValueTokens = new Map()
   keyValuePairs.value = [{ key: '', value: '' }]
+  webLinkUrl.value = ''
+  webLinkIconUrl.value = ''
+  webLinkSortOrder.value = ''
   if (config.type === 'keyvalue') {
     try {
       originalValueTokens = objectValueTokens(config.content)
@@ -372,6 +434,11 @@ function initializeEdit(config: ConfigItem) {
     booleanValue.value = config.content === 'true'
   } else if (config.type === 'color') {
     colorValue.value = config.content || '#3B82F6'
+  } else if (config.type === 'web_link') {
+    const parsed = parseWebLinkContent(config.content)
+    webLinkUrl.value = parsed?.url || ''
+    webLinkIconUrl.value = parsed?.icon_url || ''
+    webLinkSortOrder.value = parsed?.sort_order !== undefined && parsed?.sort_order !== null ? String(parsed.sort_order) : ''
   }
 }
 
@@ -502,9 +569,64 @@ const isDirty = computed(() => formSignature() !== initialSignature.value)
         </div>
 
         <div class="space-y-3">
-          <Label for="content" class="text-sm font-medium">内容</Label>
+          <Label :for="formData.type === 'web_link' ? 'web-link-url' : 'content'" class="text-sm font-medium">{{ formData.type === 'web_link' ? '网页链接' : '内容' }}</Label>
+          <div v-if="formData.type === 'web_link'" class="space-y-4">
+            <div class="space-y-2">
+              <Label for="web-link-url" class="text-sm font-medium">网址 *</Label>
+              <Input
+                id="web-link-url"
+                placeholder="https://example.com/path?from=ework#entry"
+                v-model="webLinkUrl"
+                aria-required="true"
+                :aria-invalid="Boolean(getFieldError('web-link-url'))"
+                :aria-describedby="getFieldError('web-link-url') ? 'web-link-url-error' : undefined"
+                :class="getFieldError('web-link-url') ? 'border-destructive' : ''"
+                class="h-10"
+              />
+              <p v-if="getFieldError('web-link-url')" id="web-link-url-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
+                <AlertCircle class="w-3 h-3" />
+                {{ getFieldError('web-link-url') }}
+              </p>
+              <p class="text-xs text-muted-foreground">必须是带 http:// 或 https:// 的完整地址，可包含查询参数和片段。</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="web-link-icon" class="text-sm font-medium">图标网址</Label>
+              <Input
+                id="web-link-icon"
+                placeholder="https://example.com/icon.png（选填）"
+                v-model="webLinkIconUrl"
+                :aria-invalid="Boolean(getFieldError('web-link-icon'))"
+                :aria-describedby="getFieldError('web-link-icon') ? 'web-link-icon-error' : undefined"
+                :class="getFieldError('web-link-icon') ? 'border-destructive' : ''"
+                class="h-10"
+              />
+              <p v-if="getFieldError('web-link-icon')" id="web-link-icon-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
+                <AlertCircle class="w-3 h-3" />
+                {{ getFieldError('web-link-icon') }}
+              </p>
+              <p class="text-xs text-muted-foreground">留空时 EWork 显示名称首字母。</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="web-link-sort" class="text-sm font-medium">排序值</Label>
+              <Input
+                id="web-link-sort"
+                placeholder="例如：0、10、20（选填）"
+                v-model="webLinkSortOrder"
+                inputmode="numeric"
+                :aria-invalid="Boolean(getFieldError('web-link-sort'))"
+                :aria-describedby="getFieldError('web-link-sort') ? 'web-link-sort-error' : undefined"
+                :class="getFieldError('web-link-sort') ? 'border-destructive' : ''"
+                class="h-10"
+              />
+              <p v-if="getFieldError('web-link-sort')" id="web-link-sort-error" role="alert" class="text-sm text-destructive flex items-center gap-1">
+                <AlertCircle class="w-3 h-3" />
+                {{ getFieldError('web-link-sort') }}
+              </p>
+              <p class="text-xs text-muted-foreground">整数，0 有效；留空排在已设置排序的卡片之后。</p>
+            </div>
+          </div>
           <Input
-            v-if="formData.type === 'text' || formData.type === 'number' || formData.type === 'decimal'"
+            v-else-if="formData.type === 'text' || formData.type === 'number' || formData.type === 'decimal'"
             id="content"
             :placeholder="formData.type === 'text' ? '请输入文本内容...' : '请输入数值...'"
             v-model="formData.content"

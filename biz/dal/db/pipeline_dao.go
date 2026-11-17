@@ -52,13 +52,38 @@ func (dao *PipelineDAO) Create(ctx context.Context, db *gorm.DB, entity *model.P
 
 // Update updates the live pipeline addressed by scope_id.
 func (dao *PipelineDAO) Update(ctx context.Context, db *gorm.DB, entity *model.Pipeline) error {
+	return dao.UpdateWithSortOrder(ctx, db, entity, nil)
+}
+
+// UpdateWithSortOrder preserves the old non-zero struct update behavior while
+// allowing an explicitly supplied sort_order (including zero) to be persisted.
+func (dao *PipelineDAO) UpdateWithSortOrder(ctx context.Context, db *gorm.DB,
+	entity *model.Pipeline, sortOrder *int) error {
 	if entity == nil {
 		return errors.New("pipeline must not be nil")
+	}
+	updates := make(map[string]any, 4)
+	if entity.PipelineName != "" {
+		updates["pipeline_name"] = entity.PipelineName
+	}
+	if entity.Description != "" {
+		updates["description"] = entity.Description
+	}
+	if entity.IsActive {
+		updates["is_active"] = true
+	}
+	if sortOrder != nil {
+		updates["sort_order"] = *sortOrder
+	} else if entity.SortOrder != 0 {
+		updates["sort_order"] = entity.SortOrder
+	}
+	if len(updates) == 0 {
+		return nil
 	}
 	return db.WithContext(ctx).
 		Model(&model.Pipeline{}).
 		Where("scope_id = ?", entity.ScopeID).
-		Updates(entity).
+		Updates(updates).
 		Error
 }
 

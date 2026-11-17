@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ExternalLink, FileText, ImageOff } from 'lucide-vue-next'
 import { resolveAssetUrl } from '@/lib/utils'
+import { isValidWebLinkUrl, parseWebLinkContent } from '@/lib/web-link'
 import type { ReleaseDetailConfig } from '@/lib/api/release'
 
 const props = defineProps<{ config: Pick<ReleaseDetailConfig, 'resource_key' | 'name' | 'alias' | 'type' | 'content'> }>()
@@ -9,8 +10,13 @@ const emit = defineEmits<{ imagePreview: [content: string, name: string] }>()
 const showSource = ref(false)
 const imageFailed = ref(false)
 const name = computed(() => props.config.name || props.config.alias)
-const hasPreview = computed(() => ['image', 'color', 'file', 'richtext'].includes(props.config.type))
+const hasPreview = computed(() => ['image', 'color', 'file', 'richtext', 'web_link'].includes(props.config.type))
 const validColor = computed(() => CSS.supports('color', props.config.content.trim()))
+const webLink = computed(() => props.config.type === 'web_link' ? parseWebLinkContent(props.config.content) : null)
+const webLinkUrl = computed(() => {
+  const value = webLink.value?.url?.trim() || ''
+  return isValidWebLinkUrl(value) ? value : ''
+})
 const resourceURL = computed(() => {
   const value = props.config.content.trim()
   if (!value) return ''
@@ -49,6 +55,13 @@ function previewImage() {
         <span>{{ name }}</span>
         <a v-if="resourceURL" :href="resourceURL" target="_blank" rel="noopener noreferrer" :aria-label="`打开 ${name}`">打开文件 <ExternalLink :size="14" /></a>
         <span v-else class="runtime-value-error">文件地址无效</span>
+      </div>
+      <div v-else-if="config.type === 'web_link'" class="runtime-file-preview">
+        <ExternalLink :size="24" aria-hidden="true" />
+        <span>{{ name }}</span>
+        <a v-if="webLinkUrl" :href="webLinkUrl" target="_blank" rel="noopener noreferrer" :aria-label="`打开 ${name}`">{{ webLinkUrl }}</a>
+        <span v-else class="runtime-value-error">网页链接内容无效</span>
+        <code v-if="webLink?.sort_order !== undefined">排序 {{ webLink.sort_order }}</code>
       </div>
       <iframe v-else-if="config.type === 'richtext'" class="runtime-richtext-preview" :srcdoc="config.content" sandbox="" referrerpolicy="no-referrer" :title="`${name} 富文本预览`" />
     </template>

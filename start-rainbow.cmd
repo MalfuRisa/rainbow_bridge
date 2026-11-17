@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Rainbow Bridge - Login Demo
+title Rainbow Bridge - Windows Local
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0script\start-local.ps1" %*
 set "launch_result=%errorlevel%"
 if not "%launch_result%"=="0" (

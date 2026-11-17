@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'vue-sonner'
 import { CONFIG_TYPE_META, type ConfigItem } from '@/lib/types'
 import { resolveAssetUrl } from '@/lib/utils'
+import { isValidWebLinkUrl, parseWebLinkContent } from '@/lib/web-link'
 
 const props = defineProps<{ config: ConfigItem; frozen?: boolean }>()
 const emit = defineEmits<{ edit: [config: ConfigItem]; imagePreview: [url: string, name: string] }>()
@@ -12,6 +13,11 @@ const showSource = ref(false)
 const imageFailed = ref(false)
 const copied = ref(false)
 const typeLabel = computed(() => CONFIG_TYPE_META[props.config.type]?.label || props.config.type)
+const webLink = computed(() => props.config.type === 'web_link' ? parseWebLinkContent(props.config.content) : null)
+const webLinkUrl = computed(() => {
+  const value = webLink.value?.url?.trim() || ''
+  return isValidWebLinkUrl(value) ? value : ''
+})
 watch(() => props.config, () => { showSource.value = false; imageFailed.value = false; copied.value = false })
 
 async function copyContent() {
@@ -30,7 +36,7 @@ async function copyContent() {
     <h2>{{ config.name }}</h2>
     <div class="config-detail-meta"><code>{{ config.alias }}</code><span>{{ typeLabel }}</span></div>
     <div class="config-content-toolbar"><span>{{ showSource ? '内容原文' : '配置内容' }}</span><div>
-      <button v-if="['image', 'color', 'richtext', 'file'].includes(config.type)" class="config-detail-quiet" :aria-pressed="showSource" @click="showSource = !showSource">{{ showSource ? '查看预览' : '查看原文' }}</button>
+      <button v-if="['image', 'color', 'richtext', 'file', 'web_link'].includes(config.type)" class="config-detail-quiet" :aria-pressed="showSource" @click="showSource = !showSource">{{ showSource ? '查看预览' : '查看原文' }}</button>
       <button class="config-detail-quiet" aria-label="复制配置原文" @click="copyContent"><Check v-if="copied" :size="14" /><Copy v-else :size="14" />{{ copied ? '已复制' : '复制' }}</button>
     </div></div>
     <div class="config-detail-content">
@@ -41,6 +47,12 @@ async function copyContent() {
       </button>
       <div v-else-if="config.type === 'color' && !showSource" class="config-color-preview"><span :style="{ backgroundColor: config.content }" /><code>{{ config.content }}</code></div>
       <div v-else-if="config.type === 'file' && !showSource" class="config-file-preview"><FileText :size="32" /><code>{{ config.content }}</code><a :href="resolveAssetUrl(config.content)" target="_blank" rel="noopener noreferrer">打开文件 <ExternalLink :size="14" /></a></div>
+      <div v-else-if="config.type === 'web_link' && !showSource" class="config-file-preview">
+        <ExternalLink :size="32" aria-hidden="true" />
+        <a v-if="webLinkUrl" :href="webLinkUrl" target="_blank" rel="noopener noreferrer">{{ webLinkUrl }}</a>
+        <span v-else class="config-media-error">网页链接内容无效</span>
+        <code v-if="webLink?.sort_order !== undefined">排序 {{ webLink.sort_order }}</code>
+      </div>
       <iframe v-else-if="config.type === 'richtext' && !showSource" class="config-richtext-preview" :srcdoc="config.content" sandbox="" referrerpolicy="no-referrer" :title="`${config.name} 富文本预览`" />
       <pre v-else tabindex="0">{{ config.content }}</pre>
     </div>

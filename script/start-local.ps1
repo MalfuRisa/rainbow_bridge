@@ -106,6 +106,26 @@ function Wait-LocalServer {
     throw 'Server or frontend did not become ready within 45 seconds.'
 }
 
+function Initialize-LocalSnapshotDirectory {
+    param([string]$Path)
+    $probe = Join-Path $Path ('.launcher-probe-' + [guid]::NewGuid().ToString('N'))
+    $staging = Join-Path $probe '.staging'
+    $pending = Join-Path $staging 'snapshot'
+    $completed = Join-Path $probe 'snapshot'
+    try {
+        $null = [IO.Directory]::CreateDirectory($pending)
+        [IO.Directory]::Move($pending, $completed)
+    } catch {
+        throw "Cannot finalize a release snapshot in '$Path': $($_.Exception.Message) Choose a writable local folder with -DataDir (for example, D:\RainbowBridge\local-demo). To retain existing data, copy the complete data folder while the instance is stopped."
+    } finally {
+        foreach ($directory in @($completed, $pending, $staging, $probe)) {
+            if ([IO.Directory]::Exists($directory)) {
+                try { [IO.Directory]::Delete($directory) } catch { }
+            }
+        }
+    }
+}
+
 # 占用指定端口的进程;查不到返回 $null(不改动任何进程)。
 function Get-PortOwnerProcess {
     param([int]$Port)
@@ -199,7 +219,9 @@ try {
             throw "Port $Port is occupied$hint. Stop that program or use -Port 18083."
         }
     } finally { $listener.Stop() }
-    foreach ($name in @('BASE_PATH', 'VITE_API_BASE_URL', 'FRONTEND_DIR', 'RAINBOW_ADMIN_USERNAME', 'RAINBOW_ADMIN_INITIAL_PASSWORD', 'RAINBOW_ADMIN_RESET_PASSWORD')) {
+    $snapshotDir = Join-Path $DataDir 'data\release-snapshots'
+    Initialize-LocalSnapshotDirectory -Path $snapshotDir
+    foreach ($name in @('BASE_PATH', 'VITE_API_BASE_URL', 'FRONTEND_DIR', 'RAINBOW_RELEASE_DIR', 'RAINBOW_ADMIN_USERNAME', 'RAINBOW_ADMIN_INITIAL_PASSWORD', 'RAINBOW_ADMIN_RESET_PASSWORD')) {
         $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     $env:BASE_PATH = '/rainbow-bridge/'
@@ -236,6 +258,8 @@ redis:
   enabled: false
 storage:
   type: "local"
+release_storage:
+  type: "local"
 backup:
   enabled: true
   control_dir: '$backupControlDir'
@@ -253,6 +277,7 @@ log:
 "@ | Set-Content -LiteralPath $configFile -Encoding UTF8
 
     $env:FRONTEND_DIR = $webDir
+    $env:RAINBOW_RELEASE_DIR = $snapshotDir
     $env:RAINBOW_ADMIN_USERNAME = 'admin'
     $env:RAINBOW_ADMIN_INITIAL_PASSWORD = 'admin'
     $env:RAINBOW_ADMIN_RESET_PASSWORD = 'admin'
@@ -266,6 +291,7 @@ log:
     Test-LocalLogin -Url $url -ResetExe $resetExe -DataDir $DataDir
     Write-LauncherMessage "Ready: $url/"
     Write-LauncherMessage "Persistent demo data: $DataDir"
+    Write-LauncherMessage "Release snapshots: $snapshotDir"
     Write-LauncherMessage "Business backup enabled. Control directory: $(Join-Path $DataDir 'backup-control')"
     Write-LauncherMessage 'Login account: admin / password: admin'
     Write-LauncherMessage "Logs: $outLog / $errLog"

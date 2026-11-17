@@ -50,8 +50,13 @@ class PipelineApiService extends BaseApiService<Pipeline> {
     return { [key]: camelCaseData }
   }
 
-  // 重写update方法，因为需要环境key参数
-  async update(data: Pipeline): Promise<{ [key: string]: Pipeline | null }> {
+  // 重写update方法，因为需要环境key参数；部分字段更新只发送表单实际编辑的字段
+  async update(data: Partial<Pipeline> & {
+    pipelineKey: string
+    pipelineName: string
+    scopeId: string
+    environmentKey: string
+  }): Promise<{ [key: string]: Pipeline | null }> {
     const snakeCaseData = toSnakeCase(data) as any
     assertScope(snakeCaseData.environment_key, snakeCaseData.pipeline_key, snakeCaseData.scope_id)
     const payload = {

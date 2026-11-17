@@ -3,8 +3,11 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +93,14 @@ func Create(ctx context.Context, c *app.RequestContext) {
 // Update .
 // @router /api/v1/pipeline/update [POST]
 func Update(ctx context.Context, c *app.RequestContext) {
+	sortOrder, sortErr := parsePipelineSortOrder(c.Request.Body())
+	if sortErr != nil {
+		c.JSON(consts.StatusBadRequest, &pipeline.PipelineResponse{
+			Code: consts.StatusBadRequest, Msg: "error", Error: sortErr.Error(),
+			ErrorType: "PIPELINE_INVALID_REQUEST",
+		})
+		return
+	}
 	var req pipeline.UpdatePipelineRequest
 	if err := c.BindAndValidate(&req); err != nil {
 		c.JSON(consts.StatusOK, &pipeline.PipelineResponse{
@@ -121,7 +132,8 @@ func Update(ctx context.Context, c *app.RequestContext) {
 		c.JSON(400, &pipeline.PipelineResponse{Code: 400, Msg: "error", Error: "expected_scope_id is required", ErrorType: service.ErrTypeScopeInvalidRequest})
 		return
 	}
-	if err := svc.UpdatePipelineWithIdentity(handler.EnrichContext(ctx, c), req.EnvironmentKey, req.Pipeline, req.GetExpectedScopeId()); err != nil {
+	if err := svc.UpdatePipelineWithIdentityAndSort(handler.EnrichContext(ctx, c), req.EnvironmentKey,
+		req.Pipeline, req.GetExpectedScopeId(), sortOrder); err != nil {
 		if scopeErr, ok := service.AsScopeError(err); ok {
 			c.JSON(scopeErr.HTTPStatus, &pipeline.PipelineResponse{Code: int32(scopeErr.Code), Msg: "error", Error: scopeErr.Message, ErrorType: scopeErr.ErrorType})
 			return
@@ -155,6 +167,40 @@ func Update(ctx context.Context, c *app.RequestContext) {
 
 // Delete .
 // @router /api/v1/pipeline/delete [POST]
+// parsePipelineSortOrder distinguishes an omitted sort_order (nil, preserve
+// old non-zero struct behavior) from an explicit JSON integer, including 0.
+func parsePipelineSortOrder(body []byte) (*int, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, nil
+	}
+	var envelope struct {
+		Pipeline map[string]json.RawMessage `json:"pipeline"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, errors.New("request body must be valid JSON")
+	}
+	raw, present := envelope.Pipeline["sort_order"]
+	if !present {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, errors.New("sort_order must be an integer")
+	}
+	number, ok := value.(json.Number)
+	if !ok {
+		return nil, errors.New("sort_order must be an integer")
+	}
+	parsed, err := strconv.ParseInt(number.String(), 10, 32)
+	if err != nil {
+		return nil, errors.New("sort_order must be a 32-bit integer")
+	}
+	result := int(parsed)
+	return &result, nil
+}
+
 func Delete(ctx context.Context, c *app.RequestContext) {
 	var req pipeline.DeletePipelineRequest
 	if err := c.BindAndValidate(&req); err != nil {

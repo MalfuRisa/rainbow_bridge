@@ -709,8 +709,7 @@ func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtim
 	return result
 }
 
-// marshalRuntimeConfigs 把 object/keyvalue 的 content 字符串解析为 JSON 对象(与既有 runtime 相同形态)。
-// marshalRuntimeConfigs 生成配置列表:默认把 object/keyvalue 解析成 JSON 对象,
+// marshalRuntimeConfigs 生成配置列表:默认把 object/keyvalue/web_link 解析成 JSON 对象,
 // rawContent 时保持服务端的字符串原文(调用方自行决定是否无损解析)。
 func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig, rawContent bool) []runtimeConfigJSON {
 	result := make([]runtimeConfigJSON, 0, len(data.Configs))
@@ -725,7 +724,7 @@ func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig, rawContent bool) 
 			continue
 		}
 		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		if normalizedType == "object" || normalizedType == "keyvalue" {
+		if normalizedType == "object" || normalizedType == "keyvalue" || normalizedType == "web_link" {
 			var parsed interface{}
 			if err := service.DecodeConfigJSON([]byte(cfg.Content), &parsed); err == nil {
 				item.Content = parsed
