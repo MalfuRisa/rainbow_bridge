@@ -65,7 +65,7 @@ func IsPublicRequest(method, path string) bool {
 	}
 	switch path {
 	case "/ping", "/api/v1/version", "/api/v1/version/latest",
-		"/api/v1/runtime/overview",
+		"/api/v1/runtime/overview", "/api/v1/runtime/config", "/api/v1/runtime/static",
 		"/api/v1/runtime/release", "/api/v1/runtime/release/static":
 		return true
 	}

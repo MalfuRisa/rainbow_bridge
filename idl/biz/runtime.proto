@@ -80,4 +80,14 @@ service RuntimeService {
   rpc GetOverview(common.Empty) returns (RuntimeOverviewResponse) {
     option (api.get) = "/api/v1/runtime/overview";
   }
+
+  // GetConfig returns runtime configuration from headers.
+  rpc GetConfig(RuntimeConfigRequest) returns (RuntimeConfigResponse) {
+    option (api.get) = "/api/v1/runtime/config";
+  }
+
+  // ExportStatic exports static package as zip file.
+  rpc ExportStatic(StaticPackageRequest) returns (common.Empty) {
+    option (api.get) = "/api/v1/runtime/static";
+  }
 }

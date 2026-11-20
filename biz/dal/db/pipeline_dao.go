@@ -62,7 +62,11 @@ func (dao *PipelineDAO) UpdateWithSortOrder(ctx context.Context, db *gorm.DB,
 	if entity == nil {
 		return errors.New("pipeline must not be nil")
 	}
-	updates := make(map[string]any, 4)
+	query := db.WithContext(ctx).Model(&model.Pipeline{}).Where("scope_id = ?", entity.ScopeID)
+	if sortOrder == nil {
+		return query.Updates(entity).Error
+	}
+	updates := map[string]any{"sort_order": *sortOrder}
 	if entity.PipelineName != "" {
 		updates["pipeline_name"] = entity.PipelineName
 	}
@@ -72,19 +76,7 @@ func (dao *PipelineDAO) UpdateWithSortOrder(ctx context.Context, db *gorm.DB,
 	if entity.IsActive {
 		updates["is_active"] = true
 	}
-	if sortOrder != nil {
-		updates["sort_order"] = *sortOrder
-	} else if entity.SortOrder != 0 {
-		updates["sort_order"] = entity.SortOrder
-	}
-	if len(updates) == 0 {
-		return nil
-	}
-	return db.WithContext(ctx).
-		Model(&model.Pipeline{}).
-		Where("scope_id = ?", entity.ScopeID).
-		Updates(updates).
-		Error
+	return query.Updates(updates).Error
 }
 
 // SoftDeleteScope marks the live scope deleted and releases its key slot.

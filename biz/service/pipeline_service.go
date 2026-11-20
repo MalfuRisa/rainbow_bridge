@@ -61,8 +61,7 @@ func (s *Service) UpdatePipelineWithIdentity(ctx context.Context, environmentKey
 	return s.UpdatePipelineWithIdentityAndSort(ctx, environmentKey, pl, expectedScopeID, nil)
 }
 
-// UpdatePipelineWithIdentityAndSort optionally carries the HTTP field
-// presence for sort_order so an explicit zero is not lost as a Go zero value.
+// UpdatePipelineWithIdentityAndSort applies an optional explicit sort order.
 func (s *Service) UpdatePipelineWithIdentityAndSort(ctx context.Context, environmentKey string, pl *plpb.Pipeline,
 	expectedScopeID string, sortOrder *int) error {
 	if pl == nil || pl.GetPipelineKey() == "" {

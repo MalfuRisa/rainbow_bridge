@@ -149,17 +149,17 @@ GET /api/v1/release/asset/{snapshot_id}/{asset_id}
 
 使用配置内容或版本详情实际返回的地址，不拼接原始编辑区路径。成功是原始文件字节和资源 Content-Type，服务端校验资源大小与 SHA-256。版本删除后新下载返回 410；资源缺失或完整性不符返回 503。业务读取本身检查引用文件存在和长度，资源下载时再核验完整 SHA-256。
 
-## 6. 旧接口迁移
+## 6. Insights 兼容入口
 
-旧接口已经统一使用发布快照，**不再读取编辑区**。
+两条兼容入口沿用 `v5.2.0` 的请求方式，读取当前生效快照。Insights 更换 Logo 或 favicon 后，发布并确认生效即可让后续请求取得新图片。
 
 | 接口 | 范围 | 行为 |
 | --- | --- | --- |
 | GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头，可选 query scope_id | 当前生效快照；保留旧 config 字段并增加版本元数据 |
-| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
+| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 下载请求开始时选定的生效版本 ZIP，包含 `config.json`、`manifest.json` 和快照资源 |
 | GET `/api/v1/runtime/overview` | 无 | 环境/渠道列表，不能当成生效版本配置 |
 
-旧 config 的 data 为 snapshot_id、version、source_freeze_revision、active_revision、payload_sha256、selection_mode、environment、configs。每项 config 额外保留 environment_key、pipeline_key；object/keyvalue 返回 JSON，其余 content 为字符串。旧接口不提供 raw，也不承诺 activated_at。
+`/runtime/config` 返回 `data.snapshot_id`、`data.version`、`data.scope_id`、`data.environment`、`data.configs` 等字段。每项配置保留 `environment_key`、`pipeline_key` 和 `scope_id`。`object`、`keyvalue` 的 `content` 返回 JSON，其余类型为字符串。此入口仅供读取生效快照，指定版本或原文格式请用 `/runtime/release`。
 
 旧 config/static 的 `scope_id` 现在真正生效：空串或 trim 后为空按当前有效范围读取；非空必须是 UUID 并校验为当前代。正确 pin 仍只跟随 active，切版后仍读新 active；它固定的是范围代身份，不是发布快照。非空非法 UUID 400 `SCOPE_INVALID_REQUEST`，从未存在 404 `SCOPE_NOT_FOUND`，不是当前代 409 `SCOPE_IDENTITY_CONFLICT`，已删除/同名重建后的旧 ID 410 `SCOPE_DELETED`。静态错误返回 JSON，不返回 ZIP 附件。
 

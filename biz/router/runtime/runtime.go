@@ -23,7 +23,9 @@ func Register(r *server.Hertz) {
 			_v1 := _api.Group("/v1", _v1Mw()...)
 			{
 				_runtime := _v1.Group("/runtime", _runtimeMw()...)
+				_runtime.GET("/config", append(_getconfigMw(), runtime.GetConfig)...)
 				_runtime.GET("/overview", append(_getoverviewMw(), runtime.GetOverview)...)
+				_runtime.GET("/static", append(_exportstaticMw(), runtime.ExportStatic)...)
 			}
 		}
 	}

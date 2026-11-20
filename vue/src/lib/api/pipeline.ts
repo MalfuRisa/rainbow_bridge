@@ -57,14 +57,17 @@ class PipelineApiService extends BaseApiService<Pipeline> {
     scopeId: string
     environmentKey: string
   }): Promise<{ [key: string]: Pipeline | null }> {
-    const snakeCaseData = toSnakeCase(data) as any
+    const { sortOrder, ...fields } = data
+    const snakeCaseData = toSnakeCase(fields) as any
     assertScope(snakeCaseData.environment_key, snakeCaseData.pipeline_key, snakeCaseData.scope_id)
     const payload = {
       environment_key: snakeCaseData.environment_key,
       expected_scope_id: snakeCaseData.scope_id,
       pipeline: snakeCaseData
     }
-    const resp = await apiClient.post<{ [key: string]: any }>(`${this.baseUrl}/update`, payload)
+    const path = `${this.baseUrl}/update`
+    const query = sortOrder === undefined ? '' : `?set_sort_order=${encodeURIComponent(sortOrder)}`
+    const resp = await apiClient.post<{ [key: string]: any }>(path + query, payload)
     const key = this.getResponseKey()
     const updatedData = resp.data?.[key]
     const camelCaseData = updatedData ? toCamelCase(updatedData) as unknown as Pipeline : null

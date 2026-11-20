@@ -26,11 +26,14 @@ func TestPublicRoutesAreExact(t *testing.T) {
 		public bool
 	}{
 		{"GET", "/api/v1/runtime/release/static", true},
+		{"GET", "/api/v1/runtime/config", true},
+		{"GET", "/api/v1/runtime/static", true},
 		{"GET", "/api/v1/asset/file/id/image.png", true},
 		{"GET", "/api/v1/version/latest", true},
 		{"GET", "/api/v1/version-admin", false},
 		{"GET", "/api/v1/runtime/admin", false},
 		{"POST", "/api/v1/runtime/release", false},
+		{"POST", "/api/v1/runtime/config", false},
 		{"GET", "/api/v1/auth/me", false},
 		{"OPTIONS", "/api/v1/config/create", false},
 	} {

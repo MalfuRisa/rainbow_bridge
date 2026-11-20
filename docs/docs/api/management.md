@@ -95,7 +95,9 @@ alias 创建后不可改，name 可改；content 在管理请求中是字符串�
 
 环境 create/update 使用 `{"environment":{...}}`，字段含 environment_key、environment_name、description、sort_order、is_active。渠道 create/update 使用顶层 environment_key 与 `pipeline` 对象，内含 environment_key、pipeline_key、pipeline_name、description、sort_order、is_active。列表成功 data 为 `{total,list}`，详情为 `{environment}` 或 `{pipeline}`。
 
-渠道 update 可只发送要修改的 `pipeline_name`、`sort_order` 等字段。省略 `sort_order` 保留原值，显式传 `0` 会保存为 `0`。`pipeline_key` 仍只读。已冻结或范围身份不匹配继续返回原冲突错误。`runtime/overview` 的下一次读取按 `sort_order ASC, created_at ASC` 返回新名称和顺序。
+`POST /api/v1/pipeline/update` 沿用 `v5.3.0` 的请求绑定方式。请求体中省略 `pipeline.sort_order`、传 `null` 或传 `0` 都保留原排序，非零整数照常写入。需要明确设定排序时，通过查询参数 `set_sort_order` 传入 32 位整数。使用该参数时，以参数值为准，`?set_sort_order=0` 会将排序设为 `0`，空值或无效整数返回 `400 PIPELINE_INVALID_REQUEST`。
+
+`pipeline_key` 只读。冻结和范围身份冲突返回原有错误。`runtime/overview` 按 `sort_order ASC, created_at ASC` 返回更新后的渠道名称和顺序。
 
 资源上传使用 multipart/form-data 的 file、environment_key、pipeline_key；不要手动给 FormData 设置缺少 boundary 的 Content-Type。成功 data 为 `{asset,reference}`，reference 是 `asset://<file_id>`，应使用返回值，不靠原始资源路径猜 ID。资源下载使用实际返回的 url（可能包含部署前缀及文件名）。跨范围引用会被锁版检查拒绝；迁移配置应走迁移接口并核对资源结果，不能只复制另一范围的 URL。
 

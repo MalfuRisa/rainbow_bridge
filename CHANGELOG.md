@@ -1,5 +1,10 @@
 # rainbow_bridge CHANGELOG
 
+## [v5.4.1] — 2026-11-20
+
+- 恢复公开的 `GET /api/v1/runtime/config` 和 `GET /api/v1/runtime/static`，兼容已有 Insights 客户端和品牌资源打包。两条入口沿用 `v5.2.0` 的调用方式，读取当前生效快照。`GET /api/v1/runtime/release` 和 `GET /api/v1/runtime/release/static` 继续用于版本读取和固定导出。
+- 渠道更新恢复 `v5.3.0` 的表单、Protobuf 和 JSON 兼容行为。旧请求体中的 `sort_order: 0` 保留已有排序。虹桥管理台通过 `set_sort_order` 查询参数提交明确的排序值。
+
 ## [v5.3.0] — 2026-11-13
 
 ### **BREAKING**：对外旧 runtime HTTP 入口退役
