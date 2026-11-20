@@ -26,7 +26,7 @@ on:
         value: ${{ jobs.app.outputs.app_image_tags }}
 
 env:
-  APP_IMAGE_NAME: ghcr.io/yi-nology/rainbow_bridge-app
+  APP_IMAGE_NAME: ghcr.io/${{ github.repository }}-app
   RUN_NAME: rainbow_bridge
 
 permissions:
@@ -88,7 +88,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BINARY_ARTIFACT_URL=https://github.com/yi-nology/rainbow_bridge/releases/download/${{ inputs.version }}/${{ env.RUN_NAME }}-app-linux-__ARCH__.tar.gz
+            BINARY_ARTIFACT_URL=${{ github.server_url }}/${{ github.repository }}/releases/download/${{ inputs.version }}/${{ env.RUN_NAME }}-app-linux-__ARCH__.tar.gz
             BASE_PATH=${{ inputs.base_path }}
 
   
