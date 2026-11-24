@@ -1,4 +1,4 @@
-// 旧 runtime 配置接口的薄适配层:数据来自当前生效快照,保留旧成功字段并补充快照元数据。
+// runtime 配置接口的薄适配层:数据来自生效或指定版本快照,保留旧成功字段并补充快照元数据。
 // 快照选择、校验和渲染复用发布服务。
 package runtime
 
@@ -12,7 +12,7 @@ import (
 	"github.com/yi-nology/rainbow_bridge/biz/service"
 )
 
-// 保留选择参数:旧入口只跟随当前生效版本,显式传版本选择参数按请求错误拒绝,避免静默误读。
+// 静态导出口只跟随当前生效版本,显式传版本选择参数按请求错误拒绝,避免静默误读。
 var reservedSelectionParams = []string{"version", "expected_snapshot_id", "content_format"}
 
 func rejectedSelectionParam(c *app.RequestContext) string {
@@ -22,6 +22,19 @@ func rejectedSelectionParam(c *app.RequestContext) string {
 		}
 	}
 	return ""
+}
+
+// runtimeContentMode 解析 config 读取的内容格式:缺省沿用旧 config 契约,显式取值与 release 同规则。
+func runtimeContentMode(c *app.RequestContext) (service.RuntimeContentMode, bool) {
+	if !c.QueryArgs().Has("content_format") {
+		return service.RuntimeContentLegacy, true
+	}
+	mode, err := service.ParseRuntimeContentFormat(c.Query("content_format"))
+	if err != nil {
+		writeRuntimeServiceError(c, err)
+		return service.RuntimeContentLegacy, false
+	}
+	return mode, true
 }
 
 // legacyRuntimeScopeID 保留旧接口对非法 scope_id 返回 400 的约定。
@@ -78,20 +91,8 @@ type activeRuntimeResponseJSON struct {
 	Data  activeRuntimeDataJSON `json:"data"`
 }
 
-// runtimeConfigContent 将对象和键值对解码为 JSON，其余类型保持字符串。
-func runtimeConfigContent(cfg service.ReleaseRuntimeConfigView) interface{} {
-	normalized := strings.ToLower(strings.TrimSpace(cfg.Type))
-	if normalized == "object" || normalized == "keyvalue" {
-		var parsed interface{}
-		if err := service.DecodeConfigJSON([]byte(cfg.Content), &parsed); err == nil {
-			return parsed
-		}
-	}
-	return cfg.Content
-}
-
-// writeActiveRuntimeConfig 输出旧字段 + 快照元数据,并带上与正文一致的版本响应头。
-func writeActiveRuntimeConfig(c *app.RequestContext, data *service.ReleaseRuntimeConfig) {
+// writeRuntimeConfig 输出旧字段 + 快照元数据,并带上与正文一致的版本响应头。
+func writeRuntimeConfig(c *app.RequestContext, data *service.ReleaseRuntimeConfig, contentMode service.RuntimeContentMode) {
 	configs := make([]activeRuntimeConfigJSON, 0, len(data.Configs))
 	for _, cfg := range data.Configs {
 		configs = append(configs, activeRuntimeConfigJSON{
@@ -101,7 +102,7 @@ func writeActiveRuntimeConfig(c *app.RequestContext, data *service.ReleaseRuntim
 			EnvironmentKey: data.EnvironmentKey,
 			PipelineKey:    data.PipelineKey,
 			ScopeID:        data.ScopeID,
-			Content:        runtimeConfigContent(service.ReleaseRuntimeConfigView(cfg)),
+			Content:        service.RenderRuntimeContent(cfg.Content, cfg.Type, contentMode),
 			Type:           cfg.Type,
 			Remark:         cfg.Remark,
 			IsPerm:         cfg.IsPerm,

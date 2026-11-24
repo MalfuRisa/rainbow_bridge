@@ -254,7 +254,7 @@ func RuntimeRelease(ctx context.Context, c *app.RequestContext) {
 		value := c.Query("version")
 		versionParam = &value
 	}
-	rawContent, err := resolveReleaseContentFormat(c)
+	contentMode, err := resolveReleaseContentFormat(c)
 	if err != nil {
 		writeRuntimeError(c, err)
 		return
@@ -268,24 +268,17 @@ func RuntimeRelease(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, &runtimeReleaseResponseJSON{
 		Code: consts.StatusOK,
 		Msg:  "OK",
-		Data: runtimeDataJSON(data, rawContent),
+		Data: runtimeDataJSON(data, contentMode),
 	})
 }
 
 // resolveReleaseContentFormat 解析 content_format:缺失或 json 保持原契约,raw 输出字符串原文。
 // 显式空值与其他取值按 400 拒绝(不能用缺省值掩盖调用方参数错误)。
-func resolveReleaseContentFormat(c *app.RequestContext) (bool, error) {
+func resolveReleaseContentFormat(c *app.RequestContext) (service.RuntimeContentMode, error) {
 	if !c.QueryArgs().Has("content_format") {
-		return false, nil
+		return service.RuntimeContentJSON, nil
 	}
-	switch strings.TrimSpace(c.Query("content_format")) {
-	case "json":
-		return false, nil
-	case "raw":
-		return true, nil
-	default:
-		return false, service.ReleaseInvalidRequestError("content_format must be json or raw")
-	}
+	return service.ParseRuntimeContentFormat(c.Query("content_format"))
 }
 
 // RuntimeReleaseStatic .
@@ -686,7 +679,7 @@ type runtimeReleaseResponseJSON struct {
 	Data runtimeReleaseDataJSON `json:"data"`
 }
 
-func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtimeReleaseDataJSON {
+func runtimeDataJSON(data *service.ReleaseRuntimeConfig, contentMode service.RuntimeContentMode) runtimeReleaseDataJSON {
 	result := runtimeReleaseDataJSON{
 		ScopeID:              data.ScopeID,
 		ActivatedAt:          data.ActivatedAt,
@@ -701,7 +694,7 @@ func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtim
 			PipelineKey:     data.PipelineKey,
 			PipelineName:    data.PipelineName,
 		},
-		Configs: marshalRuntimeConfigs(data, rawContent),
+		Configs: marshalRuntimeConfigs(data, contentMode),
 	}
 	if data.ActiveRevision != nil {
 		result.ActiveRevision = strconv.FormatInt(*data.ActiveRevision, 10)
@@ -710,31 +703,15 @@ func runtimeDataJSON(data *service.ReleaseRuntimeConfig, rawContent bool) runtim
 }
 
 // marshalRuntimeConfigs 生成配置列表:默认把 object/keyvalue/web_link 解析成 JSON 对象,
-// rawContent 时保持服务端的字符串原文(调用方自行决定是否无损解析)。
-func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig, rawContent bool) []runtimeConfigJSON {
+// raw 时保持服务端的字符串原文(调用方自行决定是否无损解析)。
+func marshalRuntimeConfigs(data *service.ReleaseRuntimeConfig, contentMode service.RuntimeContentMode) []runtimeConfigJSON {
 	result := make([]runtimeConfigJSON, 0, len(data.Configs))
 	for _, cfg := range data.Configs {
-		item := runtimeConfigJSON{
+		result = append(result, runtimeConfigJSON{
 			ResourceKey: cfg.ResourceKey, Alias: cfg.Alias, Name: cfg.Name,
 			Type: cfg.Type, Remark: cfg.Remark, IsPerm: cfg.IsPerm, Description: cfg.Description,
-		}
-		if rawContent {
-			item.Content = cfg.Content
-			result = append(result, item)
-			continue
-		}
-		normalizedType := strings.ToLower(strings.TrimSpace(cfg.Type))
-		if normalizedType == "object" || normalizedType == "keyvalue" || normalizedType == "web_link" {
-			var parsed interface{}
-			if err := service.DecodeConfigJSON([]byte(cfg.Content), &parsed); err == nil {
-				item.Content = parsed
-			} else {
-				item.Content = cfg.Content
-			}
-		} else {
-			item.Content = cfg.Content
-		}
-		result = append(result, item)
+			Content: service.RenderRuntimeContent(cfg.Content, cfg.Type, contentMode),
+		})
 	}
 	return result
 }

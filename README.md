@@ -148,14 +148,16 @@ curl --fail-with-body 'http://127.0.0.1:8080/rainbow-bridge/api/v1/runtime/relea
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/v1/runtime/overview` | 获取可用的环境与渠道 |
-| `GET /api/v1/runtime/release` | 读取当前生效快照 |
+| `GET /api/v1/runtime/config` | 统一读取入口，读取当前生效快照（旧 Insights 请求无需改动） |
+| `GET /api/v1/runtime/config?version=v2&content_format=raw` | 统一入口固定读取指定版本，并按字符串返回配置内容 |
+| `GET /api/v1/runtime/release` | 读取当前生效快照（既有客户端兼容入口） |
 | `GET /api/v1/runtime/release?version=v2` | 固定读取指定已创建版本，可读取尚未生效的候选版本 |
 | `GET /api/v1/runtime/release?content_format=raw` | 将配置内容作为字符串返回，便于保留 JSON 大整数原文 |
 | `GET /api/v1/runtime/release/static?version=v2&expected_snapshot_id=<UUID>` | 导出已确认快照的静态 ZIP，需携带范围请求头 |
 
 以上路径还需加部署前缀，例如 `/rainbow-bridge`。没有生效版本时默认读取返回 404，不会回退到编辑区；版本被逻辑删除后，固定读取返回 410。切换生效不需要重启，调用方下次请求可读到新版本；已有客户端缓存仍需由业务自行刷新。
 
-旧 `runtime/config`、`runtime/static` 也统一读取当前生效版本，参数与返回结构保留兼容约定，不与新版接口混用。管理 API 要求登录会话，写操作还需 CSRF；字段、错误码、范围身份校验与无损 JSON 使用方式请看 [完整 API 文档](docs/docs/api/index.md) 和 [运行时接入说明](docs/docs/api/runtime.md)。
+`runtime/config` 现在同时是统一读取入口：省略 `version` 读取当前生效版本，指定 `version` 读取该范围内的固定版本；`runtime/static` 仍只导出当前生效版本，显式传 `version` 返回 400。旧参数与返回结构保持兼容，`runtime/release` 和固定 ZIP 导出也继续可用。管理 API 要求登录会话，写操作还需 CSRF；字段、错误码、范围身份校验与无损 JSON 使用方式请看 [完整 API 文档](docs/docs/api/index.md) 和 [运行时接入说明](docs/docs/api/runtime.md)。
 
 ## 导出、迁移和备份有什么区别
 

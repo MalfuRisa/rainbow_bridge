@@ -446,6 +446,8 @@ GET /api/v1/asset/file/{file_id}/{file_name}
 
 业务应用可读取当前生效配置、固定读取指定版本、导出快照资源包。以下内容在本页直接说明；[运行时专题](runtime.md)提供单独阅读入口。
 
+新接入优先使用统一入口 `GET /api/v1/runtime/config`：省略 `version` 读取当前生效版本，指定 `version` 读取该范围内的固定版本，可选 `content_format=json|raw`。已接入 `/api/v1/runtime/release` 的客户端继续使用原 URL、参数和响应，不需要改动。
+
 #### 读取当前生效版本
 
 ```http
@@ -591,21 +593,21 @@ GET /api/v1/release/asset/{snapshot_id}/{asset_id}
 
 使用配置内容或版本详情实际返回的地址，不拼接原始编辑区路径。成功是原始文件字节和资源 Content-Type，服务端校验资源大小与 SHA-256。版本删除后新下载返回 410；资源缺失或完整性不符返回 503。业务读取本身检查引用文件存在和长度，资源下载时再核验完整 SHA-256。
 
-#### 旧接口迁移
+#### 兼容入口与旧调用方
 
-旧接口已经统一使用发布快照，**不再读取编辑区**。
+`config`、`static` 已经统一使用发布快照，**不再读取编辑区**。`config` 现在同时承担统一读取入口：
 
 | 接口 | 范围 | 行为 |
 | --- | --- | --- |
-| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头，可选 query scope_id | 当前生效快照；保留旧 config 字段并增加版本元数据 |
-| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 本次解析到的 active 资源包，不是固定某次之前展示的快照 |
+| GET `/api/v1/runtime/config` | x-environment / x-pipeline 请求头，可选 query `scope_id`、`version`、`content_format` | 省略 `version` 读当前生效快照；指定则读固定版本；保留旧 config 字段并增加版本元数据 |
+| GET `/api/v1/runtime/static?environment_key=default&pipeline_key=default` | 查询参数，可选 query scope_id | 本次解析到的 active 资源包，不是固定某次之前展示的快照；不接受 `version` |
 | GET `/api/v1/runtime/overview` | 无 | 环境/渠道列表，不能当成生效版本配置 |
 
-旧 config 的 data 为 snapshot_id、version、source_freeze_revision、active_revision、payload_sha256、selection_mode、environment、configs。每项 config 额外保留 environment_key、pipeline_key；object/keyvalue 返回 JSON，其余 content 为字符串。旧接口不提供 raw，也不承诺 activated_at。
+旧 config 的 data 为 snapshot_id、version、source_freeze_revision、active_revision、payload_sha256、selection_mode、environment、configs。每项 config 额外保留 environment_key、pipeline_key、scope_id。省略 `content_format` 时 object/keyvalue 返回 JSON，其余 content 为字符串（包括 `web_link`）；显式 `content_format=json` 时 `web_link` 也返回对象，`content_format=raw` 时全部为字符串。固定版本读取的 `active_revision` 为空字符串。
 
-旧 config/static 的 `scope_id` 现在真正生效：空串或 trim 后为空按当前有效范围读取；非空必须是 UUID 并校验为当前代。非空非法 UUID 400 `SCOPE_INVALID_REQUEST`，从未存在 404 `SCOPE_NOT_FOUND`，不是当前代 409 `SCOPE_IDENTITY_CONFLICT`，已删除/同名重建后的旧 ID 410 `SCOPE_DELETED`；静态错误返回 JSON，不返回 ZIP。
+`config`/`static` 的 `scope_id` 现在真正生效：空串或 trim 后为空按当前有效范围读取；非空必须是 UUID 并校验为当前代。非空非法 UUID 400 `SCOPE_INVALID_REQUEST`，从未存在 404 `SCOPE_NOT_FOUND`，不是当前代 409 `SCOPE_IDENTITY_CONFLICT`，已删除/同名重建后的旧 ID 410 `SCOPE_DELETED`；静态错误返回 JSON，不返回 ZIP。
 
-旧 config/static 明确传 `version`、`expected_snapshot_id` 或 `content_format` 仍返回 400，不能以为它们已支持新接口的版本选择参数。需要固定读取、raw 或固定导出时使用新接口。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
+`config` 明确传 `expected_snapshot_id` 仍返回 400，该参数只用于固定 ZIP 导出。`static` 明确传 `version`、`expected_snapshot_id` 或 `content_format` 仍返回 400。需要固定导出时使用 `runtime/release/static`。静态包格式也已改变，旧消费方应按 manifest 和相对资源路径适配。
 
 未知 API（`/api` 段边界）在纯 API 与完整应用模式均返回 HTTP 404 JSON `API_NOT_FOUND`、`Cache-Control:no-store`；正常 SPA 页面、JS/CSS 与资源下载不受影响。重复部署前缀后的 `/api` 同样 404，不会执行真实 handler。
 

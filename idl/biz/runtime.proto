@@ -19,6 +19,11 @@ message RuntimeConfigRequest {
   string x_environment = 1 [(api.header) = "x-environment"];
   string x_pipeline = 2 [(api.header) = "x-pipeline"];
   string scope_id = 3 [(api.query) = "scope_id"];
+  // version is optional; when omitted the active release is read.
+  string version = 4 [(api.query) = "version"];
+  // Optional content format. Omit to keep the legacy config format.
+  // Explicit values are json and raw.
+  string content_format = 5 [(api.query) = "content_format"];
 }
 
 // RuntimeConfigData is the data wrapper for runtime config.

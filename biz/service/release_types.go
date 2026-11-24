@@ -168,6 +168,3 @@ type releaseRuntimeConfig struct {
 	IsPerm      bool
 	Description string
 }
-
-// ReleaseRuntimeConfigView 是发布运行时的单项配置视图,供 handler 适配旧 runtime 字段。
-type ReleaseRuntimeConfigView = releaseRuntimeConfig

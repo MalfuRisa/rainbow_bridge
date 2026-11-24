@@ -265,7 +265,8 @@ func TestLegacyRuntimeUsesPublishedConfigAndStaticAssets(t *testing.T) {
 		status  int
 	}{
 		{"/api/v1/runtime/config", nil, 400},
-		{"/api/v1/runtime/config?version=v1.0", headers, 400},
+		{"/api/v1/runtime/config?expected_snapshot_id=" + f.snapshotID, headers, 400},
+		{"/api/v1/runtime/config?content_format=xml", headers, 400},
 		{"/api/v1/runtime/static?environment_key=" + handlerEnv + "&pipeline_key=main&version=v1.0", nil, 400},
 		{"/api/v1/runtime/config", []ut.Header{{Key: "x-environment", Value: "unpublished"}, {Key: "x-pipeline", Value: "main"}}, 404},
 		{"/api/v1/runtime/static?environment_key=unpublished&pipeline_key=main", nil, 404},

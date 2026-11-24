@@ -1,5 +1,10 @@
 # rainbow_bridge CHANGELOG
 
+## [v5.4.2] — 2026-11-24
+
+- `GET /api/v1/runtime/config` 新增可选 `version` 和 `content_format`。省略 `version` 读取当前生效快照，指定 `version` 读取同一环境和渠道的固定版本。
+- 省略 `content_format` 时保留 Insights 现有响应格式。新调用方可显式传 `json` 读取网页链接对象，或传 `raw` 读取字符串。EWork 使用的 `/runtime/release` 和两个 ZIP 下载入口继续接受现有请求。
+
 ## [v5.4.1] — 2026-11-20
 
 - 恢复公开的 `GET /api/v1/runtime/config` 和 `GET /api/v1/runtime/static`，兼容已有 Insights 客户端和品牌资源打包。两条入口沿用 `v5.2.0` 的调用方式，读取当前生效快照。`GET /api/v1/runtime/release` 和 `GET /api/v1/runtime/release/static` 继续用于版本读取和固定导出。

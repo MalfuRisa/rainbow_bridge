@@ -29,21 +29,31 @@ func GetConfig(ctx context.Context, c *app.RequestContext) {
 		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, "x-environment and x-pipeline headers are required")
 		return
 	}
-	// 旧入口只跟随当前生效版本:显式传版本选择参数按请求错误拒绝
-	if name := rejectedSelectionParam(c); name != "" {
-		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest, name+" is not supported here; use /api/v1/runtime/release or the fixed release export")
+	// 快照校验值只用于固定 ZIP 导出,读取入口不做快照比对
+	if c.QueryArgs().Has("expected_snapshot_id") {
+		writeRuntimeErrorJSON(c, consts.StatusBadRequest, service.ErrTypeReleaseInvalidRequest,
+			"expected_snapshot_id is not supported here; use /api/v1/runtime/release/static")
 		return
+	}
+	contentMode, ok := runtimeContentMode(c)
+	if !ok {
+		return
+	}
+	var versionParam *string
+	if c.QueryArgs().Has("version") {
+		value := c.Query("version")
+		versionParam = &value
 	}
 	scopeID, ok := legacyRuntimeScopeID(c)
 	if !ok {
 		return
 	}
-	data, err := svc.RuntimeReleaseWithScope(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, nil, scopeID)
+	data, err := svc.RuntimeReleaseWithScope(handler.EnrichContext(ctx, c), environmentKey, pipelineKey, versionParam, scopeID)
 	if err != nil {
 		writeRuntimeServiceError(c, err)
 		return
 	}
-	writeActiveRuntimeConfig(c, data)
+	writeRuntimeConfig(c, data, contentMode)
 }
 
 // ExportStatic .
